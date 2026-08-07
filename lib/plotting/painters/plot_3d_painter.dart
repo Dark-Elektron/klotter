@@ -275,11 +275,15 @@ class Plot3DPainter extends CustomPainter {
 
     // A scalar height surface draws the floor itself, interleaved by depth.
     // Drawing it here as well would put an un-occluded copy underneath.
+    // Both height-surface paths interleave the floor themselves. Note there
+    // are two: _drawSurfaceWithJetColormap runs when a surface mode is
+    // selected, _drawSurface when it is not — and surfaceMode defaults to
+    // none, so the plain one is what an ordinary z = f(x, y) actually uses.
     final bool floorDrawnBySurface =
         fieldType == FieldType.scalar &&
         !function.isLevelSet &&
         is3DFunction &&
-        surfaceMode != SurfaceMode.none;
+        plotMode != PlotMode.field;
 
     if (!floorDrawnBySurface) {
       _drawFloorGrid(canvas, size, focalLength);
@@ -1931,31 +1935,49 @@ class Plot3DPainter extends CustomPainter {
 
     quads.sort((a, b) => b.avgDepth.compareTo(a.avgDepth));
 
-    final _VertexBatch batch = _VertexBatch();
+    // The floor joins the same ordered list as the surface, so the two occlude
+    // each other rather than the surface always winning.
+    final _DepthScene scene = _DepthScene();
+    _addFloorGridTo(scene, size, focalLength);
+
+    int shade(double v) => plotColormap(
+      surfaceSpan > 0 ? ((v - surfaceMin) / surfaceSpan).clamp(0.0, 1.0) : 0.5,
+    ).toARGB32();
+
     for (final quad in quads) {
       final o1 = quad.p1.project(focalLength, size, panX, panY);
       final o2 = quad.p2.project(focalLength, size, panX, panY);
       final o3 = quad.p3.project(focalLength, size, panX, panY);
       final o4 = quad.p4.project(focalLength, size, panX, panY);
 
-      // Magnitude ramp, interpolated per corner so the gradient is continuous
-      // across each cell rather than a flat block.
-      Color shade(double v) => plotColormap(
-        surfaceSpan > 0 ? ((v - surfaceMin) / surfaceSpan).clamp(0.0, 1.0) : 0.5,
-      );
+      final int c1 = shade(quad.v1);
+      final int c2 = shade(quad.v2);
+      final int c3 = shade(quad.v3);
+      final int c4 = shade(quad.v4);
 
-      batch.addQuad(
+      // Each half carries its own depth, so a cell can be sorted against a
+      // grid segment passing beneath it rather than as one unit.
+      scene.addTriangle(
         o1,
         o2,
         o3,
+        c1,
+        c2,
+        c3,
+        (quad.p1.y + quad.p2.y + quad.p3.y) / 3,
+      );
+      scene.addTriangle(
+        o1,
+        o3,
         o4,
-        shade(quad.v1),
-        shade(quad.v2),
-        shade(quad.v3),
-        shade(quad.v4),
+        c1,
+        c3,
+        c4,
+        (quad.p1.y + quad.p3.y + quad.p4.y) / 3,
       );
     }
-    batch.paint(canvas);
+
+    scene.paint(canvas);
 
     // A magnitude ramp needs a key, or the colours mean nothing.
     if (surfaceSpan > 0) {
