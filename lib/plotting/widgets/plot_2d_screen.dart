@@ -18,7 +18,6 @@ class Plot2DScreen extends StatefulWidget {
   final VectorFieldParser? vectorParser;
   final bool showContour;
   final SurfaceMode surfaceMode;
-  final ZoomAxis zoomAxis; // New
   final AppColors colors;
 
   /// Built once per panel rather than per paint, and carries the plot's
@@ -35,7 +34,6 @@ class Plot2DScreen extends StatefulWidget {
     this.vectorParser,
     required this.showContour,
     required this.surfaceMode,
-    required this.zoomAxis, // New
     required this.colors,
     required this.plotTheme,
   });
@@ -61,7 +59,19 @@ class Plot2DScreenState extends State<Plot2DScreen> {
   }
 
   double yMin = -5, yMax = 5;
-  double _lastScale = 1.0;
+  // Pinch is decomposed per axis, so a vertical pinch stretches y and a
+  // horizontal one stretches x. Flutter reports these separately alongside the
+  // uniform scale; the axis no longer has to be guessed from where on the plot
+  // the fingers happened to land.
+  double _lastHorizontalScale = 1.0;
+  double _lastVerticalScale = 1.0;
+
+  /// Per-axis change below this is treated as none.
+  ///
+  /// A pinch is never perfectly axis-aligned: a vertical one still reports a
+  /// little horizontal movement, and without a deadzone the other axis creeps
+  /// while you are trying to scale just one.
+  static const double _axisScaleDeadzone = 0.012;
 
   /// x of the trace crosshair in data space, or null when not tracing.
   ///
@@ -70,7 +80,6 @@ class Plot2DScreenState extends State<Plot2DScreen> {
   double? _traceX;
   
   // For detecting axis-specific zoom based on gesture location
-  static const double _axisZoneSize = 60.0; // pixels from edge to detect axis zone
 
   @override
   void initState() {
@@ -217,25 +226,6 @@ class Plot2DScreenState extends State<Plot2DScreen> {
     }
   }
 
-  ZoomAxis _detectZoomAxis(Offset focalPoint, Size size) {
-    // If a specific axis is selected, use that
-    if (widget.zoomAxis != ZoomAxis.free) {
-      return widget.zoomAxis;
-    }
-
-    // Auto-detect based on gesture position
-    final bool nearXAxis = focalPoint.dy > size.height - _axisZoneSize;
-    final bool nearYAxis = focalPoint.dx < _axisZoneSize;
-
-    if (nearXAxis && !nearYAxis) {
-      return ZoomAxis.x;
-    } else if (nearYAxis && !nearXAxis) {
-      return ZoomAxis.y;
-    }
-
-    return ZoomAxis.free;
-  }
-
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -243,52 +233,51 @@ class Plot2DScreenState extends State<Plot2DScreen> {
         if (constraints.maxHeight <= 0 || constraints.maxWidth <= 0) {
           return const SizedBox.shrink();
         }
-        final size = Size(constraints.maxWidth, constraints.maxHeight);
 
         return GestureDetector(
-          onScaleStart: (details) => _lastScale = 1.0,
+          onScaleStart: (details) {
+            _lastHorizontalScale = 1.0;
+            _lastVerticalScale = 1.0;
+          },
           onScaleUpdate: (details) {
             setState(() {
               if (details.pointerCount > 1) {
-                // Pinch zoom
-                final scaleDelta = details.scale / _lastScale;
-                _lastScale = details.scale;
-                if ((scaleDelta - 1.0).abs() < 1e-3) return;
+                _features = null;
 
-                final focalX = xMin +
+                final focalX =
+                    xMin +
                     (details.localFocalPoint.dx / constraints.maxWidth) *
                         (xMax - xMin);
-                final focalY = yMax -
+                final focalY =
+                    yMax -
                     (details.localFocalPoint.dy / constraints.maxHeight) *
                         (yMax - yMin);
 
-                // Detect which axis to zoom
-                final zoomAxis = _detectZoomAxis(details.localFocalPoint, size);
-
-                switch (zoomAxis) {
-                  case ZoomAxis.x:
-                    // Zoom only X axis
-                    xMin = focalX - (focalX - xMin) / scaleDelta;
-                    xMax = focalX + (xMax - focalX) / scaleDelta;
-                    break;
-                  case ZoomAxis.y:
-                    // Zoom only Y axis
-                    yMin = focalY - (focalY - yMin) / scaleDelta;
-                    yMax = focalY + (yMax - focalY) / scaleDelta;
-                    break;
-                  case ZoomAxis.z:
-                    // In 2D, Z is same as Y (or we can ignore)
-                    yMin = focalY - (focalY - yMin) / scaleDelta;
-                    yMax = focalY + (yMax - focalY) / scaleDelta;
-                    break;
-                  case ZoomAxis.free:
-                    // Zoom both axes
-                    xMin = focalX - (focalX - xMin) / scaleDelta;
-                    xMax = focalX + (xMax - focalX) / scaleDelta;
-                    yMin = focalY - (focalY - yMin) / scaleDelta;
-                    yMax = focalY + (yMax - focalY) / scaleDelta;
-                    break;
+                void zoomX(double factor) {
+                  xMin = focalX - (focalX - xMin) / factor;
+                  xMax = focalX + (xMax - focalX) / factor;
                 }
+
+                void zoomY(double factor) {
+                  yMin = focalY - (focalY - yMin) / factor;
+                  yMax = focalY + (yMax - focalY) / factor;
+                }
+
+                // The gesture's shape is the control. Pinching top and bottom
+                // toward the centre scales y; left and right scales x; a
+                // diagonal pinch scales both, which is what it looks like it
+                // should do.
+                //
+                // There is deliberately no axis lock here. The 3D view has one,
+                // and sharing that setting meant locking 3D to the y axis
+                // silently locked the 2D plot too.
+                final hDelta = details.horizontalScale / _lastHorizontalScale;
+                final vDelta = details.verticalScale / _lastVerticalScale;
+                _lastHorizontalScale = details.horizontalScale;
+                _lastVerticalScale = details.verticalScale;
+
+                if ((hDelta - 1.0).abs() > _axisScaleDeadzone) zoomX(hDelta);
+                if ((vDelta - 1.0).abs() > _axisScaleDeadzone) zoomY(vDelta);
               } else if (details.pointerCount == 1) {
                 // Pan — the visible window moved, so features must be refound.
                 _features = null;

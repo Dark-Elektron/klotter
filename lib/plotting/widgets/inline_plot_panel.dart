@@ -449,7 +449,6 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                   vectorParser: _vectorParser,
                   showContour: _showContour,
                   surfaceMode: _surfaceMode,
-                  zoomAxis: _zoomAxis,
                   colors: _colorsNoListen(context),
                 ),
               ),

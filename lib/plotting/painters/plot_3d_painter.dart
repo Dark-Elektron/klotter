@@ -118,6 +118,109 @@ class _VertexBatch {
 }
 
 
+/// A back-to-front drawing list holding both triangles and line segments.
+///
+/// The floor grid used to be painted before the surface, unconditionally, so
+/// the surface always won — the floor never appeared in front of it even where
+/// it was nearer the camera, and a surface dipping below the floor was drawn
+/// over ground that should have hidden it. Sorting both kinds of primitive
+/// together is what makes them occlude each other.
+///
+/// Consecutive triangles are still submitted as one `drawVertices`; the batch
+/// is only flushed when a line has to be drawn between them, so a scene with a
+/// few hundred grid segments costs a few hundred draw calls rather than one per
+/// triangle.
+class _DepthScene {
+  final List<double> _depths = <double>[];
+  final List<bool> _isLine = <bool>[];
+
+  // Triangles: six screen floats and three packed colours each.
+  final List<double> _triXY = <double>[];
+  final List<int> _triColor = <int>[];
+
+  // Lines: four screen floats each, plus a paint.
+  final List<double> _lineXY = <double>[];
+  final List<Paint> _linePaint = <Paint>[];
+
+  void addTriangle(
+    Offset a,
+    Offset b,
+    Offset c,
+    int ca,
+    int cb,
+    int cc,
+    double depth,
+  ) {
+    _depths.add(depth);
+    _isLine.add(false);
+    _triXY.addAll(<double>[a.dx, a.dy, b.dx, b.dy, c.dx, c.dy]);
+    _triColor.addAll(<int>[ca, cb, cc]);
+  }
+
+  void addLine(Offset a, Offset b, Paint paint, double depth) {
+    _depths.add(depth);
+    _isLine.add(true);
+    _lineXY.addAll(<double>[a.dx, a.dy, b.dx, b.dy]);
+    _linePaint.add(paint);
+  }
+
+  void paint(Canvas canvas) {
+    final int n = _depths.length;
+    if (n == 0) return;
+
+    final List<int> order = List<int>.generate(n, (i) => i);
+    order.sort((a, b) => _depths[b].compareTo(_depths[a]));
+
+    // Running indices into the per-kind buffers, so a primitive's data can be
+    // found from its position among its own kind.
+    final List<int> triIndex = List<int>.filled(n, -1);
+    final List<int> lineIndex = List<int>.filled(n, -1);
+    int t = 0;
+    int l = 0;
+    for (int i = 0; i < n; i++) {
+      if (_isLine[i]) {
+        lineIndex[i] = l++;
+      } else {
+        triIndex[i] = t++;
+      }
+    }
+
+    final List<double> batchXY = <double>[];
+    final List<int> batchColor = <int>[];
+
+    void flush() {
+      if (batchXY.isEmpty) return;
+      final Vertices vertices = Vertices.raw(
+        VertexMode.triangles,
+        Float32List.fromList(batchXY),
+        colors: Int32List.fromList(batchColor),
+      );
+      canvas.drawVertices(vertices, BlendMode.dst, Paint());
+      vertices.dispose();
+      batchXY.clear();
+      batchColor.clear();
+    }
+
+    for (final int i in order) {
+      if (_isLine[i]) {
+        flush();
+        final int o = lineIndex[i] * 4;
+        canvas.drawLine(
+          Offset(_lineXY[o], _lineXY[o + 1]),
+          Offset(_lineXY[o + 2], _lineXY[o + 3]),
+          _linePaint[lineIndex[i]],
+        );
+      } else {
+        final int o = triIndex[i] * 6;
+        final int c = triIndex[i] * 3;
+        batchXY.addAll(_triXY.getRange(o, o + 6));
+        batchColor.addAll(_triColor.getRange(c, c + 3));
+      }
+    }
+    flush();
+  }
+}
+
 class Plot3DPainter extends CustomPainter {
   final PlotExpression function;
   final bool is3DFunction;
@@ -170,7 +273,17 @@ class Plot3DPainter extends CustomPainter {
     canvas.save();
     canvas.clipRect(Rect.fromLTWH(0, 0, size.width, size.height));
 
-    _drawFloorGrid(canvas, size, focalLength);
+    // A scalar height surface draws the floor itself, interleaved by depth.
+    // Drawing it here as well would put an un-occluded copy underneath.
+    final bool floorDrawnBySurface =
+        fieldType == FieldType.scalar &&
+        !function.isLevelSet &&
+        is3DFunction &&
+        surfaceMode != SurfaceMode.none;
+
+    if (!floorDrawnBySurface) {
+      _drawFloorGrid(canvas, size, focalLength);
+    }
     _drawAxes(canvas, size, focalLength);
     _drawFloorBoundary(canvas, size, focalLength);
 
@@ -475,10 +588,16 @@ class Plot3DPainter extends CustomPainter {
     }
 
     // Sort by depth (painter's algorithm)
-    quads.sort((a, b) => b.avgDepth.compareTo(a.avgDepth));
+    // The floor joins the same ordered list as the surface, so the two
+    // occlude each other instead of the surface always winning.
+    final _DepthScene scene = _DepthScene();
+    _addFloorGridTo(scene, size, focalLength);
 
-    // Draw quads with jet colormap
-    final _VertexBatch batch = _VertexBatch();
+    int shade(double v) =>
+        plotColormap(
+          ((v - minZ) / (maxZ - minZ)).clamp(0.0, 1.0),
+        ).toARGB32();
+
     for (final quad in quads) {
       final o1 = quad.p1.project(focalLength, size, panX, panY);
       final o2 = quad.p2.project(focalLength, size, panX, panY);
@@ -488,21 +607,20 @@ class Plot3DPainter extends CustomPainter {
       // Colour per corner, interpolated across the cell. A single colour from
       // the cell average makes each cell a flat block, which reads as banding
       // however fine the grid.
-      Color shade(double v) =>
-          plotColormap(((v - minZ) / (maxZ - minZ)).clamp(0.0, 1.0));
+      final int c1 = shade(quad.v1);
+      final int c2 = shade(quad.v2);
+      final int c3 = shade(quad.v3);
+      final int c4 = shade(quad.v4);
 
-      batch.addQuad(
-        o1,
-        o2,
-        o3,
-        o4,
-        shade(quad.v1),
-        shade(quad.v2),
-        shade(quad.v3),
-        shade(quad.v4),
-      );
+      // Two triangles sharing the p1-p3 diagonal, each carrying its own depth
+      // so a cell can be sorted against a grid segment passing under it.
+      final double d1 = (quad.p1.y + quad.p2.y + quad.p3.y) / 3;
+      final double d2 = (quad.p1.y + quad.p3.y + quad.p4.y) / 3;
+      scene.addTriangle(o1, o2, o3, c1, c2, c3, d1);
+      scene.addTriangle(o1, o3, o4, c1, c3, c4, d2);
     }
-    batch.paint(canvas);
+
+    scene.paint(canvas);
 
     // Draw colorbar
     _drawColorbar3D(canvas, size, minZ, maxZ);
@@ -1242,6 +1360,59 @@ class Plot3DPainter extends CustomPainter {
     if (normalized < 2) return magnitude / 5;
     if (normalized < 5) return magnitude / 2;
     return magnitude;
+  }
+
+  /// Add the floor grid to [scene] as depth-sorted segments.
+  ///
+  /// Each grid line is cut into pieces because a single line spans the whole
+  /// floor: its near end and far end have very different depths, so one depth
+  /// per line cannot say whether the surface crosses in front of it.
+  void _addFloorGridTo(_DepthScene scene, Size size, double focalLength) {
+    final theme = plotTheme;
+    final Paint gridPaint =
+        Paint()
+          ..color = theme.subGrid
+          ..strokeWidth = 0.8;
+
+    final double gridSpacingX = _calculateGridSpacing(rangeX);
+    final double gridSpacingY = _calculateGridSpacing(rangeY);
+
+    // Enough pieces that the depth varies smoothly along a line, few enough
+    // that the sort stays cheap.
+    const int pieces = 16;
+    final Rect bounds = Rect.fromLTWH(0, 0, size.width, size.height);
+
+    void addRun(double ax, double ay, double bx, double by) {
+      for (int k = 0; k < pieces; k++) {
+        final double t0 = k / pieces;
+        final double t1 = (k + 1) / pieces;
+        final Point3D p0 = Point3D(
+          (ax + (bx - ax) * t0) * scaleX,
+          (ay + (by - ay) * t0) * scaleY,
+          0,
+        ).rotateZ(rotationZ).rotateX(rotationX);
+        final Point3D p1 = Point3D(
+          (ax + (bx - ax) * t1) * scaleX,
+          (ay + (by - ay) * t1) * scaleY,
+          0,
+        ).rotateZ(rotationZ).rotateX(rotationX);
+
+        final clipped = _clipLineToRect(
+          p0.project(focalLength, size, panX, panY),
+          p1.project(focalLength, size, panX, panY),
+          bounds,
+        );
+        if (clipped == null) continue;
+        scene.addLine(clipped.$1, clipped.$2, gridPaint, (p0.y + p1.y) / 2);
+      }
+    }
+
+    for (double i = -rangeX; i <= rangeX; i += gridSpacingX / 5) {
+      addRun(i, -rangeY, i, rangeY);
+    }
+    for (double i = -rangeY; i <= rangeY; i += gridSpacingY / 5) {
+      addRun(-rangeX, i, rangeX, i);
+    }
   }
 
   void _drawFloorGrid(Canvas canvas, Size size, double focalLength) {
