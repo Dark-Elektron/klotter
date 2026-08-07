@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:klator/math_renderer/renderer.dart';
-import 'package:klator/math_renderer/cursor.dart';
+import 'package:klotter/math_renderer/renderer.dart';
+import 'package:klotter/math_renderer/cursor.dart';
+import 'package:klotter/math_renderer/expression_selection.dart';
 
 void main() {
   group('MathNode - LiteralNode', () {
@@ -161,6 +162,50 @@ void main() {
     });
   });
 
+  group('MathNode - DerivativeNode', () {
+    test('creates with default fields', () {
+      final node = DerivativeNode();
+      expect(node.variable.length, equals(1));
+      expect(node.at.length, equals(1));
+      expect(node.body.length, equals(1));
+      expect((node.variable[0] as LiteralNode).text, equals('x'));
+    });
+
+    test('creates with specified fields', () {
+      final node = DerivativeNode(
+        variable: [LiteralNode(text: 'y')],
+        at: [LiteralNode(text: '2')],
+        body: [LiteralNode(text: 'y^2')],
+      );
+      expect((node.variable[0] as LiteralNode).text, equals('y'));
+      expect((node.at[0] as LiteralNode).text, equals('2'));
+      expect((node.body[0] as LiteralNode).text, equals('y^2'));
+    });
+  });
+
+  group('MathNode - IntegralNode', () {
+    test('creates with default fields', () {
+      final node = IntegralNode();
+      expect(node.variable.length, equals(1));
+      expect(node.lower.length, equals(1));
+      expect(node.upper.length, equals(1));
+      expect(node.body.length, equals(1));
+      expect((node.variable[0] as LiteralNode).text, equals('x'));
+    });
+
+    test('creates with specified fields', () {
+      final node = IntegralNode(
+        variable: [LiteralNode(text: 'x')],
+        lower: [LiteralNode(text: '0')],
+        upper: [LiteralNode(text: '1')],
+        body: [LiteralNode(text: 'x')],
+      );
+      expect((node.lower[0] as LiteralNode).text, equals('0'));
+      expect((node.upper[0] as LiteralNode).text, equals('1'));
+      expect((node.body[0] as LiteralNode).text, equals('x'));
+    });
+  });
+
   group('MathNode - AnsNode', () {
     test('creates with default index', () {
       final node = AnsNode();
@@ -263,6 +308,58 @@ void main() {
         ),
         isFalse,
       );
+    });
+
+    test('captures and clones DerivativeNode', () {
+      final derivative = DerivativeNode(
+        variable: [LiteralNode(text: 'x')],
+        at: [LiteralNode(text: '2')],
+        body: [LiteralNode(text: 'x^2')],
+      );
+      final state = EditorState.capture([derivative], const EditorCursor());
+      expect(state.expression[0], isA<DerivativeNode>());
+      final copy = state.expression[0] as DerivativeNode;
+      expect(copy.id, isNot(derivative.id));
+      expect(identical(copy.body.first, derivative.body.first), isFalse);
+    });
+
+    test('captures and clones IntegralNode', () {
+      final integral = IntegralNode(
+        variable: [LiteralNode(text: 'x')],
+        lower: [LiteralNode(text: '0')],
+        upper: [LiteralNode(text: '1')],
+        body: [LiteralNode(text: 'x')],
+      );
+      final state = EditorState.capture([integral], const EditorCursor());
+      expect(state.expression[0], isA<IntegralNode>());
+      final copy = state.expression[0] as IntegralNode;
+      expect(copy.id, isNot(integral.id));
+      expect(identical(copy.body.first, integral.body.first), isFalse);
+    });
+  });
+
+  group('MathClipboard - Deep Copy', () {
+    test('clones DerivativeNode', () {
+      final derivative = DerivativeNode(
+        variable: [LiteralNode(text: 'y')],
+        at: [LiteralNode(text: '3')],
+        body: [LiteralNode(text: 'y^2')],
+      );
+      final copy = MathClipboard.deepCopyNodes([derivative]);
+      expect(copy.first, isA<DerivativeNode>());
+      expect(copy.first.id, isNot(derivative.id));
+    });
+
+    test('clones IntegralNode', () {
+      final integral = IntegralNode(
+        variable: [LiteralNode(text: 'x')],
+        lower: [LiteralNode(text: '0')],
+        upper: [LiteralNode(text: '2')],
+        body: [LiteralNode(text: 'x')],
+      );
+      final copy = MathClipboard.deepCopyNodes([integral]);
+      expect(copy.first, isA<IntegralNode>());
+      expect(copy.first.id, isNot(integral.id));
     });
   });
 }

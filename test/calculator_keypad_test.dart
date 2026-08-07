@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:klator/keypad/keypad.dart';
-import 'package:klator/walkthrough/walkthrough_service.dart';
-import 'package:klator/walkthrough/walkthrough_steps.dart';
-import 'package:klator/settings/settings_provider.dart';
-import 'package:klator/utils/app_colors.dart';
-import 'package:klator/math_renderer/math_editor_controller.dart';
+import 'package:klotter/keypad/keypad.dart';
+import 'package:klotter/walkthrough/walkthrough_service.dart';
+import 'package:klotter/walkthrough/walkthrough_steps.dart';
+import 'package:klotter/settings/settings_provider.dart';
+import 'package:klotter/utils/app_colors.dart';
+import 'package:klotter/math_renderer/math_editor_controller.dart';
 
 void main() {
   group('CalculatorKeypad', () {
@@ -43,6 +43,10 @@ void main() {
       bool isLandscape = false,
       WalkthroughService? customWalkthroughService,
       SettingsProvider? customSettingsProvider,
+      int activeIndex = 0,
+      VoidCallback? onUpdateMathEditor,
+      void Function(int index)? onRemoveDisplay,
+      VoidCallback? onSetState,
     }) {
       final provider = customSettingsProvider ?? settingsProvider;
       final walkthrough = customWalkthroughService ?? walkthroughService;
@@ -58,19 +62,16 @@ void main() {
                   screenWidth: screenWidth,
                   isLandscape: isLandscape,
                   colors: AppColors.of(context),
-                  activeIndex: 0,
+                  activeIndex: activeIndex,
                   mathEditorControllers: mathEditorControllers,
                   textDisplayControllers: textDisplayControllers,
                   settingsProvider: provider,
-                  onUpdateMathEditor: () {},
+                  onUpdateMathEditor: onUpdateMathEditor ?? () {},
                   onAddDisplay: () {},
-                  onRemoveDisplay: (_) {},
+                  onRemoveDisplay: onRemoveDisplay ?? (_) {},
                   onClearAllDisplays: () {},
-                  countVariablesInExpressions: (_) => 0,
-                  onSetState: () {},
+                  onSetState: onSetState ?? () {},
                   walkthroughService: walkthrough,
-                  basicKeypadKey: GlobalKey(),
-                  basicKeypadHandleKey: GlobalKey(),
                   scientificKeypadKey: GlobalKey(),
                   numberKeypadKey: GlobalKey(),
                   extrasKeypadKey: GlobalKey(),
@@ -94,19 +95,7 @@ void main() {
       expect(find.byType(Column), findsWidgets);
     });
 
-    testWidgets('should have AnimatedContainer for basic keypad', (tester) async {
-      await tester.pumpWidget(buildTestWidget());
-      await tester.pumpAndSettle();
 
-      expect(find.byType(AnimatedContainer), findsOneWidget);
-    });
-
-    testWidgets('should have GestureDetector for basic keypad toggle', (tester) async {
-      await tester.pumpWidget(buildTestWidget());
-      await tester.pumpAndSettle();
-
-      expect(find.byType(GestureDetector), findsWidgets);
-    });
 
     testWidgets('should have SizedBox for main keypad area', (tester) async {
       await tester.pumpWidget(buildTestWidget());
@@ -115,26 +104,11 @@ void main() {
       expect(find.byType(SizedBox), findsWidgets);
     });
 
-    group('Basic Keypad Toggle', () {
-      testWidgets('should toggle basic keypad on tap', (tester) async {
-        await tester.pumpWidget(buildTestWidget());
-        await tester.pumpAndSettle();
-
-        // Find the GestureDetector wrapping the basic keypad
-        final gestureDetector = find.byType(GestureDetector).first;
-        expect(gestureDetector, findsOneWidget);
-
-        // Tap to toggle
-        await tester.tap(gestureDetector);
-        await tester.pumpAndSettle();
-
-        // Widget should still be present after toggle
-        expect(find.byType(CalculatorKeypad), findsOneWidget);
-      });
-    });
 
     group('Walkthrough Integration', () {
-      testWidgets('should register callbacks with walkthrough service', (tester) async {
+      testWidgets('should register callbacks with walkthrough service', (
+        tester,
+      ) async {
         await tester.pumpWidget(buildTestWidget());
         await tester.pumpAndSettle();
 
@@ -142,7 +116,9 @@ void main() {
         expect(walkthroughService.onNavigateToKeypadPage, isNotNull);
       });
 
-      testWidgets('should reset keypad when walkthrough resets', (tester) async {
+      testWidgets('should reset keypad when walkthrough resets', (
+        tester,
+      ) async {
         await tester.pumpWidget(buildTestWidget());
         await tester.pumpAndSettle();
 
@@ -153,7 +129,9 @@ void main() {
         expect(find.byType(CalculatorKeypad), findsOneWidget);
       });
 
-      testWidgets('should navigate to page when walkthrough requests', (tester) async {
+      testWidgets('should navigate to page when walkthrough requests', (
+        tester,
+      ) async {
         await tester.pumpWidget(buildTestWidget());
         await tester.pumpAndSettle();
 
@@ -170,20 +148,18 @@ void main() {
 
     group('Landscape Mode', () {
       testWidgets('should render in landscape mode', (tester) async {
-        await tester.pumpWidget(buildTestWidget(
-          screenWidth: 800,
-          isLandscape: true,
-        ));
+        await tester.pumpWidget(
+          buildTestWidget(screenWidth: 800, isLandscape: true),
+        );
         await tester.pumpAndSettle();
 
         expect(find.byType(CalculatorKeypad), findsOneWidget);
       });
 
       testWidgets('should set tablet mode for wide screens', (tester) async {
-        await tester.pumpWidget(buildTestWidget(
-          screenWidth: 800,
-          isLandscape: true,
-        ));
+        await tester.pumpWidget(
+          buildTestWidget(screenWidth: 800, isLandscape: true),
+        );
         await tester.pumpAndSettle();
 
         // Allow post-frame callback to execute
@@ -193,8 +169,105 @@ void main() {
       });
     });
 
+    group('Backspace behavior', () {
+      testWidgets(
+        'single taps delete content first, then delete empty cell on next tap',
+        (tester) async {
+          int cellCount = 2;
+          int removedCells = 0;
+
+          mathEditorControllers[0]!.insertCharacter('9');
+          mathEditorControllers[0]!.expr =
+              mathEditorControllers[0]!.getExpression();
+
+          await tester.pumpWidget(
+            buildTestWidget(
+              onUpdateMathEditor: () {
+                mathEditorControllers[0]!.expr =
+                    mathEditorControllers[0]!.getExpression();
+              },
+              onRemoveDisplay: (_) {
+                if (cellCount > 1) {
+                  cellCount--;
+                  removedCells++;
+                }
+              },
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          final backspaceFinder = find.text('\u232B').hitTestable().first;
+
+          await tester.tap(backspaceFinder);
+          await tester.pump();
+
+          expect(mathEditorControllers[0]!.getExpression(), isEmpty);
+          expect(removedCells, 0);
+
+          await tester.tap(backspaceFinder);
+          await tester.pump();
+
+          expect(removedCells, 1);
+        },
+      );
+
+      testWidgets(
+        'holding backspace does not delete cell after it becomes empty until a new press',
+        (tester) async {
+          int cellCount = 2;
+          int removedCells = 0;
+
+          const seed = '123456';
+          for (int i = 0; i < seed.length; i++) {
+            mathEditorControllers[0]!.insertCharacter(seed[i]);
+          }
+          mathEditorControllers[0]!.expr =
+              mathEditorControllers[0]!.getExpression();
+
+          await tester.pumpWidget(
+            buildTestWidget(
+              onUpdateMathEditor: () {
+                mathEditorControllers[0]!.expr =
+                    mathEditorControllers[0]!.getExpression();
+              },
+              onRemoveDisplay: (_) {
+                if (cellCount > 1) {
+                  cellCount--;
+                  removedCells++;
+                }
+              },
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          final backspaceFinder = find.text('\u232B').hitTestable().first;
+
+          final gesture = await tester.startGesture(
+            tester.getCenter(backspaceFinder),
+          );
+          await tester.pump(const Duration(milliseconds: 1300));
+
+          expect(mathEditorControllers[0]!.getExpression(), isEmpty);
+          expect(removedCells, 0);
+
+          await tester.pump(const Duration(milliseconds: 500));
+          expect(removedCells, 0);
+
+          await gesture.up();
+          await tester.pump();
+
+          await tester.tap(backspaceFinder);
+          await tester.pump();
+
+          expect(removedCells, 1);
+        },
+      );
+    });
+
     group('Physics during walkthrough', () {
-      testWidgets('should use normal physics when walkthrough inactive', (tester) async {
+      testWidgets('should use normal physics when walkthrough inactive', (
+        tester,
+      ) async {
         await tester.pumpWidget(buildTestWidget());
         await tester.pumpAndSettle();
 
@@ -202,7 +275,9 @@ void main() {
         expect(find.byType(CalculatorKeypad), findsOneWidget);
       });
 
-      testWidgets('should have directional physics on swipe step', (tester) async {
+      testWidgets('should have directional physics on swipe step', (
+        tester,
+      ) async {
         final testWalkthroughService = WalkthroughService();
         testWalkthroughService.startWalkthrough();
 
@@ -217,9 +292,9 @@ void main() {
           isIn([WalkthroughAction.swipeLeft, WalkthroughAction.swipeRight]),
         );
 
-        await tester.pumpWidget(buildTestWidget(
-          customWalkthroughService: testWalkthroughService,
-        ));
+        await tester.pumpWidget(
+          buildTestWidget(customWalkthroughService: testWalkthroughService),
+        );
 
         // Use pump() instead of pumpAndSettle() because animations run forever
         await tester.pump();
@@ -230,7 +305,9 @@ void main() {
         testWalkthroughService.dispose();
       });
 
-      testWidgets('should allow correct swipe direction during walkthrough', (tester) async {
+      testWidgets('should allow correct swipe direction during walkthrough', (
+        tester,
+      ) async {
         final testWalkthroughService = WalkthroughService();
         testWalkthroughService.startWalkthrough();
 
@@ -251,9 +328,9 @@ void main() {
           return;
         }
 
-        await tester.pumpWidget(buildTestWidget(
-          customWalkthroughService: testWalkthroughService,
-        ));
+        await tester.pumpWidget(
+          buildTestWidget(customWalkthroughService: testWalkthroughService),
+        );
 
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 100));

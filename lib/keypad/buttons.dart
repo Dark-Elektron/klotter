@@ -23,21 +23,57 @@ class MyButton extends StatelessWidget {
     this.buttontapped,
     this.fontSize = 22,
     this.mirror = false,
-    this.borderRadius = 5,
+    this.borderRadius = 0,
   });
 
   @override
   Widget build(BuildContext context) {
-    final settings = Provider.of<SettingsProvider>(context);
-    final bool hapticEnabled = settings.hapticFeedback;
+    // Only depend on the three settings this button actually uses, so
+    // unrelated settings changes (precision, theme, font, ...) don't rebuild
+    // every keypad button.
+    final (bool hapticEnabled, double settingsBorderRadius, double buttonSpacing) =
+        context.select<SettingsProvider, (bool, double, double)>(
+      (s) => (s.hapticFeedback, s.borderRadius, s.buttonSpacing),
+    );
     final double effectiveBorderRadius =
-        borderRadius == 0 ? settings.borderRadius : borderRadius;
+        borderRadius == 0 ? settingsBorderRadius : borderRadius;
+    final double outerPadding = buttonSpacing / 2;
 
     // 2. Create the text widget separately for clarity
+    //
+    // klotter's keys are only ~36dp wide, so multi-character labels like
+    // "asin", "acos" and "logn" do not fit at the nominal size. Shrink the
+    // type to the label's length rather than clipping or wrapping it — the
+    // glyphs stay centred and the key keeps its full touch target.
+    final int labelLength = buttonText.characters.length;
+    final double fittedFontSize =
+        labelLength <= 2
+            ? fontSize
+            : labelLength == 3
+            ? fontSize * 0.66
+            : labelLength == 4
+            ? fontSize * 0.50
+            : fontSize * 0.42;
+
     Widget textWidget = Text(
       buttonText,
       textAlign: TextAlign.center,
-      style: TextStyle(color: textColor, fontSize: fontSize),
+      maxLines: 1,
+      softWrap: false,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: textColor,
+        fontSize: fittedFontSize,
+        height: 1.0,
+      ),
+    );
+
+    // Keep a little air either side so four-letter labels like "asin" do not
+    // run edge to edge, and scale down further if the label still cannot fit
+    // (large text-scale settings, narrow devices).
+    textWidget = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: FittedBox(fit: BoxFit.scaleDown, child: textWidget),
     );
 
     // 3. If mirror is true, wrap the text in a Transform
@@ -48,7 +84,7 @@ class MyButton extends StatelessWidget {
       );
     }
     return Padding(
-      padding: const EdgeInsets.all(0.5),
+      padding: EdgeInsets.all(outerPadding),
       child: Container(
         decoration: BoxDecoration(
           // IMPORTANT: borderRadius here must match ClipRRect to make the shadow curved
@@ -63,7 +99,7 @@ class MyButton extends StatelessWidget {
           ],
         ),
         child: ClipRRect(
-          // borderRadius: BorderRadius.circular(4),
+          borderRadius: BorderRadius.circular(effectiveBorderRadius),
           child: Material(
             color: color,
             child: InkWell(

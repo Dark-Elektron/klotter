@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:klator/math_renderer/math_result_display.dart';
-import 'package:klator/math_renderer/math_nodes.dart';
+import 'package:klotter/math_renderer/math_result_display.dart';
+import 'package:klotter/math_renderer/math_nodes.dart';
 
 void main() {
   test('Exact Result Height Estimation Logic', () {

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:klator/utils/constants.dart';
+import 'package:flutter/services.dart';
+import 'package:klotter/utils/constants.dart';
+import 'package:klotter/utils/texture_generator.dart';
 import 'package:provider/provider.dart';
 import 'settings/settings_provider.dart';
 import 'math_renderer/renderer.dart';
@@ -7,7 +9,6 @@ import 'utils/app_colors.dart';
 import 'math_renderer/cell_persistence_service.dart';
 import 'math_engine/math_expression_serializer.dart';
 import 'dart:async';
-import 'dart:math' as math;
 import 'keypad/keypad.dart';
 import 'walkthrough/walkthrough_service.dart';
 import 'walkthrough/walkthrough_overlay.dart';
@@ -16,9 +17,9 @@ import 'math_renderer/expression_selection.dart';
 import 'math_renderer/math_editor_controller.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'math_engine/math_engine_exact.dart';
-import 'math_renderer/math_result_display.dart';
-import 'plotting/parsers/vector_field_parser.dart';
+import 'plotting/models/plot_view_state.dart';
 import 'plotting/widgets/inline_plot_panel.dart';
+import 'widgets/textured_container.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -113,6 +114,30 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
+  /// Phones stay portrait: klotter is a plot above an expression above a
+  /// keypad, and a phone in landscape fits maybe two of the three, which
+  /// breaks the live edit loop the app is built around. Tablets keep both.
+  ///
+  /// Decided here rather than in `main()` because the view has no size before
+  /// the first frame — reading it there returns zero, which reads as a phone
+  /// and locked tablets to portrait too.
+  bool _orientationApplied = false;
+
+  void _applyOrientationLock(BuildContext context) {
+    if (_orientationApplied) return;
+    final Size size = MediaQuery.of(context).size;
+    if (size.shortestSide <= 0) return; // not laid out yet; try again next build
+    _orientationApplied = true;
+    SystemChrome.setPreferredOrientations(
+      size.shortestSide < 600
+          ? const <DeviceOrientation>[
+            DeviceOrientation.portraitUp,
+            DeviceOrientation.portraitDown,
+          ]
+          : DeviceOrientation.values,
+    );
+  }
+
   int count = 0;
   Map<int, GlobalKey<MathEditorInlineState>> mathEditorKeys = {}; // ADD THIS
   Map<int, TextEditingController> textDisplayControllers = {};
@@ -138,14 +163,29 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool isTypingExponent = false;
   double plotMaxHeight = 300;
   double plotMinHeight = 28;
-  bool _plotsEnabled = false;
+  final bool _plotsEnabled = true;
   bool _isUpdating = false;
-  String _globalClearId = DateTime.now().toIso8601String();
   bool _isLoading = true;
   List<String> answers = [];
   bool _isPlotInteracting = false;
-  bool _isKeypadVisible = true;
   final Map<int, bool> _plotExpanded = {};
+
+  /// Each cell's plot panel, so its view can be read back when saving.
+  final Map<int, GlobalKey<InlinePlotPanelState>> _plotPanelKeys = {};
+
+  /// Views restored from storage, held until the panel for that cell is built.
+  final Map<int, PlotViewState> _restoredViews = {};
+
+  /// Drives the plot-page transition. Physics are disabled — the strip below
+  /// the expression animates this instead, so paging never competes with the
+  /// plot's own pan and pinch.
+  /// Created once the restored page is known.
+  ///
+  /// A post-hoc `jumpToPage` does not work here: the PageView is behind
+  /// `_isLoading`, so the callback fires before it attaches, `hasClients` is
+  /// false and the jump is silently dropped — which is why the app always
+  /// opened on the first cell.
+  PageController _pageViewController = PageController();
 
   SettingsProvider? _settingsProvider;
   bool _listenerAdded = false;
@@ -157,10 +197,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   // Walkthrough target keys
   final GlobalKey _expressionKey = GlobalKey();
-  final GlobalKey _resultKey = GlobalKey();
-  final GlobalKey _ansIndexKey = GlobalKey();
-  final GlobalKey _basicKeypadKey = GlobalKey();
-  final GlobalKey _basicKeypadHandleKey = GlobalKey();
+  final GlobalKey _plotAreaKey = GlobalKey();
   final GlobalKey _commandButtonKey = GlobalKey();
   final GlobalKey _scientificKeypadKey = GlobalKey();
   final GlobalKey _numberKeypadKey = GlobalKey();
@@ -177,9 +214,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Map<String, GlobalKey> get _walkthroughTargets => {
     'expression_area': _expressionKey,
-    'result_area': _resultKey,
-    'ans_index': _ansIndexKey,
-    'basic_keypad': _basicKeypadHandleKey,
+    'plot_area': _plotAreaKey,
     'command_button': _commandButtonKey,
     // Mobile keypad steps
     'number_keypad': _mainKeypadAreaKey,
@@ -326,179 +361,226 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return MathExpressionSerializer.serialize(controller.expression);
   }
 
-  bool _canShowPlotButton(String expr) {
-    if (!_plotsEnabled) return false;
-    final trimmed = expr.trim();
-    if (trimmed.isEmpty) return false;
-
-    if (VectorFieldParser.isVectorField(trimmed)) {
-      return true;
-    }
-
-    final normalized = trimmed.toLowerCase();
-    final hasX = RegExp(r'(?<![a-zA-Z])x(?![a-zA-Z])').hasMatch(normalized);
-    final hasY = RegExp(r'(?<![a-zA-Z])y(?![a-zA-Z])').hasMatch(normalized);
-    final hasZ = RegExp(r'(?<![a-zA-Z])z(?![a-zA-Z])').hasMatch(normalized);
-    return hasX || hasY || hasZ;
+  /// The cell's expression as nodes. The plot compiles from these rather than
+  /// from the serialized string, so it evaluates exactly what the calculator
+  /// evaluates instead of re-parsing with a weaker grammar.
+  List<MathNode> _getPlotNodes(int index) {
+    return mathEditorControllers[index]?.expression ?? const <MathNode>[];
   }
 
-  void _togglePlotExpanded(int index) {
-    setState(() {
-      _plotExpanded[index] = !(_plotExpanded[index] ?? false);
-      if (!(_plotExpanded[index] ?? false) && !_isKeypadVisible) {
-        _isKeypadVisible = true;
+  /// klotter always shows the plot. A cell with no free variable is not
+  /// unplottable — a constant is a horizontal line, and an empty cell is an
+  /// empty set of axes, which is the right thing to look at while you type
+  /// the expression that will fill it.
+  bool _canShowPlotButton(String expr) => _plotsEnabled;
+
+  /// The cell currently filling the page. Cells are reached by swiping the
+  /// strip below the expression, not by scrolling a list.
+  int get _currentPageIndex {
+    final keys = mathEditorControllers.keys.toList()..sort();
+    if (keys.isEmpty) return 0;
+    if (keys.contains(activeIndex)) return activeIndex;
+    return keys.last;
+  }
+
+  List<int> get _pageKeys => mathEditorControllers.keys.toList()..sort();
+
+  bool _pageHasContent(int index) =>
+      (mathEditorControllers[index]?.expression.isNotEmpty ?? false);
+
+  /// Move one page left or right.
+  ///
+  /// Swiping past the last page creates a new one, but only when the current
+  /// page actually has something on it — the same rule the action button used
+  /// to follow, so you cannot stack up empty plots by flicking.
+  void _goToPage({required bool forward}) {
+    final keys = _pageKeys;
+    final current = keys.indexOf(_currentPageIndex);
+    if (current == -1) return;
+
+    if (forward) {
+      if (current < keys.length - 1) {
+        _animateToPage(current + 1);
+      } else if (_canAddPage) {
+        _addDisplay();
       }
-    });
+      return;
+    }
+    if (current > 0) {
+      _animateToPage(current - 1);
+    }
   }
 
-  void _toggleKeypadVisible() {
-    setState(() {
-      _isKeypadVisible = !_isKeypadVisible;
-    });
+  /// A new page is only worth creating when the last one is actually used —
+  /// otherwise flicking forward stacks up blank plots.
+  bool get _canAddPage {
+    final keys = _pageKeys;
+    if (keys.isEmpty) return true;
+    return _pageHasContent(keys.last);
+  }
+
+  /// Remember where a cell's plot was before leaving it.
+  ///
+  /// A swiped-away panel can be disposed before it is next read, so its view
+  /// is captured on the way out — otherwise returning to a cell showed the 2D
+  /// view again however it was left.
+  void _captureView(int index) {
+    final PlotViewState? live = _plotPanelKeys[index]?.currentState?.currentView();
+    if (live != null) _restoredViews[index] = live;
+  }
+
+  void _animateToPage(int position) {
+    final keys = _pageKeys;
+    if (position < 0 || position >= keys.length) return;
+    _captureView(_currentPageIndex);
+    setState(() => activeIndex = keys[position]);
+    focusNodes[keys[position]]?.requestFocus();
+    if (_pageViewController.hasClients) {
+      // Same feel as the keypad's page transition.
+      _pageViewController.animateToPage(
+        position,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
+  /// Horizontal swipe target between the expression and the keypad.
+  ///
+  /// The plot itself owns pan and pinch, so page navigation needs its own
+  /// surface rather than competing with those gestures.
+  Widget _buildPageSwipeStrip(AppColors colors) {
+    final keys = _pageKeys;
+    final current = keys.indexOf(_currentPageIndex);
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragEnd: (details) {
+        final v = details.primaryVelocity ?? 0;
+        if (v.abs() < 100) return;
+        _goToPage(forward: v < 0);
+      },
+      child: Container(
+        height: 26,
+        width: double.infinity,
+        color: colors.containerBackground,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.chevron_left,
+              size: 16,
+              color:
+                  current > 0
+                      ? colors.textSecondary
+                      : colors.textSecondary.withValues(alpha: 0.2),
+            ),
+            const SizedBox(width: 10),
+            for (int i = 0; i < keys.length; i++) ...[
+              Container(
+                width: i == current ? 7 : 5,
+                height: i == current ? 7 : 5,
+                margin: const EdgeInsets.symmetric(horizontal: 3),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color:
+                      i == current
+                          ? colors.accent
+                          : colors.textSecondary.withValues(alpha: 0.35),
+                ),
+              ),
+            ],
+            const SizedBox(width: 10),
+            Icon(
+              Icons.chevron_right,
+              size: 16,
+              color:
+                  (current < keys.length - 1 || _canAddPage)
+                      ? colors.textSecondary
+                      : colors.textSecondary.withValues(alpha: 0.2),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildPlotArea(
     int index,
     AppColors colors, {
-    double? maxHeightOverride,
-    bool forceExpanded = false,
+    bool shouldAddKeys = false,
   }) {
     final plotExpression = _getPlotExpression(index);
     final canPlot = _canShowPlotButton(plotExpression);
-    final isExpanded =
-        canPlot && (forceExpanded || (_plotExpanded[index] ?? false));
-    final maxHeight = maxHeightOverride ?? plotMaxHeight;
-    final defaultHeight = MediaQuery.of(context).size.height / 3;
-    final baseHeight = defaultHeight.clamp(0.0, maxHeight);
-    final targetHeight = forceExpanded ? maxHeight : baseHeight;
 
     if (!canPlot) {
       return const SizedBox.shrink();
     }
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeInOut,
-          height: isExpanded ? targetHeight : 0,
-          width: double.infinity,
-          clipBehavior: Clip.hardEdge,
-          decoration: BoxDecoration(
-            color: Colors.transparent,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.25),
-                blurRadius: 6,
-                offset: const Offset(0, -2),
-              ),
-            ],
+    // No fixed height: the plot fills whatever the page gives it. The caller
+    // puts this in an Expanded so the graph takes all the room above the
+    // expression rather than a third of the screen.
+    return Container(
+      key: shouldAddKeys ? _plotAreaKey : null,
+      width: double.infinity,
+      clipBehavior: Clip.hardEdge,
+      decoration: BoxDecoration(
+        color: Colors.transparent,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.25),
+            blurRadius: 6,
+            offset: const Offset(0, -2),
           ),
-          child:
-              isExpanded
-                  ? Listener(
-                    behavior: HitTestBehavior.opaque,
-                    onPointerDown: (_) {
-                      if (!_isPlotInteracting) {
-                        setState(() => _isPlotInteracting = true);
-                      }
-                    },
-                    onPointerUp: (_) {
-                      if (_isPlotInteracting) {
-                        setState(() => _isPlotInteracting = false);
-                      }
-                    },
-                    onPointerCancel: (_) {
-                      if (_isPlotInteracting) {
-                        setState(() => _isPlotInteracting = false);
-                      }
-                    },
-                    child: InlinePlotPanel(
-                      expression: plotExpression,
-                      onToggleKeypad: _toggleKeypadVisible,
-                      isKeypadVisible: _isKeypadVisible,
-                    ),
-                  )
-                  : const SizedBox.shrink(),
-        ),
-        GestureDetector(
-          onTap: () => _togglePlotExpanded(index),
-          child: Container(
-            height: plotMinHeight,
-            width: double.infinity,
-            decoration: BoxDecoration(color: colors.containerBackground),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.show_chart, size: 16, color: colors.textSecondary),
-                const SizedBox(width: 6),
-                Text(
-                  isExpanded ? 'Hide plot' : 'Plot',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: colors.textSecondary,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Icon(
-                  isExpanded
-                      ? Icons.keyboard_arrow_up
-                      : Icons.keyboard_arrow_down,
-                  size: 18,
-                  color: colors.textSecondary,
-                ),
-              ],
-            ),
+        ],
+      ),
+      child: Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerDown: (_) {
+          if (!_isPlotInteracting) {
+            setState(() => _isPlotInteracting = true);
+          }
+        },
+        onPointerUp: (_) {
+          if (_isPlotInteracting) {
+            setState(() => _isPlotInteracting = false);
+          }
+        },
+        onPointerCancel: (_) {
+          if (_isPlotInteracting) {
+            setState(() => _isPlotInteracting = false);
+          }
+        },
+        child: InlinePlotPanel(
+          key: _plotPanelKeys.putIfAbsent(
+            index,
+            () => GlobalKey<InlinePlotPanelState>(),
           ),
+          expression: plotExpression,
+          nodes: _getPlotNodes(index),
+          initialView: _restoredViews[index] ?? PlotViewState.initial,
+          onViewChanged: (view) => _restoredViews[index] = view,
         ),
-      ],
+      ),
     );
   }
 
-  Widget _buildExpressionDisplay(
-    int index,
-    AppColors colors, {
-    double? maxPlotHeight,
-    bool forcePlotExpanded = false,
-  }) {
+  Widget _buildExpressionDisplay(int index, AppColors colors) {
     final mathEditorController = mathEditorControllers[index];
     final mathEditorKey = mathEditorKeys[index];
     final scrollController = scrollControllers[index];
     final bool isFocused = (activeIndex == index);
     final bool shouldAddKeys = index == activeIndex;
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        double plotMax = maxPlotHeight ?? plotMaxHeight;
-        if (maxPlotHeight == null) {
-          if (constraints.maxHeight.isFinite) {
-            final resultHeight = math.max(
-              _calculateDecimalResultHeight(index),
-              _calculateExactResultHeight(index),
-            );
-            final expressionHeight = (FONTSIZE * 1.6) + 24;
-            final safeMax = (constraints.maxHeight -
-                    resultHeight -
-                    expressionHeight -
-                    plotMinHeight)
-                .clamp(0.0, plotMax);
-            plotMax = safeMax;
-          } else {
-            final screenHeight = MediaQuery.of(context).size.height;
-            final baseMax =
-                _isKeypadVisible ? screenHeight * 0.45 : screenHeight * 0.75;
-            plotMax = math.max(plotMax, baseMax);
-          }
-        }
-
-        return Column(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: <Widget>[
-            Container(
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: <Widget>[
+        Expanded(
+          child: _buildPlotArea(index, colors, shouldAddKeys: shouldAddKeys),
+        ),
+            TexturedContainer(
+              baseColor: colors.containerBackground,
               decoration: BoxDecoration(
-                color: colors.containerBackground,
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.2),
@@ -511,108 +593,59 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: <Widget>[
-                  // _buildPlotArea(
-                  //   index,
-                  //   colors,
-                  //   maxHeightOverride: plotMax,
-                  //   forceExpanded: forcePlotExpanded,
-                  // ),
-                  // Expression input area
+                  // Expression input area - transparent background
                   Container(
                     key: shouldAddKeys ? _expressionKey : null,
                     width: double.infinity,
-                    padding: const EdgeInsets.all(10),
-                    child: AnimatedOpacity(
-                      curve: Curves.easeIn,
-                      duration: const Duration(milliseconds: 500),
-                      opacity: isVisible ? 1.0 : 0.0,
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          return Center(
-                            child: SingleChildScrollView(
-                              controller: scrollController,
-                              scrollDirection: Axis.horizontal,
-                              reverse: true,
-                              child: MathEditorInline(
-                                key: mathEditorKey,
-                                controller: mathEditorController!,
-                                showCursor: isFocused,
-                                minWidth: constraints.maxWidth,
-                                onFocus: () {
-                                  if (activeIndex != index) {
-                                    setState(() {
-                                      activeIndex = index;
-                                    });
-                                  }
-                                },
+                    // No color - let texture show through
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                      child: AnimatedOpacity(
+                        curve: Curves.easeIn,
+                        duration: const Duration(milliseconds: 500),
+                        opacity: isVisible ? 1.0 : 0.0,
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            return Center(
+                              child: SingleChildScrollView(
+                                controller: scrollController,
+                                scrollDirection: Axis.horizontal,
+                                reverse: true,
+                                child: MathEditorInline(
+                                  key: mathEditorKey,
+                                  controller: mathEditorController!,
+                                  showCursor: isFocused,
+                                  minWidth: constraints.maxWidth,
+                                  // Drag-to-tune edits the node tree directly,
+                                  // so the plot needs a rebuild to resample.
+                                  onExpressionChanged: () {
+                                    updateMathEditor();
+                                    setState(() {});
+                                  },
+                                  onFocus: () {
+                                    if (activeIndex != index) {
+                                      setState(() {
+                                        activeIndex = index;
+                                      });
+                                    }
+                                  },
+                                ),
                               ),
-                            ),
-                          );
-                        },
+                            );
+                          },
+                        ),
                       ),
                     ),
                   ),
 
-                  // Result area with PageView - use StatefulBuilder to isolate rebuilds
-                  _ResultPageViewWidget(
-                    key: ValueKey('result_pageview_${index}_$_globalClearId'),
-                    index: index,
-                    colors: colors,
-                    shouldAddKeys: shouldAddKeys,
-                    isVisible: isVisible,
-                    exactResultNodes: exactResultNodes,
-                    currentResultPage: currentResultPage,
-                    currentResultPageNotifiers: currentResultPageNotifiers,
-                    resultPageProgressNotifiers: resultPageProgressNotifiers,
-                    exactResultVersionNotifiers: exactResultVersionNotifiers,
-                    resultPageControllers: resultPageControllers,
-                    textDisplayControllers: textDisplayControllers,
-                    ansIndexKey: _ansIndexKey,
-                    resultKey: _resultKey,
-                    calculateDecimalResultHeight: _calculateDecimalResultHeight,
-                    calculateExactResultHeight: _calculateExactResultHeight,
-                  ),
                 ],
               ),
             ),
           ],
         );
-      },
-    );
-  }
-
-  double _calculateDecimalResultHeight(int index) {
-    final resController = textDisplayControllers[index];
-    String text = resController?.text ?? '';
-
-    if (text.isEmpty) return 80.0;
-
-    // Use the same measurement logic as Exact, but handle newlines properly.
-    double measuredHeight = MathResultDisplay.calculateTextHeight(
-      text,
-      FONTSIZE,
-    );
-
-    double totalHeight = measuredHeight + 16 + 10;
-    return totalHeight.clamp(80.0, 300.0);
-  }
-
-  double _calculateExactResultHeight(int index) {
-    final exactNodes = exactResultNodes[index];
-
-    if (exactNodes == null || exactNodes.isEmpty) {
-      return 80.0;
-    }
-
-    // Use the precise measurement from the display widget logic
-    double measuredHeight = MathResultDisplay.calculateTotalHeight(
-      exactNodes,
-      FONTSIZE,
-    );
-
-    // Add identical padding and clamping as Decimal
-    double totalHeight = measuredHeight + 16 + 10;
-    return totalHeight.clamp(80.0, 300.0);
   }
 
   int _estimateNodesHeight(List<MathNode> nodes) {
@@ -650,6 +683,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _pageViewController.dispose();
     _deleteTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _saveCells();
@@ -732,16 +766,27 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         );
         mathEditorControllers[i]?.setExpression(nodes);
 
-        textDisplayControllers[i]?.text = savedCells[i].answer;
+        final Map<String, dynamic>? savedView = savedCells[i].plotView;
+        if (savedView != null) {
+          _restoredViews[i] = PlotViewState.fromJson(savedView);
+        }
+
       }
 
       count = savedCells.length;
       activeIndex = savedIndex.clamp(0, count - 1);
     }
 
+    // Build the controller before the PageView first appears, so it opens on
+    // the restored cell rather than jumping there afterwards.
+    final int restoredPosition = _pageKeys.indexOf(activeIndex);
+    _pageViewController.dispose();
+    _pageViewController = PageController(
+      initialPage: restoredPosition < 0 ? 0 : restoredPosition,
+    );
+
     setState(() => _isLoading = false);
 
-    // Update exact results for all cells after loading
     WidgetsBinding.instance.addPostFrameCallback((_) {
       for (int i = 0; i < count; i++) {
         _updateExactResult(i);
@@ -753,28 +798,41 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     List<int> sortedKeys = mathEditorControllers.keys.toList()..sort();
 
     List<List<MathNode>> expressions = [];
-    List<String> answers = [];
+    List<Map<String, dynamic>?> plotViews = [];
 
     for (int key in sortedKeys) {
       MathEditorController? mathController = mathEditorControllers[key];
-      TextEditingController? textController = textDisplayControllers[key];
+      if (mathController == null) continue;
+      expressions.add(mathController.expression);
 
-      if (mathController != null) {
-        expressions.add(mathController.expression);
-        answers.add(textController?.text ?? '');
-      }
+      // Read the live view where the panel is on screen; fall back to what was
+      // restored for cells that have not been built this session, so paging
+      // away from a cell does not forget where it was left.
+      final PlotViewState? live =
+          _plotPanelKeys[key]?.currentState?.currentView();
+      final PlotViewState view =
+          live ?? _restoredViews[key] ?? PlotViewState.initial;
+      _restoredViews[key] = view;
+      plotViews.add(view.isInitial ? null : view.toJson());
     }
 
-    await CellPersistence.saveCells(expressions, answers);
+    await CellPersistence.saveCells(expressions, plotViews);
     await CellPersistence.saveActiveIndex(activeIndex);
   }
 
+  // In _HomePageState
   void _onSettingsChanged() {
+    // Clear texture cache when theme changes
+    TextureGenerator.clearCache();
+
     updateMathEditor();
 
     for (final controller in mathEditorControllers.values) {
       controller.refreshDisplay();
     }
+
+    // Force rebuild to reload textures
+    setState(() {});
   }
 
   void _cascadeUpdates(int changedIndex) {
@@ -860,13 +918,86 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     });
   }
 
-  void _addDisplay() {
-    int newIndex = count;
-    _createControllers(newIndex);
+  void _addDisplay({int? insertAt}) {
+    // Default: insert after the active cell
+    int insertIndex = insertAt ?? (activeIndex + 1);
+
+    // Clamp to valid range
+    insertIndex = insertIndex.clamp(0, count);
+
+    if (insertIndex < count) {
+      // Need to shift existing controllers to make room
+      _shiftControllersUp(insertIndex);
+    }
+
+    _createControllers(insertIndex);
+
     setState(() {
       count += 1;
-      activeIndex = newIndex;
+      activeIndex = insertIndex;
     });
+
+    // Slide to the page that was just created rather than snapping to it.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final position = _pageKeys.indexOf(insertIndex);
+      if (position != -1 && _pageViewController.hasClients) {
+        _pageViewController.animateToPage(
+          position,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOutCubic,
+        );
+      }
+      // Recalculate results for cells after the inserted one (ans references
+      // may have shifted)
+      for (int i = insertIndex + 1; i < count; i++) {
+        _updateExactResult(i);
+      }
+    });
+  }
+
+  void _shiftControllersUp(int fromIndex) {
+    // Work backwards from the end to avoid overwriting
+    for (int i = count - 1; i >= fromIndex; i--) {
+      int newIndex = i + 1;
+
+      // Move all controller references
+      mathEditorControllers[newIndex] = mathEditorControllers[i]!;
+      textDisplayControllers[newIndex] = textDisplayControllers[i]!;
+      focusNodes[newIndex] = focusNodes[i]!;
+      scrollControllers[newIndex] = scrollControllers[i]!;
+      mathEditorKeys[newIndex] = mathEditorKeys[i]!;
+      exactResultNodes[newIndex] = exactResultNodes[i];
+      exactResultExprs[newIndex] = exactResultExprs[i];
+      currentResultPage[newIndex] = currentResultPage[i] ?? 0;
+      currentResultPageNotifiers[newIndex] = currentResultPageNotifiers[i]!;
+      resultPageProgressNotifiers[newIndex] = resultPageProgressNotifiers[i]!;
+      exactResultVersionNotifiers[newIndex] = exactResultVersionNotifiers[i]!;
+
+      // Move resultPageControllers if it exists
+      if (resultPageControllers.containsKey(i)) {
+        resultPageControllers[newIndex] = resultPageControllers[i]!;
+      }
+
+      // Move plot expanded state
+      if (_plotExpanded.containsKey(i)) {
+        _plotExpanded[newIndex] = _plotExpanded[i]!;
+      }
+    }
+
+    // Clear the old references at fromIndex (will be replaced by _createControllers)
+    mathEditorControllers.remove(fromIndex);
+    textDisplayControllers.remove(fromIndex);
+    focusNodes.remove(fromIndex);
+    scrollControllers.remove(fromIndex);
+    mathEditorKeys.remove(fromIndex);
+    resultPageControllers.remove(fromIndex);
+    exactResultNodes.remove(fromIndex);
+    exactResultExprs.remove(fromIndex);
+    currentResultPage.remove(fromIndex);
+    currentResultPageNotifiers.remove(fromIndex);
+    resultPageProgressNotifiers.remove(fromIndex);
+    exactResultVersionNotifiers.remove(fromIndex);
+    _plotExpanded.remove(fromIndex);
   }
 
   void _removeDisplay(int indexToRemove) {
@@ -951,7 +1082,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     resultPageProgressNotifiers.clear();
     exactResultVersionNotifiers.clear();
 
-    _globalClearId = DateTime.now().toIso8601String();
 
     _createControllers(0);
 
@@ -1049,7 +1179,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     resultPageProgressNotifiers.clear();
     exactResultVersionNotifiers.clear();
 
-    _globalClearId = DateTime.now().toIso8601String();
 
     for (int i = 0; i < state.expressions.length; i++) {
       _createControllers(i);
@@ -1138,6 +1267,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    _applyOrientationLock(context);
+
     if (_isLoading) {
       final colors = AppColors.of(context);
       return Scaffold(
@@ -1171,43 +1302,35 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             SafeArea(
               child: Column(
                 children: <Widget>[
+                  // One cell fills the page: its plot takes all the room
+                  // above its expression. Other cells are reached by the swipe
+                  // strip below rather than by scrolling.
                   Expanded(
-                    child:
-                        _isKeypadVisible
-                            ? ListView.builder(
-                              physics:
-                                  _isPlotInteracting
-                                      ? const NeverScrollableScrollPhysics()
-                                      : const ClampingScrollPhysics(),
-                              reverse: true,
-                              padding: EdgeInsets.zero,
-                              itemCount: count,
-                              itemBuilder: (context, index) {
-                                List<int> keys =
-                                    mathEditorControllers.keys.toList()..sort();
-                                int reversedIndex = keys.length - 1 - index;
-
-                                if (reversedIndex >= 0 &&
-                                    reversedIndex < keys.length) {
-                                  return Padding(
-                                    padding: EdgeInsets.only(top: 5),
-                                    child: _buildExpressionDisplay(
-                                      keys[reversedIndex],
-                                      colors,
-                                    ),
-                                  );
-                                }
-                                return SizedBox.shrink();
-                              },
-                            )
-                            : _buildActiveCellFullscreen(colors),
+                    child: PageView.builder(
+                      controller: _pageViewController,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: _pageKeys.length,
+                      onPageChanged: (position) {
+                        final keys = _pageKeys;
+                        if (position >= 0 && position < keys.length) {
+                          _captureView(_currentPageIndex);
+                          setState(() => activeIndex = keys[position]);
+                        }
+                      },
+                      itemBuilder: (context, position) {
+                        final keys = _pageKeys;
+                        if (position >= keys.length) {
+                          return const SizedBox.shrink();
+                        }
+                        return _buildExpressionDisplay(keys[position], colors);
+                      },
+                    ),
                   ),
+                  _buildPageSwipeStrip(colors),
                   AnimatedSize(
                     duration: const Duration(milliseconds: 250),
                     curve: Curves.easeInOut,
-                    child:
-                        _isKeypadVisible
-                            ? Builder(
+                    child: Builder(
                               builder: (context) {
                                 final mediaQuery = MediaQuery.of(context);
                                 double screenWidth = mediaQuery.size.width;
@@ -1228,8 +1351,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                   onAddDisplay: _addDisplay,
                                   onRemoveDisplay: _removeDisplay,
                                   onClearAllDisplays: _clearAllDisplays,
-                                  countVariablesInExpressions:
-                                      countVariablesInExpressions,
                                   onSetState: () => setState(() {}),
                                   onClearSelectionOverlay:
                                       _clearAllSelectionOverlays,
@@ -1239,8 +1360,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                   onRedoAppState: _redoAppState,
                                   // Walkthrough
                                   walkthroughService: _walkthroughService,
-                                  basicKeypadKey: _basicKeypadKey,
-                                  basicKeypadHandleKey: _basicKeypadHandleKey,
                                   scientificKeypadKey: _scientificKeypadKey,
                                   numberKeypadKey: _numberKeypadKey,
                                   extrasKeypadKey: _extrasKeypadKey,
@@ -1249,8 +1368,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                   settingsButtonKey: _settingsButtonKey,
                                 );
                               },
-                            )
-                            : const SizedBox.shrink(),
+                            ),
                   ),
                 ],
               ),
@@ -1312,40 +1430,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _saveCells();
   }
 
-  int _getFullscreenIndex() {
-    if (_plotExpanded[activeIndex] ?? false) return activeIndex;
-    for (final entry in _plotExpanded.entries) {
-      if (entry.value) return entry.key;
-    }
-    return activeIndex;
-  }
-
-  Widget _buildActiveCellFullscreen(AppColors colors) {
-    final index = _getFullscreenIndex();
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final page = currentResultPage[index] ?? 0;
-        final resultHeight =
-            page == 0
-                ? _calculateDecimalResultHeight(index)
-                : _calculateExactResultHeight(index);
-        final expressionHeight = (FONTSIZE * 1.5) + 20;
-        final available = (constraints.maxHeight -
-                expressionHeight -
-                resultHeight -
-                plotMinHeight)
-            .clamp(120.0, constraints.maxHeight);
-
-        return _buildExpressionDisplay(
-          index,
-          colors,
-          maxPlotHeight: available,
-          forcePlotExpanded: true,
-        );
-      },
-    );
-  }
-
   bool isOperator(String x) {
     if (x == '/' || x == 'x' || x == '-' || x == '+' || x == '=') {
       return true;
@@ -1353,522 +1437,61 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return false;
   }
 
-  int countVariablesInExpressions(String expressions) {
-    // First, remove all known function names and keywords to avoid false matches
-    String cleaned = expressions;
+}
 
-    // List of function names and keywords to remove (order matters - longer first)
-    const functionsToRemove = [
-      'sqrt',
-      'sin',
-      'cos',
-      'tan',
-      'asin',
-      'acos',
-      'atan',
-      'log',
-      'ln',
-      'abs',
-      'perm',
-      'comb',
-      'ans',
-      'exp',
-    ];
 
-    for (String func in functionsToRemove) {
-      cleaned = cleaned.replaceAll(func, ' ');
-    }
+String _describeMathNodes(List<MathNode> nodes) {
+  if (nodes.isEmpty) return '[]';
+  final parts = nodes.map(_describeMathNode).toList();
+  return '[${parts.join(', ')}]';
+}
 
-    // Also remove 'e' and 'E' that are part of scientific notation (e.g., 1e5, 2E-3)
-    // Pattern: digit followed by e/E followed by optional +/- and digits
-    cleaned = cleaned.replaceAll(RegExp(r'(\d)[eE]([+-]?\d)'), r'$1 $2');
-
-    // Now find single-letter variables (excluding common constants like 'e' for Euler's number)
-    // Match single letters that are actual variables: x, y, z, a, b, c, etc.
-    // Exclude: e (Euler's number), i (imaginary unit if you support it)
-    RegExp variableRegex = RegExp(
-      r'(?<![a-zA-Z])([a-df-hj-zA-DF-HJ-Z])(?![a-zA-Z])',
-    );
-
-    Set<String> variables = {};
-    for (var line in cleaned.split('\n')) {
-      for (var match in variableRegex.allMatches(line)) {
-        String varName = match.group(1)!;
-        // Additional filter: skip if it's a standalone 'e' (Euler's number)
-        // But allow 'e' if it appears to be a variable in context
-        variables.add(varName);
-      }
-    }
-
-    return variables.length;
+String _describeMathNode(MathNode node) {
+  if (node is LiteralNode) return 'Literal("${node.text}")';
+  if (node is FractionNode) {
+    return 'Fraction(num:${_describeMathNodes(node.numerator)}, den:${_describeMathNodes(node.denominator)})';
   }
+  if (node is ExponentNode) {
+    return 'Exponent(base:${_describeMathNodes(node.base)}, pow:${_describeMathNodes(node.power)})';
+  }
+  if (node is ParenthesisNode) {
+    return 'Paren(${_describeMathNodes(node.content)})';
+  }
+  if (node is RootNode) {
+    return 'Root(idx:${_describeMathNodes(node.index)}, rad:${_describeMathNodes(node.radicand)})';
+  }
+  if (node is LogNode) {
+    return 'Log(base:${_describeMathNodes(node.base)}, arg:${_describeMathNodes(node.argument)})';
+  }
+  if (node is TrigNode) {
+    return 'Trig(${node.function}, arg:${_describeMathNodes(node.argument)})';
+  }
+  if (node is SummationNode) {
+    return 'Sum(var:${_describeMathNodes(node.variable)}, low:${_describeMathNodes(node.lower)}, up:${_describeMathNodes(node.upper)}, body:${_describeMathNodes(node.body)})';
+  }
+  if (node is ProductNode) {
+    return 'Prod(var:${_describeMathNodes(node.variable)}, low:${_describeMathNodes(node.lower)}, up:${_describeMathNodes(node.upper)}, body:${_describeMathNodes(node.body)})';
+  }
+  if (node is DerivativeNode) {
+    return 'Diff(var:${_describeMathNodes(node.variable)}, at:${_describeMathNodes(node.at)}, body:${_describeMathNodes(node.body)})';
+  }
+  if (node is IntegralNode) {
+    return 'Int(var:${_describeMathNodes(node.variable)}, low:${_describeMathNodes(node.lower)}, up:${_describeMathNodes(node.upper)}, body:${_describeMathNodes(node.body)})';
+  }
+  if (node is AnsNode) {
+    return 'Ans(${_describeMathNodes(node.index)})';
+  }
+  if (node is ConstantNode) return 'Const(${node.constant})';
+  if (node is UnitVectorNode) return 'Unit(${node.axis})';
+  if (node is NewlineNode) return 'Newline';
+  if (node is ComplexNode) {
+    return 'Complex(${_describeMathNodes(node.content)})';
+  }
+  return node.runtimeType.toString();
 }
 
 /// Isolated widget for the result PageView to prevent unnecessary rebuilds
-class _ResultPageViewWidget extends StatefulWidget {
-  final int index;
-  final AppColors colors;
-  final bool shouldAddKeys;
-  final bool isVisible;
-  final Map<int, List<MathNode>?> exactResultNodes;
-  final Map<int, int> currentResultPage;
-  final Map<int, ValueNotifier<int>> currentResultPageNotifiers;
-  final Map<int, ValueNotifier<double>> resultPageProgressNotifiers;
-  final Map<int, ValueNotifier<int>> exactResultVersionNotifiers;
-  final Map<int, PageController> resultPageControllers;
-  final Map<int, TextEditingController?> textDisplayControllers;
-  final GlobalKey? ansIndexKey;
-  final GlobalKey? resultKey;
-  final double Function(int) calculateDecimalResultHeight;
-  final double Function(int) calculateExactResultHeight;
-
-  const _ResultPageViewWidget({
-    super.key,
-    required this.index,
-    required this.colors,
-    required this.shouldAddKeys,
-    required this.isVisible,
-    required this.exactResultNodes,
-    required this.currentResultPage,
-    required this.currentResultPageNotifiers,
-    required this.resultPageProgressNotifiers,
-    required this.exactResultVersionNotifiers,
-    required this.resultPageControllers,
-    required this.textDisplayControllers,
-    required this.ansIndexKey,
-    required this.resultKey,
-    required this.calculateDecimalResultHeight,
-    required this.calculateExactResultHeight,
-  });
-
-  @override
-  State<_ResultPageViewWidget> createState() => _ResultPageViewWidgetState();
-}
-
-class _ResultPageViewWidgetState extends State<_ResultPageViewWidget> {
-  late PageController _pageController;
-  int _currentPage = 0;
-  double _lastDecimalHeight = 70.0;
-  double _lastExactHeight = 70.0;
-
-  @override
-  void initState() {
-    super.initState();
-    _currentPage = widget.currentResultPage[widget.index] ?? 0;
-    _pageController = PageController(initialPage: _currentPage);
-
-    // Store the controller in the parent's map
-    widget.resultPageControllers[widget.index] = _pageController;
-
-    // Add scroll listener
-    _pageController.addListener(_onPageScroll);
-
-    // Initialize heights
-    _lastDecimalHeight = widget.calculateDecimalResultHeight(widget.index);
-    _lastExactHeight = widget.calculateExactResultHeight(widget.index);
-  }
-
-  @override
-  void dispose() {
-    _pageController.removeListener(_onPageScroll);
-    _pageController.dispose();
-    super.dispose();
-  }
-
-  void _onPageScroll() {
-    if (!_pageController.hasClients) return;
-
-    double? page = _pageController.page;
-    if (page != null) {
-      widget.resultPageProgressNotifiers[widget.index]?.value = page.clamp(
-        0.0,
-        1.0,
-      );
-    }
-  }
-
-  void _onPageChanged(int page) {
-    _currentPage = page;
-    widget.currentResultPage[widget.index] = page;
-    widget.currentResultPageNotifiers[widget.index]?.value = page;
-    setState(() {});
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<int>(
-      valueListenable:
-          widget.exactResultVersionNotifiers[widget.index] ?? ValueNotifier(0),
-      builder: (context, version, _) {
-        // Calculate target heights
-        double targetDecimalHeight = widget.calculateDecimalResultHeight(
-          widget.index,
-        );
-        double targetExactHeight = widget.calculateExactResultHeight(
-          widget.index,
-        );
-
-        return _AnimatedHeightContainer(
-          targetDecimalHeight: targetDecimalHeight,
-          targetExactHeight: targetExactHeight,
-          lastDecimalHeight: _lastDecimalHeight,
-          lastExactHeight: _lastExactHeight,
-          progressNotifier:
-              widget.resultPageProgressNotifiers[widget.index] ??
-              ValueNotifier(0.0),
-          onHeightsAnimated: (decimal, exact) {
-            _lastDecimalHeight = decimal;
-            _lastExactHeight = exact;
-          },
-          child: PageView(
-            controller: _pageController,
-            physics: const ClampingScrollPhysics(),
-            onPageChanged: _onPageChanged,
-            children: [_buildDecimalResultPage(), _buildExactResultPage()],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildDecimalResultPage() {
-    final resController = widget.textDisplayControllers[widget.index];
-
-    return Column(
-      mainAxisSize: MainAxisSize.max,
-      children: [
-        _buildResultDivider(0, "DECIMAL"),
-        Expanded(
-          child: Container(
-            key: widget.shouldAddKeys ? widget.resultKey : null,
-            color: widget.colors.containerBackground,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            alignment: Alignment.center,
-            child: AnimatedOpacity(
-              curve: Curves.easeIn,
-              duration: const Duration(milliseconds: 500),
-              opacity: widget.isVisible ? 1.0 : 0.0,
-              child: SingleChildScrollView(
-                child: TextField(
-                  controller: resController,
-                  maxLines: null,
-                  keyboardType: TextInputType.multiline,
-                  textAlign: TextAlign.center,
-                  autofocus: false,
-                  readOnly: true,
-                  showCursor: false,
-                  style: TextStyle(
-                    fontSize: FONTSIZE,
-                    color: widget.colors.textPrimary,
-                  ),
-                  decoration: const InputDecoration(
-                    border: InputBorder.none,
-                    isDense: true,
-                    contentPadding: EdgeInsets.zero,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ============================================
-  // In _ResultPageViewWidgetState, REPLACE _buildExactResultPage():
-  // ============================================
-
-  Widget _buildExactResultPage() {
-    final exactNodes = widget.exactResultNodes[widget.index];
-    final bool hasResult = exactNodes != null && exactNodes.isNotEmpty;
-
-    return Column(
-      mainAxisSize: MainAxisSize.max,
-      children: [
-        _buildResultDivider(1, "EXACT"),
-        Expanded(
-          child: Container(
-            color: widget.colors.containerBackground,
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            alignment: Alignment.center,
-            child: AnimatedOpacity(
-              curve: Curves.easeIn,
-              duration: const Duration(milliseconds: 500),
-              opacity: widget.isVisible ? 1.0 : 0.0,
-              child:
-                  hasResult
-                      ? Builder(
-                        builder: (context) {
-                          final scope = _AnimatedContentScope.of(context);
-                          final animValue = scope?.animationValue ?? 1.0;
-                          final isAnimating = scope?.isAnimating ?? false;
-
-                          return AnimatedResultContent(
-                            animationValue: animValue,
-                            isAnimating: isAnimating,
-                            child: SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: SingleChildScrollView(
-                                child: MathResultDisplay(
-                                  nodes: exactNodes,
-                                  fontSize: FONTSIZE,
-                                  textColor: widget.colors.textPrimary,
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      )
-                      : const SizedBox.shrink(),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildResultDivider(int pageIndex, String label) {
-    return Row(
-      children: <Widget>[
-        Container(
-          key:
-              (widget.shouldAddKeys && pageIndex == 0)
-                  ? widget.ansIndexKey
-                  : null,
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: Text(
-            "${widget.index}",
-            style: TextStyle(fontSize: 10, color: widget.colors.textTertiary),
-          ),
-        ),
-        Expanded(
-          child: Container(
-            margin: const EdgeInsets.only(left: 0.0, right: 10.0),
-            child: Divider(color: widget.colors.divider, height: 6),
-          ),
-        ),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 6,
-              height: 6,
-              margin: const EdgeInsets.symmetric(horizontal: 2),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color:
-                    _currentPage == 0
-                        ? widget.colors.textSecondary
-                        : widget.colors.textSecondary.withValues(alpha: 0.3),
-              ),
-            ),
-            Container(
-              width: 6,
-              height: 6,
-              margin: const EdgeInsets.symmetric(horizontal: 2),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color:
-                    _currentPage == 1
-                        ? widget.colors.textSecondary
-                        : widget.colors.textSecondary.withValues(alpha: 0.3),
-              ),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 8,
-                color:
-                    _currentPage == pageIndex
-                        ? widget.colors.textSecondary
-                        : widget.colors.textSecondary.withValues(alpha: 0.5),
-                fontWeight:
-                    _currentPage == pageIndex
-                        ? FontWeight.bold
-                        : FontWeight.normal,
-              ),
-            ),
-          ],
-        ),
-        Expanded(
-          child: Container(
-            margin: const EdgeInsets.only(left: 10.0, right: 0.0),
-            child: Divider(color: widget.colors.divider, height: 6),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// A widget that animates height changes smoothly when content changes,
-/// but follows PageView progress instantly during swiping.
-class _AnimatedHeightContainer extends StatefulWidget {
-  final double targetDecimalHeight;
-  final double targetExactHeight;
-  final double lastDecimalHeight;
-  final double lastExactHeight;
-  final ValueNotifier<double> progressNotifier;
-  final void Function(double decimal, double exact) onHeightsAnimated;
-  final Widget child;
-
-  const _AnimatedHeightContainer({
-    required this.targetDecimalHeight,
-    required this.targetExactHeight,
-    required this.lastDecimalHeight,
-    required this.lastExactHeight,
-    required this.progressNotifier,
-    required this.onHeightsAnimated,
-    required this.child,
-  });
-
-  @override
-  State<_AnimatedHeightContainer> createState() =>
-      _AnimatedHeightContainerState();
-}
-
-class _AnimatedHeightContainerState extends State<_AnimatedHeightContainer>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _animationController;
-  late Animation<double> _decimalHeightAnimation;
-  late Animation<double> _exactHeightAnimation;
-  late Animation<double> _contentAnimation; // For content fade/scale
-
-  double _animatedDecimalHeight = 70.0;
-  double _animatedExactHeight = 70.0;
-
-  @override
-  void initState() {
-    super.initState();
-    _animatedDecimalHeight = widget.lastDecimalHeight;
-    _animatedExactHeight = widget.lastExactHeight;
-
-    _animationController = AnimationController(
-      duration: const Duration(milliseconds: 500),
-      vsync: this,
-    );
-
-    _setupAnimations();
-
-    _animationController.addListener(() {
-      setState(() {
-        _animatedDecimalHeight = _decimalHeightAnimation.value;
-        _animatedExactHeight = _exactHeightAnimation.value;
-      });
-    });
-
-    _animationController.addStatusListener((status) {
-      if (status == AnimationStatus.completed) {
-        widget.onHeightsAnimated(_animatedDecimalHeight, _animatedExactHeight);
-      }
-    });
-  }
-
-  void _setupAnimations() {
-    _decimalHeightAnimation = Tween<double>(
-      begin: _animatedDecimalHeight,
-      end: widget.targetDecimalHeight,
-    ).animate(
-      CurvedAnimation(
-        parent: _animationController,
-        curve: Curves.easeInOutCubic,
-      ),
-    );
-
-    _exactHeightAnimation = Tween<double>(
-      begin: _animatedExactHeight,
-      end: widget.targetExactHeight,
-    ).animate(
-      CurvedAnimation(
-        parent: _animationController,
-        curve: Curves.easeInOutCubic,
-      ),
-    );
-
-    _contentAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _animationController,
-        curve: Curves.easeInOutCubic,
-      ),
-    );
-  }
-
-  @override
-  void didUpdateWidget(covariant _AnimatedHeightContainer oldWidget) {
-    super.didUpdateWidget(oldWidget);
-
-    // Check if heights actually changed (content change, not swipe)
-    bool decimalHeightChanged =
-        (widget.targetDecimalHeight - _animatedDecimalHeight).abs() > 0.5;
-    bool exactHeightChanged =
-        (widget.targetExactHeight - _animatedExactHeight).abs() > 0.5;
-
-    if (decimalHeightChanged || exactHeightChanged) {
-      _setupAnimations();
-      _animationController.forward(from: 0.0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _animationController.dispose();
-    super.dispose();
-  }
-
-  // Expose the content animation value
-  double get contentAnimationValue =>
-      _animationController.isAnimating ? _contentAnimation.value : 1.0;
-
-  bool get isAnimating => _animationController.isAnimating;
-
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<double>(
-      valueListenable: widget.progressNotifier,
-      builder: (context, progress, _) {
-        // Use animated heights for interpolation during swipe
-        double height =
-            _animatedDecimalHeight +
-            (_animatedExactHeight - _animatedDecimalHeight) * progress;
-
-        return SizedBox(
-          height: height,
-          child: _AnimatedContentScope(
-            animationValue: contentAnimationValue,
-            isAnimating: isAnimating,
-            child: widget.child,
-          ),
-        );
-      },
-    );
-  }
-}
-
-/// InheritedWidget to pass animation state down to children
-class _AnimatedContentScope extends InheritedWidget {
-  final double animationValue;
-  final bool isAnimating;
-
-  const _AnimatedContentScope({
-    required this.animationValue,
-    required this.isAnimating,
-    required super.child,
-  });
-
-  static _AnimatedContentScope? of(BuildContext context) {
-    return context.dependOnInheritedWidgetOfExactType<_AnimatedContentScope>();
-  }
-
-  @override
-  bool updateShouldNotify(_AnimatedContentScope oldWidget) {
-    return animationValue != oldWidget.animationValue ||
-        isAnimating != oldWidget.isAnimating;
-  }
-}
-
-/// Widget that animates content appearance in sync with height changes
+/// Isolated widget for the result PageView to prevent unnecessary rebuilds
 class AnimatedResultContent extends StatelessWidget {
   final double animationValue;
   final bool isAnimating;

@@ -51,8 +51,25 @@ class _PopupMenuCalcButtonState extends State<PopupMenuCalcButton> {
   final ValueNotifier<int?> _highlightedIndex = ValueNotifier(null);
   bool _isPressed = false;
 
+  double _effectiveBorderRadius(SettingsProvider settings) {
+    return widget.borderRadius == 0 ? settings.borderRadius : widget.borderRadius;
+  }
+
+  Widget _buildIndicatorDot() {
+    return Container(
+      width: 5,
+      height: 5,
+      decoration: BoxDecoration(
+        color: widget.indicatorColor ?? widget.textColor.withValues(alpha: 0.5),
+        shape: BoxShape.circle,
+      ),
+    );
+  }
+
   void _showOverlay() {
     if (_overlayEntry != null) return;
+
+    final settings = Provider.of<SettingsProvider>(context, listen: false);
 
     final RenderBox renderBox = context.findRenderObject() as RenderBox;
     final Size size = renderBox.size;
@@ -91,7 +108,9 @@ class _PopupMenuCalcButtonState extends State<PopupMenuCalcButton> {
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
               decoration: BoxDecoration(
                 color: Colors.white, // Force white background
-                borderRadius: BorderRadius.circular(widget.borderRadius), // Force square shape
+                borderRadius: BorderRadius.circular(
+                  _effectiveBorderRadius(settings),
+                ),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.3),
@@ -218,19 +237,34 @@ class _PopupMenuCalcButtonState extends State<PopupMenuCalcButton> {
     }
   }
 
+  /// Scales the label down by its length, matching MyButton.
+  double get _fittedFontSize {
+    final int n = widget.buttonText.characters.length;
+    if (n <= 2) return widget.fontSize;
+    if (n == 3) return widget.fontSize * 0.66;
+    if (n == 4) return widget.fontSize * 0.50;
+    return widget.fontSize * 0.42;
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Only depend on the settings this button actually uses so unrelated
+    // settings changes don't rebuild every popup button.
+    final (bool haptic, double sBorderRadius, double buttonSpacing) =
+        context.select<SettingsProvider, (bool, double, double)>(
+      (s) => (s.hapticFeedback, s.borderRadius, s.buttonSpacing),
+    );
+    final effectiveBorderRadius =
+        widget.borderRadius == 0 ? sBorderRadius : widget.borderRadius;
+
     return Padding(
-      padding: const EdgeInsets.all(0.5),
+      padding: EdgeInsets.all(buttonSpacing / 2),
       child: GestureDetector(
         onTapDown: (_) => setState(() => _isPressed = true),
         onTapUp: (_) {
           setState(() => _isPressed = false);
           widget.onTap?.call();
-          if (Provider.of<SettingsProvider>(
-            context,
-            listen: false,
-          ).hapticFeedback) {
+          if (haptic) {
             HapticFeedback.lightImpact();
           }
         },
@@ -250,21 +284,14 @@ class _PopupMenuCalcButtonState extends State<PopupMenuCalcButton> {
           _removeOverlay();
           if (index != null) {
             widget.menuItems[index].onTap();
-            if (Provider.of<SettingsProvider>(
-              context,
-              listen: false,
-            ).hapticFeedback) {
+            if (haptic) {
               HapticFeedback.heavyImpact();
             }
           }
         },
         child: Container(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(
-              widget.borderRadius == 0
-                  ? Provider.of<SettingsProvider>(context).borderRadius
-                  : widget.borderRadius,
-            ),
+            borderRadius: BorderRadius.circular(effectiveBorderRadius),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: 0.3),
@@ -275,11 +302,7 @@ class _PopupMenuCalcButtonState extends State<PopupMenuCalcButton> {
             ],
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(
-              widget.borderRadius == 0
-                  ? Provider.of<SettingsProvider>(context).borderRadius
-                  : widget.borderRadius,
-            ),
+            borderRadius: BorderRadius.circular(effectiveBorderRadius),
             child: Material(
               color: widget.color,
               child: Container(
@@ -290,29 +313,39 @@ class _PopupMenuCalcButtonState extends State<PopupMenuCalcButton> {
                 child: Stack(
                   children: [
                     Center(
-                      child: Text(
-                        widget.buttonText,
-                        style: TextStyle(
-                          color: widget.textColor,
-                          fontSize: widget.fontSize,
+                      // Same length-based fitting as MyButton: these keys are
+                      // only ~36dp wide and carry the longest labels on the
+                      // keypad ("asin", "acos", "atan").
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 2),
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            widget.buttonText,
+                            maxLines: 1,
+                            softWrap: false,
+                            style: TextStyle(
+                              color: widget.textColor,
+                              fontSize: _fittedFontSize,
+                              height: 1.0,
+                            ),
+                          ),
                         ),
                       ),
                     ),
                     if (widget.hasIndicator)
-                      Positioned(
-                        bottom: 4,
-                        right: 4,
-                        child: Container(
-                          width: 5,
-                          height: 5,
-                          decoration: BoxDecoration(
-                            color:
-                                widget.indicatorColor ??
-                                widget.textColor.withValues(alpha: 0.5),
-                            shape: BoxShape.circle,
+                      (effectiveBorderRadius > 10)
+                          ? Positioned(
+                            bottom: 4,
+                            left: 0,
+                            right: 0,
+                            child: Center(child: _buildIndicatorDot()),
+                          )
+                          : Positioned(
+                            bottom: 4,
+                            right: 4,
+                            child: _buildIndicatorDot(),
                           ),
-                        ),
-                      ),
                   ],
                 ),
               ),
