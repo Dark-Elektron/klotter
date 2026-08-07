@@ -1,50 +1,157 @@
+import 'dart:math' as math;
 import 'dart:ui';
 
-Color jetColormap(double t) {
-  t = t.clamp(0.0, 1.0);
+import '../models/point_3d.dart';
 
-  if (t < 0.125) {
-    return Color.lerp(
-      const Color(0xFF000080),
-      const Color(0xFF0000FF),
-      t / 0.125,
-    )!;
-  } else if (t < 0.375) {
-    return Color.lerp(
-      const Color(0xFF0000FF),
-      const Color(0xFF00FFFF),
-      (t - 0.125) / 0.25,
-    )!;
-  } else if (t < 0.625) {
-    return Color.lerp(
-      const Color(0xFF00FFFF),
-      const Color(0xFFFFFF00),
-      (t - 0.375) / 0.25,
-    )!;
-  } else if (t < 0.875) {
-    return Color.lerp(
-      const Color(0xFFFFFF00),
-      const Color(0xFFFF0000),
-      (t - 0.625) / 0.25,
-    )!;
-  } else {
-    return Color.lerp(
-      const Color(0xFFFF0000),
-      const Color(0xFF800000),
-      (t - 0.875) / 0.125,
-    )!;
-  }
+// ============================================================
+// COLORMAPS
+// ============================================================
+
+Color _rampLerp(List<Color> stops, double t) {
+  final double x = t.clamp(0.0, 1.0) * (stops.length - 1);
+  final int i = x.floor().clamp(0, stops.length - 2);
+  return Color.lerp(stops[i], stops[i + 1], x - i)!;
 }
 
-Color surfaceGradientColor(double t) {
-  final colors = [
-    const Color(0xFF1E88E5),
-    const Color(0xFF00ACC1),
-    const Color(0xFF00897B),
-    const Color(0xFF43A047),
-    const Color(0xFFFDD835),
-  ];
-  final scaledT = t * (colors.length - 1);
-  final index = scaledT.floor().clamp(0, colors.length - 2);
-  return Color.lerp(colors[index], colors[index + 1], scaledT - index)!;
+/// Jet: the classic rainbow ramp, dark blue through cyan, yellow and red.
+///
+/// Chosen deliberately. Note the trade-off it carries: jet is not perceptually
+/// uniform — its lightness rises and falls across the range, so bright bands at
+/// cyan and yellow can read as ridges that are not in the data, and it loses
+/// separation under the common forms of colour-vision deficiency. On a shaded
+/// 3D surface it also competes with the lighting, which encodes form through
+/// lightness. [viridisColormap] remains available if that ever matters.
+const List<Color> _jet = <Color>[
+  Color(0xFF000080),
+  Color(0xFF0000FF),
+  Color(0xFF00FFFF),
+  Color(0xFFFFFF00),
+  Color(0xFFFF0000),
+  Color(0xFF800000),
+];
+
+/// Viridis: perceptually uniform and colour-vision-deficiency safe, monotonic
+/// in lightness. Kept as an alternative to [plotColormap].
+const List<Color> _viridis = <Color>[
+  Color(0xFF440154),
+  Color(0xFF472D7B),
+  Color(0xFF3B528B),
+  Color(0xFF2C728E),
+  Color(0xFF21918C),
+  Color(0xFF27AD81),
+  Color(0xFF5EC962),
+  Color(0xFFAADC32),
+  Color(0xFFFDE725),
+];
+
+/// Single-hue teal ramp, light to dark, for the quieter surface mode.
+const List<Color> _tealRamp = <Color>[
+  Color(0xFFE0F2F1),
+  Color(0xFFA7D8D4),
+  Color(0xFF6BBFBA),
+  Color(0xFF3A9E9C),
+  Color(0xFF1E7D7E),
+  Color(0xFF135C61),
+  Color(0xFF0B3D44),
+];
+
+/// The perceptually uniform alternative, should it be wanted again.
+Color viridisColormap(double t) => _rampLerp(_viridis, t);
+
+/// How many discrete levels the banded ramp uses.
+///
+/// Eight matches the density most FEM post-processors default to: enough to
+/// read a gradient, few enough that each band is a legible contour region.
+const int plotColorBands = 8;
+
+/// Quantised ramp — the NGSolve/ParaView look.
+///
+/// A smooth ramp shows *where* a value is; discrete bands show *which contour
+/// interval* it falls in, which is what makes a level readable off the plot
+/// without a probe. Each band takes the colour of its own midpoint, so the
+/// colorbar's swatches are the exact colours drawn on the surface.
+Color plotColormapBanded(double t, {int bands = plotColorBands}) {
+  final double clamped = t.clamp(0.0, 1.0);
+  // The top edge belongs to the last band rather than starting a new one.
+  final int index = (clamped * bands).floor().clamp(0, bands - 1);
+  return plotColormap((index + 0.5) / bands);
+}
+
+/// The band [t] falls in, and the fraction of the range each band spans.
+/// Useful for drawing a colorbar whose divisions line up with the surface.
+({int index, double lower, double upper}) plotColorBand(
+  double t, {
+  int bands = plotColorBands,
+}) {
+  final double clamped = t.clamp(0.0, 1.0);
+  final int index = (clamped * bands).floor().clamp(0, bands - 1);
+  return (index: index, lower: index / bands, upper: (index + 1) / bands);
+}
+
+/// Default magnitude ramp for surfaces, contours and colorbars.
+Color plotColormap(double t) => _rampLerp(_jet, t);
+
+/// Quieter single-hue alternative for the plain "gradient" surface mode.
+Color surfaceGradientColor(double t) => _rampLerp(_tealRamp, t);
+
+// ============================================================
+// DEPTH SHADING
+// ============================================================
+
+/// Direction the key light comes from, in view space: up, slightly left, and
+/// toward the viewer. Fixed to the camera rather than the model so rotating
+/// the surface sweeps the highlight across it — the motion cue that makes the
+/// shape read as solid.
+const double _lx = -0.40;
+const double _ly = -0.55;
+const double _lz = 0.73;
+
+/// How much light a face receives with no direct illumination. Without an
+/// ambient floor, faces turned away from the light go black and the surface
+/// reads as holes rather than shadow.
+const double _ambient = 0.42;
+
+/// Lambertian diffuse factor in `[_ambient, 1.0]` for a quad, from its
+/// view-space corners. Uses the absolute dot product so the underside of a
+/// surface is shaded rather than unlit.
+///
+/// Takes corners rather than a `Quad` because the 3D painter declares its own
+/// `Quad` that shadows the one in `models/point_3d.dart`.
+double quadShadeFactor(Point3D p1, Point3D p2, Point3D p4) {
+  // Two edge vectors from p1.
+  final double ux = p2.x - p1.x;
+  final double uy = p2.y - p1.y;
+  final double uz = p2.z - p1.z;
+  final double vx = p4.x - p1.x;
+  final double vy = p4.y - p1.y;
+  final double vz = p4.z - p1.z;
+
+  // Surface normal = u x v.
+  final double nx = uy * vz - uz * vy;
+  final double ny = uz * vx - ux * vz;
+  final double nz = ux * vy - uy * vx;
+
+  final double len = math.sqrt(nx * nx + ny * ny + nz * nz);
+  if (len < 1e-9 || !len.isFinite) return 1.0;
+
+  final double ndotl = ((nx * _lx + ny * _ly + nz * _lz) / len).abs();
+  return _ambient + (1.0 - _ambient) * ndotl.clamp(0.0, 1.0);
+}
+
+/// Apply a shade factor to a base colour.
+///
+/// Shadows lerp toward a deep desaturated blue rather than black. Real shadows
+/// pick up ambient skylight, so a cool shadow reads as depth while a black one
+/// reads as dirt.
+Color applyShading(Color base, double factor) {
+  const Color shadowTint = Color(0xFF10141C);
+  return Color.lerp(shadowTint, base, factor.clamp(0.0, 1.0))!;
+}
+
+/// Atmospheric depth cue: wash distant geometry toward the background so far
+/// parts of the surface recede. [depth01] is 0 at the nearest quad and 1 at
+/// the farthest.
+Color applyDepthCue(Color color, double depth01, Color background) {
+  const double maxWash = 0.28;
+  return Color.lerp(color, background, depth01.clamp(0.0, 1.0) * maxWash)!;
 }

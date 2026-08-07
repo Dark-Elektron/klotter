@@ -2,12 +2,16 @@ import 'package:flutter/material.dart';
 import '../models/enums.dart';
 import '../../utils/app_colors.dart';
 import '../parsers/vector_field_parser.dart';
-import '../parsers/math_parser.dart';
+import '../parsers/plot_expression.dart';
 import '../painters/plot_2d_painter.dart';
+import '../utils/curve_features.dart';
 import '../utils/plot_theme.dart';
 
 class Plot2DScreen extends StatefulWidget {
-  final String function;
+  final PlotExpression function;
+
+  /// One curve per line of the cell.
+  final List<PlotExpression> functions;
   final bool is3DFunction;
   final PlotMode plotMode;
   final FieldType fieldType;
@@ -17,9 +21,14 @@ class Plot2DScreen extends StatefulWidget {
   final ZoomAxis zoomAxis; // New
   final AppColors colors;
 
+  /// Built once per panel rather than per paint, and carries the plot's
+  /// colour mode and the theme's series palette.
+  final PlotThemeData plotTheme;
+
   const Plot2DScreen({
     super.key,
     required this.function,
+    this.functions = const <PlotExpression>[],
     required this.is3DFunction,
     required this.plotMode,
     required this.fieldType,
@@ -28,6 +37,7 @@ class Plot2DScreen extends StatefulWidget {
     required this.surfaceMode,
     required this.zoomAxis, // New
     required this.colors,
+    required this.plotTheme,
   });
 
   @override
@@ -36,8 +46,28 @@ class Plot2DScreen extends StatefulWidget {
 
 class Plot2DScreenState extends State<Plot2DScreen> {
   double xMin = -5, xMax = 5;
+
+  /// Apply a restored window without the validation [setRanges] does — the
+  /// values have already been checked on the way out of storage.
+  void restoreWindow(double x0, double x1, double y0, double y1) {
+    if (x1 - x0 < 1e-9 || y1 - y0 < 1e-9) return;
+    xMin = x0;
+    xMax = x1;
+    yMin = y0;
+    yMax = y1;
+    _features = null;
+    _snappedFeature = null;
+    _traceX = null;
+  }
+
   double yMin = -5, yMax = 5;
   double _lastScale = 1.0;
+
+  /// x of the trace crosshair in data space, or null when not tracing.
+  ///
+  /// Long-press starts it rather than tap, so it never competes with the
+  /// single-finger pan that already owns dragging on this surface.
+  double? _traceX;
   
   // For detecting axis-specific zoom based on gesture location
   static const double _axisZoneSize = 60.0; // pixels from edge to detect axis zone
@@ -52,10 +82,87 @@ class Plot2DScreenState extends State<Plot2DScreen> {
   void didUpdateWidget(covariant Plot2DScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.function != widget.function ||
+        oldWidget.functions != widget.functions ||
         oldWidget.fieldType != widget.fieldType ||
         oldWidget.is3DFunction != widget.is3DFunction) {
+      // The curve changed, so any cached roots and turning points are stale.
+      _features = null;
+      _snappedFeature = null;
       _autoScaleIfNeeded();
     }
+  }
+
+  /// Exposed for tests; the crosshair is otherwise private state.
+  @visibleForTesting
+  double? get traceXForTest => _traceX;
+
+  /// Feature snapping. The trace answers "what is f(2.3)?"; snapping lets it
+  /// also answer "where does this cross zero?" without hunting for the pixel.
+  CurveFeature? _snappedFeature;
+  List<CurveFeature>? _features;
+
+  List<PlotExpression> get _curves =>
+      widget.functions.isEmpty
+          ? <PlotExpression>[widget.function]
+          : widget.functions;
+
+  /// Features of the primary curve across the visible window, recomputed only
+  /// when the curve or the window changes — not on every drag frame.
+  List<CurveFeature> _featuresForWindow() {
+    return _features ??= findFeatures(_curves.first, xMin, xMax);
+  }
+
+  void _setTrace(double localX, double width) {
+    if (width <= 0) return;
+    final double raw = xMin + (localX / width) * (xMax - xMin);
+
+    // Snap within a few pixels' worth of x, so it assists without fighting a
+    // deliberate placement elsewhere.
+    final double tolerance = (xMax - xMin) * (12 / width);
+    final CurveFeature? hit = nearestFeature(
+      _featuresForWindow(),
+      raw,
+      tolerance,
+    );
+
+    setState(() {
+      _snappedFeature = hit;
+      _traceX = (hit?.x ?? raw).clamp(xMin, xMax);
+    });
+  }
+
+  /// Current window, for the axis-range editor.
+  (double, double, double, double) get ranges => (xMin, xMax, yMin, yMax);
+
+  /// Set the window numerically.
+  ///
+  /// Gestures cannot reliably land on an exact window — getting to
+  /// x ∈ [0, 2π] by pinching is guesswork — so the ranges are typeable.
+  /// Inverted or degenerate input is rejected rather than silently swapped,
+  /// because a zero-width axis renders as a blank plot with no explanation.
+  bool setRanges({
+    required double newXMin,
+    required double newXMax,
+    required double newYMin,
+    required double newYMax,
+  }) {
+    if (!newXMin.isFinite ||
+        !newXMax.isFinite ||
+        !newYMin.isFinite ||
+        !newYMax.isFinite) {
+      return false;
+    }
+    if (newXMax - newXMin < 1e-9 || newYMax - newYMin < 1e-9) return false;
+    setState(() {
+      xMin = newXMin;
+      xMax = newXMax;
+      yMin = newYMin;
+      yMax = newYMax;
+      _traceX = null;
+      _snappedFeature = null;
+      _features = null;
+    });
+    return true;
   }
 
   void resetView() {
@@ -64,6 +171,9 @@ class Plot2DScreenState extends State<Plot2DScreen> {
       xMax = 5;
       yMin = -5;
       yMax = 5;
+      _traceX = null;
+      _snappedFeature = null;
+      _features = null;
     });
     _autoScaleIfNeeded();
   }
@@ -73,17 +183,24 @@ class Plot2DScreenState extends State<Plot2DScreen> {
       return;
     }
     try {
-      final parser = MathParser(widget.function);
+      final curves =
+          widget.functions.isEmpty
+              ? <PlotExpression>[widget.function]
+              : widget.functions;
       double? minY;
       double? maxY;
       const int samples = 80;
-      for (int i = 0; i <= samples; i++) {
-        final t = i / samples;
-        final x = xMin + (xMax - xMin) * t;
-        final y = parser.evaluate(x, 0, 0);
-        if (y.isNaN || y.isInfinite) continue;
-        minY = minY == null ? y : (y < minY ? y : minY);
-        maxY = maxY == null ? y : (y > maxY ? y : maxY);
+      // Fit every curve, not just the first, or added lines land off-screen.
+      for (final parser in curves) {
+        if (!parser.isValid) continue;
+        for (int i = 0; i <= samples; i++) {
+          final t = i / samples;
+          final x = xMin + (xMax - xMin) * t;
+          final y = parser.evaluate(x, 0, 0);
+          if (y.isNaN || y.isInfinite) continue;
+          minY = minY == null ? y : (y < minY ? y : minY);
+          maxY = maxY == null ? y : (y > maxY ? y : maxY);
+        }
       }
       if (minY == null || maxY == null) return;
       if ((maxY - minY).abs() < 1e-6) {
@@ -173,7 +290,8 @@ class Plot2DScreenState extends State<Plot2DScreen> {
                     break;
                 }
               } else if (details.pointerCount == 1) {
-                // Pan
+                // Pan — the visible window moved, so features must be refound.
+                _features = null;
                 final xShift = -details.focalPointDelta.dx *
                     (xMax - xMin) /
                     constraints.maxWidth;
@@ -187,13 +305,35 @@ class Plot2DScreenState extends State<Plot2DScreen> {
               }
             });
           },
+          onLongPressStart:
+              (details) => _setTrace(
+                details.localPosition.dx,
+                constraints.maxWidth,
+              ),
+          onLongPressMoveUpdate:
+              (details) => _setTrace(
+                details.localPosition.dx,
+                constraints.maxWidth,
+              ),
+          onTap: () {
+            if (_traceX != null) {
+              setState(() {
+                _traceX = null;
+                _snappedFeature = null;
+              });
+            }
+          },
           child: Container(
             decoration: BoxDecoration(
-              gradient: PlotThemeData.fromColors(widget.colors).background2D,
+              gradient: widget.plotTheme.background2D,
             ),
             child: CustomPaint(
               size: Size(constraints.maxWidth, constraints.maxHeight),
               painter: Plot2DPainter(
+                functions: widget.functions,
+                traceX: _traceX,
+                traceFeature: _snappedFeature,
+                plotTheme: widget.plotTheme,
                 function: widget.function,
                 xMin: xMin,
                 xMax: xMax,

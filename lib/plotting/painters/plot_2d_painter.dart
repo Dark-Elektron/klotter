@@ -1,14 +1,28 @@
+import 'dart:ui' show Vertices, VertexMode;
 import 'dart:math';
 import '../../utils/app_colors.dart';
 import 'package:flutter/material.dart';
 import '../models/enums.dart';
-import '../parsers/math_parser.dart';
+import '../parsers/plot_expression.dart';
 import '../parsers/vector_field_parser.dart';
 import '../utils/colormap.dart';
+import '../utils/curve_features.dart';
+import '../utils/level_set.dart';
 import '../utils/plot_theme.dart';
 
 class Plot2DPainter extends CustomPainter {
-  final String function;
+  final PlotExpression function;
+
+  /// One curve per line of the cell. `function` stays the primary entry and
+  /// still drives surfaces, fields and contours, which are single-function
+  /// views by nature.
+  final List<PlotExpression> functions;
+
+  /// x of the trace crosshair in data space, or null when not tracing.
+  final double? traceX;
+
+  /// The root or turning point the trace snapped to, if any.
+  final CurveFeature? traceFeature;
   final double xMin, xMax, yMin, yMax;
   final PlotMode plotMode;
   final FieldType fieldType;
@@ -17,8 +31,15 @@ class Plot2DPainter extends CustomPainter {
   final SurfaceMode surfaceMode;
   final AppColors colors;
 
+  /// Built once per panel rather than per paint, and carries the plot's
+  /// colour mode and the theme's series palette.
+  final PlotThemeData plotTheme;
+
   Plot2DPainter({
     required this.function,
+    this.functions = const <PlotExpression>[],
+    this.traceX,
+    this.traceFeature,
     required this.xMin,
     required this.xMax,
     required this.yMin,
@@ -29,6 +50,7 @@ class Plot2DPainter extends CustomPainter {
     required this.showContour,
     required this.surfaceMode,
     required this.colors,
+    required this.plotTheme,
   });
 
   @override
@@ -55,7 +77,10 @@ class Plot2DPainter extends CustomPainter {
             surfaceMode,
           );
         }
-      } else if (fieldType == FieldType.scalar) {
+      } else if (fieldType == FieldType.scalar && !function.isLevelSet) {
+        // A level set has no height to shade — F is only a means of locating
+        // the curve, so shading it would colour the plot by "distance from the
+        // answer" rather than by anything the user asked for.
         _drawScalarSurface(canvas, size, toScreenX, toScreenY);
       }
     }
@@ -96,6 +121,103 @@ class Plot2DPainter extends CustomPainter {
     }
 
     _drawLabels(canvas, size, toScreenX, toScreenY);
+    _drawTrace(canvas, size, toScreenX, toScreenY);
+  }
+
+  /// Resolution of the heatmap lattice. Samples are taken at cell *corners*,
+  /// so this is `gridCount + 1` points across.
+  static const int _heatmapGrid = 40;
+
+  /// Sample [valueAt] on the corner lattice.
+  ///
+  /// Corners, not cell centres: a centre sample can only colour its cell flat,
+  /// which is what made the heatmap a grid of blocks. Corners are shared
+  /// between neighbouring cells, so colour can be interpolated across each.
+  List<List<double>> _sampleHeatmap(double Function(double, double) valueAt) {
+    return <List<double>>[
+      for (int i = 0; i <= _heatmapGrid; i++)
+        <double>[
+          for (int j = 0; j <= _heatmapGrid; j++)
+            () {
+              final double x = xMin + (xMax - xMin) * i / _heatmapGrid;
+              final double y = yMin + (yMax - yMin) * j / _heatmapGrid;
+              try {
+                return valueAt(x, y);
+              } catch (_) {
+                return double.nan;
+              }
+            }(),
+        ],
+    ];
+  }
+
+  /// Fill the plot with colour interpolated between the corner samples.
+  ///
+  /// One [Canvas.drawVertices] for the whole lattice rather than 1,600
+  /// rectangles: fewer draw calls, and the colour is continuous within a cell
+  /// instead of a flat block. Cells touching a non-finite sample are skipped,
+  /// which leaves a hole where the function is undefined rather than painting
+  /// a misleading colour there.
+  void _fillSmoothHeatmap(
+    Canvas canvas,
+    Size size,
+    List<List<double>> corners,
+    double minVal,
+    double maxVal,
+  ) {
+    final double span = maxVal > minVal ? maxVal - minVal : 1.0;
+    final double cellWidth = size.width / _heatmapGrid;
+    final double cellHeight = size.height / _heatmapGrid;
+
+    Color shade(double v) =>
+        plotColormap(((v - minVal) / span).clamp(0.0, 1.0));
+
+    final List<Offset> positions = <Offset>[];
+    final List<Color> colors = <Color>[];
+
+    for (int i = 0; i < _heatmapGrid; i++) {
+      for (int j = 0; j < _heatmapGrid; j++) {
+        final double v00 = corners[i][j];
+        final double v10 = corners[i + 1][j];
+        final double v11 = corners[i + 1][j + 1];
+        final double v01 = corners[i][j + 1];
+        if (!v00.isFinite || !v10.isFinite || !v11.isFinite || !v01.isFinite) {
+          continue;
+        }
+
+        final double left = i * cellWidth;
+        final double right = (i + 1) * cellWidth;
+        // y grows upward in data space and downward on screen.
+        final double bottom = size.height - j * cellHeight;
+        final double top = size.height - (j + 1) * cellHeight;
+
+        final Offset p00 = Offset(left, bottom);
+        final Offset p10 = Offset(right, bottom);
+        final Offset p11 = Offset(right, top);
+        final Offset p01 = Offset(left, top);
+
+        final Color c00 = shade(v00);
+        final Color c10 = shade(v10);
+        final Color c11 = shade(v11);
+        final Color c01 = shade(v01);
+
+        // Both triangles share the p00-p11 diagonal with matching colours, so
+        // no seam shows along it.
+        positions.addAll(<Offset>[p00, p10, p11, p00, p11, p01]);
+        colors.addAll(<Color>[c00, c10, c11, c00, c11, c01]);
+      }
+    }
+
+    if (positions.isEmpty) return;
+
+    final Vertices vertices = Vertices(
+      VertexMode.triangles,
+      positions,
+      colors: colors,
+    );
+    // BlendMode.dst keeps the vertex colours; the paint contributes nothing.
+    canvas.drawVertices(vertices, BlendMode.dst, Paint());
+    vertices.dispose();
   }
 
   void _drawScalarSurface(
@@ -104,63 +226,26 @@ class Plot2DPainter extends CustomPainter {
     double Function(double) toScreenX,
     double Function(double) toScreenY,
   ) {
-    final parser = MathParser(function);
-
-    // Check if function uses y (is 2D)
+    final parser = function;
     if (!parser.usesY) return;
 
-    const gridCount = 40;
-    final cellWidth = size.width / gridCount;
-    final cellHeight = size.height / gridCount;
+    final List<List<double>> corners = _sampleHeatmap(
+      (x, y) => parser.evaluate(x, y),
+    );
 
-    // First pass: find min/max values
     double minVal = double.infinity;
     double maxVal = double.negativeInfinity;
-
-    for (int i = 0; i <= gridCount; i++) {
-      for (int j = 0; j <= gridCount; j++) {
-        final x = xMin + (xMax - xMin) * i / gridCount;
-        final y = yMin + (yMax - yMin) * j / gridCount;
-        try {
-          final val = parser.evaluate(x, y);
-          if (val.isFinite) {
-            minVal = min(minVal, val);
-            maxVal = max(maxVal, val);
-          }
-          // ignore: empty_catches
-        } catch (e) {}
+    for (final List<double> column in corners) {
+      for (final double v in column) {
+        if (!v.isFinite) continue;
+        minVal = min(minVal, v);
+        maxVal = max(maxVal, v);
       }
     }
-
-    if (minVal == maxVal) maxVal = minVal + 1;
     if (!minVal.isFinite || !maxVal.isFinite) return;
+    if (minVal == maxVal) maxVal = minVal + 1;
 
-    // Second pass: draw heatmap
-    for (int i = 0; i < gridCount; i++) {
-      for (int j = 0; j < gridCount; j++) {
-        final x = xMin + (xMax - xMin) * (i + 0.5) / gridCount;
-        final y = yMin + (yMax - yMin) * (j + 0.5) / gridCount;
-
-        try {
-          final val = parser.evaluate(x, y);
-          if (!val.isFinite) continue;
-
-          final normalized = (val - minVal) / (maxVal - minVal);
-          final color = jetColormap(normalized);
-
-          final rect = Rect.fromLTWH(
-            i * cellWidth,
-            size.height - (j + 1) * cellHeight,
-            cellWidth + 1,
-            cellHeight + 1,
-          );
-
-          canvas.drawRect(rect, Paint()..color = color.withValues(alpha: 0.6));
-          // ignore: empty_catches
-        } catch (e) {}
-      }
-    }
-
+    _fillSmoothHeatmap(canvas, size, corners, minVal, maxVal);
     _drawColorbar(canvas, size, minVal, maxVal);
   }
 
@@ -170,55 +255,35 @@ class Plot2DPainter extends CustomPainter {
     double Function(double) toScreenX,
     double Function(double) toScreenY,
   ) {
-    if (vectorParser == null) return;
+    final VectorFieldParser? field = vectorParser;
+    if (field == null) return;
 
-    const gridCount = 40;
-    final cellWidth = size.width / gridCount;
-    final cellHeight = size.height / gridCount;
-
-    // First pass: find max magnitude
-      double maxMag = 0;
-      for (int i = 0; i <= gridCount; i++) {
-        for (int j = 0; j <= gridCount; j++) {
-          final x = xMin + (xMax - xMin) * i / gridCount;
-          final y = yMin + (yMax - yMin) * j / gridCount;
-          double mag = vectorParser!.magnitude(x, y);
-          if (surfaceMode == SurfaceMode.x) {
-            mag = vectorParser!.componentValue(SurfaceMode.x, x, y).abs();
-          } else if (surfaceMode == SurfaceMode.y) {
-            mag = vectorParser!.componentValue(SurfaceMode.y, x, y).abs();
-          } else if (surfaceMode == SurfaceMode.z) {
-            mag = vectorParser!.componentValue(SurfaceMode.z, x, y).abs();
-          }
-          if (mag.isFinite) maxMag = max(maxMag, mag);
-        }
-      }
-
-    if (maxMag == 0) maxMag = 1;
-
-    // Second pass: draw heatmap
-    for (int i = 0; i < gridCount; i++) {
-      for (int j = 0; j < gridCount; j++) {
-        final x = xMin + (xMax - xMin) * (i + 0.5) / gridCount;
-        final y = yMin + (yMax - yMin) * (j + 0.5) / gridCount;
-
-        final mag = vectorParser!.magnitude(x, y);
-        if (!mag.isFinite) continue;
-
-        final normalized = mag / maxMag;
-        final color = jetColormap(normalized);
-
-        final rect = Rect.fromLTWH(
-          i * cellWidth,
-          size.height - (j + 1) * cellHeight,
-          cellWidth + 1,
-          cellHeight + 1,
-        );
-
-        canvas.drawRect(rect, Paint()..color = color.withValues(alpha: 0.6));
+    // Honour surfaceMode when sampling. The scale used to be computed from the
+    // selected component while the fill always drew |F|, so choosing a
+    // component rescaled the colours without changing what was drawn.
+    double valueAt(double x, double y) {
+      switch (surfaceMode) {
+        case SurfaceMode.x:
+        case SurfaceMode.y:
+        case SurfaceMode.z:
+          return field.componentValue(surfaceMode, x, y).abs();
+        case SurfaceMode.magnitude:
+        case SurfaceMode.none:
+          return field.magnitude(x, y);
       }
     }
 
+    final List<List<double>> corners = _sampleHeatmap(valueAt);
+
+    double maxMag = 0;
+    for (final List<double> column in corners) {
+      for (final double v in column) {
+        if (v.isFinite) maxMag = max(maxMag, v);
+      }
+    }
+    if (maxMag == 0) maxMag = 1;
+
+    _fillSmoothHeatmap(canvas, size, corners, 0, maxMag);
     _drawColorbar(canvas, size, 0, maxMag);
   }
 
@@ -229,51 +294,26 @@ class Plot2DPainter extends CustomPainter {
     double Function(double) toScreenY,
     SurfaceMode mode,
   ) {
-    if (vectorParser == null) return;
+    final VectorFieldParser? field = vectorParser;
+    if (field == null) return;
 
-    const gridCount = 40;
-    final cellWidth = size.width / gridCount;
-    final cellHeight = size.height / gridCount;
+    final List<List<double>> corners = _sampleHeatmap(
+      (x, y) => field.componentValue(mode, x, y),
+    );
 
     double minVal = double.infinity;
     double maxVal = double.negativeInfinity;
-
-    for (int i = 0; i <= gridCount; i++) {
-      for (int j = 0; j <= gridCount; j++) {
-        final x = xMin + (xMax - xMin) * i / gridCount;
-        final y = yMin + (yMax - yMin) * j / gridCount;
-        final val = vectorParser!.componentValue(mode, x, y);
-        if (!val.isFinite) continue;
-        minVal = min(minVal, val);
-        maxVal = max(maxVal, val);
+    for (final List<double> column in corners) {
+      for (final double v in column) {
+        if (!v.isFinite) continue;
+        minVal = min(minVal, v);
+        maxVal = max(maxVal, v);
       }
     }
-
-    if (minVal == maxVal) maxVal = minVal + 1;
     if (!minVal.isFinite || !maxVal.isFinite) return;
+    if (minVal == maxVal) maxVal = minVal + 1;
 
-    for (int i = 0; i < gridCount; i++) {
-      for (int j = 0; j < gridCount; j++) {
-        final x = xMin + (xMax - xMin) * (i + 0.5) / gridCount;
-        final y = yMin + (yMax - yMin) * (j + 0.5) / gridCount;
-
-        final val = vectorParser!.componentValue(mode, x, y);
-        if (!val.isFinite) continue;
-
-        final normalized = (val - minVal) / (maxVal - minVal);
-        final color = jetColormap(normalized.clamp(0.0, 1.0));
-
-        final rect = Rect.fromLTWH(
-          i * cellWidth,
-          size.height - (j + 1) * cellHeight,
-          cellWidth + 1,
-          cellHeight + 1,
-        );
-
-        canvas.drawRect(rect, Paint()..color = color.withValues(alpha: 0.6));
-      }
-    }
-
+    _fillSmoothHeatmap(canvas, size, corners, minVal, maxVal);
     _drawColorbar(canvas, size, minVal, maxVal);
   }
 
@@ -314,7 +354,7 @@ class Plot2DPainter extends CustomPainter {
     for (int level = 0; level < numContours; level++) {
       final threshold = maxMag * (level + 1) / (numContours + 1);
       final normalizedLevel = threshold / maxMag;
-      final color = jetColormap(normalizedLevel);
+      final color = plotColormap(normalizedLevel);
 
       final paint =
           Paint()
@@ -375,7 +415,7 @@ class Plot2DPainter extends CustomPainter {
       final threshold =
           minVal + (maxVal - minVal) * (level + 1) / (numContours + 1);
       final normalizedLevel = (threshold - minVal) / (maxVal - minVal);
-      final color = jetColormap(normalizedLevel);
+      final color = plotColormap(normalizedLevel);
 
       final paint =
           Paint()
@@ -472,7 +512,7 @@ class Plot2DPainter extends CustomPainter {
     double Function(double) toScreenX,
     double Function(double) toScreenY,
   ) {
-    final theme = PlotThemeData.fromColors(colors);
+    final theme = plotTheme;
     final gridPaint =
         Paint()
           ..color = theme.grid
@@ -546,7 +586,7 @@ class Plot2DPainter extends CustomPainter {
     double Function(double) toScreenX,
     double Function(double) toScreenY,
   ) {
-    final theme = PlotThemeData.fromColors(colors);
+    final theme = plotTheme;
     final axisPaint =
         Paint()
           ..color = theme.axis
@@ -612,14 +652,74 @@ class Plot2DPainter extends CustomPainter {
     double Function(double) toScreenX,
     double Function(double) toScreenY,
   ) {
-    final paint =
+    final List<PlotExpression> curves =
+        functions.isEmpty ? <PlotExpression>[function] : functions;
+
+    for (int series = 0; series < curves.length; series++) {
+      final parser = curves[series];
+      if (!parser.isValid) continue;
+      final Color color = plotTheme.seriesColor(series);
+      if (parser.isLevelSet) {
+        _drawImplicitCurve(canvas, toScreenX, toScreenY, parser, color);
+      } else {
+        _drawOneCurve(canvas, toScreenX, toScreenY, parser, color);
+      }
+    }
+  }
+
+  /// Trace an equation's solution set.
+  ///
+  /// An implicit curve cannot be walked left to right like y = f(x): it may
+  /// double back, close on itself, or come in several pieces, so it is found
+  /// by contouring where F changes sign rather than by sampling a height.
+  void _drawImplicitCurve(
+    Canvas canvas,
+    double Function(double) toScreenX,
+    double Function(double) toScreenY,
+    PlotExpression parser,
+    Color color,
+  ) {
+    final List<LevelSegment> segments = marchingSquares(
+      parser,
+      xMin,
+      xMax,
+      yMin,
+      yMax,
+    );
+    if (segments.isEmpty) return;
+
+    final Paint paint =
         Paint()
-          ..color = colors.accent
+          ..color = color
           ..strokeWidth = 3
           ..style = PaintingStyle.stroke
           ..strokeCap = StrokeCap.round;
 
-    final parser = MathParser(function);
+    // Loose segments, not one path: the curve may be several disjoint loops,
+    // and joining them would draw lines across the gaps between.
+    for (final LevelSegment s in segments) {
+      canvas.drawLine(
+        Offset(toScreenX(s.x1), toScreenY(s.y1)),
+        Offset(toScreenX(s.x2), toScreenY(s.y2)),
+        paint,
+      );
+    }
+  }
+
+  void _drawOneCurve(
+    Canvas canvas,
+    double Function(double) toScreenX,
+    double Function(double) toScreenY,
+    PlotExpression parser,
+    Color color,
+  ) {
+    final paint =
+        Paint()
+          ..color = color
+          ..strokeWidth = 3
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round;
+
     final path = Path();
     const steps = 1000;
     bool started = false;
@@ -655,13 +755,163 @@ class Plot2DPainter extends CustomPainter {
     canvas.drawPath(path, paint);
   }
 
+  /// Crosshair readout: "what is f(2.3)?".
+  ///
+  /// The most calculator-shaped thing a plot can do, and the reason it reads
+  /// every curve rather than only the first — comparing two functions at the
+  /// same x is most of why you would draw them together.
+  void _drawTrace(
+    Canvas canvas,
+    Size size,
+    double Function(double) toScreenX,
+    double Function(double) toScreenY,
+  ) {
+    final double? tx = traceX;
+    if (tx == null || tx < xMin || tx > xMax) return;
+    if (fieldType != FieldType.scalar || plotMode != PlotMode.function) return;
+
+    final List<PlotExpression> curves =
+        functions.isEmpty ? <PlotExpression>[function] : functions;
+
+    final double sx = toScreenX(tx);
+    canvas.drawLine(
+      Offset(sx, 0),
+      Offset(sx, size.height),
+      Paint()
+        ..color = plotTheme.axis
+        ..strokeWidth = 1,
+    );
+
+    final List<({Color color, double y})> hits = <({Color color, double y})>[];
+    for (int i = 0; i < curves.length; i++) {
+      final PlotExpression c = curves[i];
+      if (!c.isValid) continue;
+      final double y = c.evaluate(tx, 0);
+      if (!y.isFinite) continue;
+      final Color color = plotTheme.seriesColor(i);
+      hits.add((color: color, y: y));
+
+      final double sy = toScreenY(y);
+      if (sy < -20 || sy > size.height + 20) continue;
+      // A ring rather than a dot so the curve stays visible underneath.
+      canvas.drawCircle(Offset(sx, sy), 5, Paint()..color = color);
+      canvas.drawCircle(
+        Offset(sx, sy),
+        5,
+        Paint()
+          ..color = plotTheme.label
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5,
+      );
+    }
+
+    final CurveFeature? feature = traceFeature;
+    if (feature != null && feature.y.isFinite) {
+      final double fy = toScreenY(feature.y);
+      if (fy > -20 && fy < size.height + 20) {
+        canvas.drawCircle(
+          Offset(sx, fy),
+          9,
+          Paint()
+            ..color = plotTheme.label
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.5,
+        );
+      }
+    }
+
+    if (hits.isEmpty) return;
+    _drawTraceLabel(canvas, size, sx, tx, hits, feature);
+  }
+
+  void _drawTraceLabel(
+    Canvas canvas,
+    Size size,
+    double sx,
+    double tx,
+    List<({Color color, double y})> hits,
+    CurveFeature? feature,
+  ) {
+    String fmt(double v) {
+      if (v.abs() >= 1e5 || (v != 0 && v.abs() < 1e-3)) {
+        return v.toStringAsExponential(3);
+      }
+      return v.toStringAsFixed(3);
+    }
+
+    final List<TextPainter> lines = <TextPainter>[
+      TextPainter(
+        text: TextSpan(
+          // Naming what was snapped to is the point: "root" answers the
+          // question, where a bare coordinate only reports a position.
+          text:
+              feature == null
+                  ? 'x = ${fmt(tx)}'
+                  : '${feature.label}  x = ${fmt(tx)}',
+          style: TextStyle(
+            color: feature == null ? plotTheme.label : plotTheme.axis,
+            fontSize: 11,
+            fontWeight: feature == null ? FontWeight.normal : FontWeight.w700,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout(),
+      for (final h in hits)
+        TextPainter(
+          text: TextSpan(
+            text: fmt(h.y),
+            style: TextStyle(
+              color: h.color,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout(),
+    ];
+
+    const double pad = 6;
+    final double w =
+        lines.map((t) => t.width).reduce((a, b) => a > b ? a : b) + pad * 2;
+    final double h =
+        lines.map((t) => t.height).reduce((a, b) => a + b) + pad * 2;
+
+    // Flip to the other side of the crosshair near the right edge.
+    double left = sx + 10;
+    if (left + w > size.width - 4) left = sx - 10 - w;
+    left = left.clamp(4.0, size.width - w - 4);
+    const double top = 8;
+
+    final RRect box = RRect.fromRectAndRadius(
+      Rect.fromLTWH(left, top, w, h),
+      const Radius.circular(4),
+    );
+    canvas.drawRRect(
+      box,
+      Paint()..color = plotTheme.colorbarBorder.withValues(alpha: 0.12),
+    );
+    canvas.drawRRect(
+      box,
+      Paint()
+        ..color = plotTheme.colorbarBorder
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+
+    double y = top + pad;
+    for (final TextPainter t in lines) {
+      t.paint(canvas, Offset(left + pad, y));
+      y += t.height;
+    }
+  }
+
   void _drawScalarField(
     Canvas canvas,
     Size size,
     double Function(double) toScreenX,
     double Function(double) toScreenY,
   ) {
-    final parser = MathParser(function);
+    final parser = function;
     const gridCount = 25;
     final circleRadius = min(size.width, size.height) / gridCount / 3;
 
@@ -695,7 +945,7 @@ class Plot2DPainter extends CustomPainter {
           if (!val.isFinite) continue;
 
           final normalized = (val - minVal) / (maxVal - minVal);
-          final color = jetColormap(normalized);
+          final color = plotColormap(normalized);
 
           canvas.drawCircle(
             Offset(toScreenX(x), toScreenY(y)),
@@ -718,7 +968,7 @@ class Plot2DPainter extends CustomPainter {
     double Function(double) toScreenX,
     double Function(double) toScreenY,
   ) {
-    final parser = MathParser(function);
+    final parser = function;
     const gridSize = 100;
     const numContours = 15;
 
@@ -755,7 +1005,7 @@ class Plot2DPainter extends CustomPainter {
       final threshold =
           minVal + (maxVal - minVal) * (level + 1) / (numContours + 1);
       final normalizedLevel = (threshold - minVal) / (maxVal - minVal);
-      final color = jetColormap(normalizedLevel);
+      final color = plotColormap(normalizedLevel);
 
       final paint =
           Paint()
@@ -892,7 +1142,7 @@ class Plot2DPainter extends CustomPainter {
           if (!mag.isFinite || mag < 1e-10) continue;
 
           final normalized = mag / maxMag;
-          final color = jetColormap(normalized);
+          final color = plotColormap(normalized);
 
           final scale = mag == 0 ? 0 : 1 / mag;
           final nx = vx * scale;
@@ -972,7 +1222,7 @@ class Plot2DPainter extends CustomPainter {
         if (!mag.isFinite) continue;
 
         final normalized = mag / maxMag;
-        final color = jetColormap(normalized);
+        final color = plotColormap(normalized);
 
         canvas.drawCircle(
           Offset(toScreenX(x), toScreenY(y)),
@@ -988,7 +1238,7 @@ class Plot2DPainter extends CustomPainter {
   }
 
   void _drawColorbar(Canvas canvas, Size size, double minVal, double maxVal) {
-    final theme = PlotThemeData.fromColors(colors);
+    final theme = plotTheme;
     const barWidth = 15.0;
     const barHeight = 100.0;
     const margin = 10.0;
@@ -1002,7 +1252,7 @@ class Plot2DPainter extends CustomPainter {
 
     for (int i = 0; i < barHeight; i++) {
       final t = 1.0 - i / barHeight;
-      final color = jetColormap(t);
+      final color = plotColormap(t);
       canvas.drawLine(
         Offset(barRect.left, barRect.top + i),
         Offset(barRect.right, barRect.top + i),
@@ -1038,7 +1288,7 @@ class Plot2DPainter extends CustomPainter {
     double Function(double) toScreenX,
     double Function(double) toScreenY,
   ) {
-    final theme = PlotThemeData.fromColors(colors);
+    final theme = plotTheme;
     final textStyle = TextStyle(color: theme.label, fontSize: 12);
     final rangeX = (xMax - xMin).abs();
     final rangeY = (yMax - yMin).abs();
@@ -1115,5 +1365,8 @@ class Plot2DPainter extends CustomPainter {
       old.fieldType != fieldType ||
       old.showContour != showContour ||
       old.surfaceMode != surfaceMode ||
+      old.traceX != traceX ||
+      old.traceFeature != traceFeature ||
+      old.functions != functions ||
       old.colors != colors;
 }

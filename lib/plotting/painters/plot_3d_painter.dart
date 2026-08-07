@@ -1,11 +1,15 @@
+import 'dart:typed_data';
+import 'dart:ui' show Vertices, VertexMode;
 import 'dart:math';
 import 'package:flutter/material.dart';
 import '../../utils/app_colors.dart';
 import '../models/enums.dart';
 import '../models/point_3d.dart';
-import '../parsers/math_parser.dart';
+import '../parsers/plot_expression.dart';
 import '../parsers/vector_field_parser.dart';
 import '../utils/colormap.dart';
+import '../utils/level_set.dart';
+import '../utils/plot_cache.dart';
 import '../utils/plot_theme.dart';
 
 // Helper classes for 3D rendering
@@ -14,7 +18,27 @@ class Quad {
   final double avgDepth;
   final double avgValue;
 
-  Quad(this.p1, this.p2, this.p3, this.p4, this.avgDepth, this.avgValue);
+  /// Value at each corner. Filling a cell with one colour taken from
+  /// [avgValue] makes every grid cell a flat block, which reads as banding at
+  /// any grid resolution; keeping the corners lets the colour be interpolated
+  /// across the cell instead.
+  final double v1, v2, v3, v4;
+
+  Quad(
+    this.p1,
+    this.p2,
+    this.p3,
+    this.p4,
+    this.avgDepth,
+    this.avgValue, {
+    double? v1,
+    double? v2,
+    double? v3,
+    double? v4,
+  }) : v1 = v1 ?? avgValue,
+       v2 = v2 ?? avgValue,
+       v3 = v3 ?? avgValue,
+       v4 = v4 ?? avgValue;
 }
 
 class FieldPoint3D {
@@ -40,8 +64,62 @@ class Arrow3D {
   );
 }
 
+/// Accumulates triangles so a whole surface is one draw call.
+///
+/// Each quad used to be its own [Canvas.drawVertices]; a 50x50 surface is 2,500
+/// of them per frame, which dominated rotation. Triangles are appended in the
+/// order they should be painted, so the depth sort still holds, and the batch
+/// is submitted once at the end.
+class _VertexBatch {
+  final List<Offset> _positions = <Offset>[];
+  final List<Color> _colors = <Color>[];
+
+  bool get isEmpty => _positions.isEmpty;
+
+  void addTriangle(
+    Offset a,
+    Offset b,
+    Offset c,
+    Color ca,
+    Color cb,
+    Color cc,
+  ) {
+    _positions.addAll(<Offset>[a, b, c]);
+    _colors.addAll(<Color>[ca, cb, cc]);
+  }
+
+  /// Two triangles sharing the o1-o3 diagonal, with matching corner colours so
+  /// no seam shows along it.
+  void addQuad(
+    Offset o1,
+    Offset o2,
+    Offset o3,
+    Offset o4,
+    Color c1,
+    Color c2,
+    Color c3,
+    Color c4,
+  ) {
+    _positions.addAll(<Offset>[o1, o2, o3, o1, o3, o4]);
+    _colors.addAll(<Color>[c1, c2, c3, c1, c3, c4]);
+  }
+
+  void paint(Canvas canvas) {
+    if (_positions.isEmpty) return;
+    final Vertices vertices = Vertices(
+      VertexMode.triangles,
+      _positions,
+      colors: _colors,
+    );
+    // BlendMode.dst keeps the vertex colours; the paint contributes nothing.
+    canvas.drawVertices(vertices, BlendMode.dst, Paint());
+    vertices.dispose();
+  }
+}
+
+
 class Plot3DPainter extends CustomPainter {
-  final String function;
+  final PlotExpression function;
   final bool is3DFunction;
   final double rotationX, rotationZ;
   final double rangeX, rangeY, rangeZ; // Changed: rangeZ is now a parameter
@@ -52,6 +130,10 @@ class Plot3DPainter extends CustomPainter {
   final bool showContour;
   final SurfaceMode surfaceMode;
   final AppColors colors;
+
+  /// Built once per panel rather than per paint, and carries the plot's
+  /// colour mode and the theme's series palette.
+  final PlotThemeData plotTheme;
 
   Plot3DPainter({
     required this.function,
@@ -69,6 +151,7 @@ class Plot3DPainter extends CustomPainter {
     required this.showContour,
     required this.surfaceMode,
     required this.colors,
+    required this.plotTheme,
   });
 
   // Remove the getter since rangeZ is now a parameter
@@ -78,7 +161,7 @@ class Plot3DPainter extends CustomPainter {
   double get scaleX => 200.0 / rangeX;
   double get scaleY => 200.0 / rangeY;
   double get scaleZ => 200.0 / rangeZ;
-  PlotThemeData get _theme => PlotThemeData.fromColors(colors);
+  PlotThemeData get _theme => plotTheme;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -130,7 +213,11 @@ class Plot3DPainter extends CustomPainter {
       }
     } else {
       // Scalar field visualization
-      if (is3DFunction) {
+      if (function.isLevelSet) {
+        // An equation defines a surface, not a height: there is no z = f(x,y)
+        // to sample, so it is contoured rather than sampled.
+        _drawLevelSurface(canvas, size, focalLength);
+      } else if (is3DFunction) {
         if (showSurface) {
           // Show surface with jet colormap (magnitude coloring)
           _drawSurfaceWithJetColormap(canvas, size, focalLength);
@@ -165,13 +252,138 @@ class Plot3DPainter extends CustomPainter {
     canvas.restore();
   }
 
+  /// Draw the surface where an equation is satisfied — a sphere for
+  /// x²+y²+z²=1, a plane for x+y+z=0, and so on.
+  ///
+  /// Contoured with marching tetrahedra: a level set has no height to sample,
+  /// and may close on itself or come in several pieces, so it has to be found
+  /// by looking for sign changes through the volume.
+  void _drawLevelSurface(Canvas canvas, Size size, double focalLength) {
+    // Geometry and colour are cached: neither depends on the camera, and a
+    // hyperboloid marches to ~33,000 triangles, so rebuilding per frame was
+    // the whole cost of a drag.
+    final LevelMesh mesh = cachedLevelMesh(
+      function,
+      <double>[-rangeX, rangeX, -rangeY, rangeY, -rangeZ, rangeZ],
+      40,
+      () => <({
+        double ax,
+        double ay,
+        double az,
+        double bx,
+        double by,
+        double bz,
+        double cx,
+        double cy,
+        double cz,
+      })>[
+        for (final LevelTriangle t in marchingTetrahedra(
+          function,
+          -rangeX,
+          rangeX,
+          -rangeY,
+          rangeY,
+          -rangeZ,
+          rangeZ,
+        ))
+          (
+            ax: t.a.x,
+            ay: t.a.y,
+            az: t.a.z,
+            bx: t.b.x,
+            by: t.b.y,
+            bz: t.b.z,
+            cx: t.c.x,
+            cy: t.c.y,
+            cz: t.c.z,
+          ),
+      ],
+      scaleX,
+      scaleY,
+      scaleZ,
+      // Colour by height, so the surface carries a readable quantity even
+      // though every point on it satisfies the same equation.
+      (double z) =>
+          plotColormap(
+            ((z + rangeZ) / (2 * rangeZ)).clamp(0.0, 1.0),
+          ).toARGB32(),
+    );
+
+    final int count = mesh.triangleCount;
+    if (count == 0) return;
+
+    // Rotation is four scalars per frame, not a cos/sin pair per vertex.
+    // Point3D.rotateX and rotateZ each recompute both, which for 100,000
+    // vertices came to ~200,000 trig calls a frame.
+    final double cx = cos(rotationX);
+    final double sx = sin(rotationX);
+    final double cz = cos(rotationZ);
+    final double sz = sin(rotationZ);
+    final double halfW = size.width / 2;
+    final double halfH = size.height / 2;
+
+    // Project every vertex once into flat buffers, keeping each triangle's
+    // depth for the painter's algorithm.
+    final Float32List screen = Float32List(count * 6);
+    final Float64List depth = Float64List(count);
+    final Float32List world = mesh.world;
+
+    for (int t = 0; t < count; t++) {
+      final int w = t * 9;
+      final int o = t * 6;
+      double depthSum = 0;
+      for (int v = 0; v < 3; v++) {
+        final double x = world[w + v * 3];
+        final double y = world[w + v * 3 + 1];
+        final double z = world[w + v * 3 + 2];
+
+        // Azimuth first, then elevation — a turntable. Spinning after the
+        // tilt would turn the model about an axis that is no longer
+        // screen-vertical, which reads as tumbling rather than rotating.
+        final double x1 = x * cz - y * sz;
+        final double y1 = x * sz + y * cz;
+        final double y2 = y1 * cx - z * sx;
+        final double z2 = y1 * sx + z * cx;
+
+        final double scale = focalLength / (focalLength + y2);
+        screen[o + v * 2] = halfW + x1 * scale + panX;
+        screen[o + v * 2 + 1] = halfH - z2 * scale + panY;
+        depthSum += y2;
+      }
+      depth[t] = depthSum / 3;
+    }
+
+    // Sort indices, not triangles: moving an int is cheaper than moving nine
+    // floats, and the vertex buffers stay put.
+    final List<int> order = List<int>.generate(count, (i) => i);
+    order.sort((a, b) => depth[b].compareTo(depth[a]));
+
+    final Float32List positions = Float32List(count * 6);
+    final Int32List colors = Int32List(count * 3);
+    for (int i = 0; i < count; i++) {
+      final int src = order[i];
+      positions.setRange(i * 6, i * 6 + 6, screen, src * 6);
+      colors.setRange(i * 3, i * 3 + 3, mesh.colors, src * 3);
+    }
+
+    final Vertices vertices = Vertices.raw(
+      VertexMode.triangles,
+      positions,
+      colors: colors,
+    );
+    canvas.drawVertices(vertices, BlendMode.dst, Paint());
+    vertices.dispose();
+
+    _drawColorbar3D(canvas, size, -rangeZ, rangeZ);
+  }
+
   void _drawSurfaceWithJetColormap(
     Canvas canvas,
     Size size,
     double focalLength,
   ) {
     const gridSize = 50;
-    final parser = MathParser(function);
+    final parser = function;
 
     List<List<Point3D?>> points = [];
     List<List<double>> zValues = [];
@@ -179,29 +391,33 @@ class Plot3DPainter extends CustomPainter {
     double minZ = double.infinity;
     double maxZ = double.negativeInfinity;
 
-    // First pass: compute all z values and find min/max
+    // Heights are cached: rotating changes where the camera sees the surface
+    // from, not the surface, so re-walking the expression tree every frame was
+    // wasted work.
+    final List<List<double>> sampled = cachedHeightGrid(
+      parser,
+      rangeX,
+      rangeY,
+      gridSize,
+    );
+
     for (int i = 0; i <= gridSize; i++) {
       List<Point3D?> row = [];
       List<double> zRow = [];
       for (int j = 0; j <= gridSize; j++) {
         final x = -rangeX + (2 * rangeX * i / gridSize);
         final y = -rangeY + (2 * rangeY * j / gridSize);
-        double z;
-        try {
-          z = parser.evaluate(x, y);
-          if (!z.isFinite) {
-            row.add(null);
-            zRow.add(double.nan);
-            continue;
-          }
-          if (z < -rangeZ || z > rangeZ) {
-            row.add(null);
-            zRow.add(z);
-            continue;
-          }
-        } catch (e) {
+        final double z = sampled[i][j];
+        if (!z.isFinite) {
           row.add(null);
           zRow.add(double.nan);
+          continue;
+        }
+        // Outside the z window: keep the value so neighbouring cells still
+        // know which way the surface left, but draw nothing here.
+        if (z < -rangeZ || z > rangeZ) {
+          row.add(null);
+          zRow.add(z);
           continue;
         }
 
@@ -213,7 +429,7 @@ class Plot3DPainter extends CustomPainter {
             x * scaleX,
             y * scaleY,
             z * scaleZ,
-          ).rotateX(rotationX).rotateZ(rotationZ),
+          ).rotateZ(rotationZ).rotateX(rotationX),
         );
         zRow.add(z);
       }
@@ -241,7 +457,20 @@ class Plot3DPainter extends CustomPainter {
                 zValues[i + 1][j + 1] +
                 zValues[i][j + 1]) /
             4;
-        quads.add(Quad(p1, p2, p3, p4, avgY, avgValue));
+        quads.add(
+          Quad(
+            p1,
+            p2,
+            p3,
+            p4,
+            avgY,
+            avgValue,
+            v1: zValues[i][j],
+            v2: zValues[i + 1][j],
+            v3: zValues[i + 1][j + 1],
+            v4: zValues[i][j + 1],
+          ),
+        );
       }
     }
 
@@ -249,38 +478,31 @@ class Plot3DPainter extends CustomPainter {
     quads.sort((a, b) => b.avgDepth.compareTo(a.avgDepth));
 
     // Draw quads with jet colormap
+    final _VertexBatch batch = _VertexBatch();
     for (final quad in quads) {
       final o1 = quad.p1.project(focalLength, size, panX, panY);
       final o2 = quad.p2.project(focalLength, size, panX, panY);
       final o3 = quad.p3.project(focalLength, size, panX, panY);
       final o4 = quad.p4.project(focalLength, size, panX, panY);
 
-      // Use jet colormap based on z value
-      final normalizedValue = (quad.avgValue - minZ) / (maxZ - minZ);
-      final color = jetColormap(normalizedValue.clamp(0.0, 1.0));
+      // Colour per corner, interpolated across the cell. A single colour from
+      // the cell average makes each cell a flat block, which reads as banding
+      // however fine the grid.
+      Color shade(double v) =>
+          plotColormap(((v - minZ) / (maxZ - minZ)).clamp(0.0, 1.0));
 
-      final path =
-          Path()
-            ..moveTo(o1.dx, o1.dy)
-            ..lineTo(o2.dx, o2.dy)
-            ..lineTo(o3.dx, o3.dy)
-            ..lineTo(o4.dx, o4.dy)
-            ..close();
-
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = color.withValues(alpha: 0.85)
-          ..style = PaintingStyle.fill,
-      );
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = _theme.wireframe
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 0.5,
+      batch.addQuad(
+        o1,
+        o2,
+        o3,
+        o4,
+        shade(quad.v1),
+        shade(quad.v2),
+        shade(quad.v3),
+        shade(quad.v4),
       );
     }
+    batch.paint(canvas);
 
     // Draw colorbar
     _drawColorbar3D(canvas, size, minZ, maxZ);
@@ -300,7 +522,6 @@ class Plot3DPainter extends CustomPainter {
     List<List<bool>> validMag = [];
 
     double maxMag = 0;
-    double maxSurfaceAbs = 0;
 
     // First pass: compute magnitudes and find max
     for (int i = 0; i <= gridSize; i++) {
@@ -353,7 +574,7 @@ class Plot3DPainter extends CustomPainter {
           x * scaleX,
           y * scaleY,
           z * scaleZ,
-        ).rotateX(rotationX).rotateZ(rotationZ);
+        ).rotateZ(rotationZ).rotateX(rotationX);
       }
     }
 
@@ -375,7 +596,20 @@ class Plot3DPainter extends CustomPainter {
                 magValues[i + 1][j + 1] +
                 magValues[i][j + 1]) /
             4;
-        quads.add(Quad(p1, p2, p3, p4, avgY, avgValue));
+        quads.add(
+          Quad(
+            p1,
+            p2,
+            p3,
+            p4,
+            avgY,
+            avgValue,
+            v1: magValues[i][j],
+            v2: magValues[i + 1][j],
+            v3: magValues[i + 1][j + 1],
+            v4: magValues[i][j + 1],
+          ),
+        );
       }
     }
 
@@ -383,37 +617,28 @@ class Plot3DPainter extends CustomPainter {
     quads.sort((a, b) => b.avgDepth.compareTo(a.avgDepth));
 
     // Draw quads
+    final _VertexBatch batch = _VertexBatch();
     for (final quad in quads) {
       final o1 = quad.p1.project(focalLength, size, panX, panY);
       final o2 = quad.p2.project(focalLength, size, panX, panY);
       final o3 = quad.p3.project(focalLength, size, panX, panY);
       final o4 = quad.p4.project(focalLength, size, panX, panY);
 
-      final normalizedValue = quad.avgValue / maxMag;
-      final color = jetColormap(normalizedValue.clamp(0.0, 1.0));
+      // Colour per corner, interpolated across the cell.
+      Color shade(double v) => plotColormap((v / maxMag).clamp(0.0, 1.0));
 
-      final path =
-          Path()
-            ..moveTo(o1.dx, o1.dy)
-            ..lineTo(o2.dx, o2.dy)
-            ..lineTo(o3.dx, o3.dy)
-            ..lineTo(o4.dx, o4.dy)
-            ..close();
-
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = color.withValues(alpha: 0.85)
-          ..style = PaintingStyle.fill,
-      );
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = _theme.wireframe
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 0.5,
+      batch.addQuad(
+        o1,
+        o2,
+        o3,
+        o4,
+        shade(quad.v1),
+        shade(quad.v2),
+        shade(quad.v3),
+        shade(quad.v4),
       );
     }
+    batch.paint(canvas);
 
     _drawColorbar3D(canvas, size, 0, maxMag);
   }
@@ -480,7 +705,7 @@ class Plot3DPainter extends CustomPainter {
           x * scaleX,
           y * scaleY,
           z * scaleZ,
-        ).rotateX(rotationX).rotateZ(rotationZ);
+        ).rotateZ(rotationZ).rotateX(rotationX);
       }
     }
 
@@ -501,44 +726,48 @@ class Plot3DPainter extends CustomPainter {
                 values[i + 1][j + 1] +
                 values[i][j + 1]) /
             4;
-        quads.add(Quad(p1, p2, p3, p4, avgY, avgValue));
+        quads.add(
+          Quad(
+            p1,
+            p2,
+            p3,
+            p4,
+            avgY,
+            avgValue,
+            v1: values[i][j],
+            v2: values[i + 1][j],
+            v3: values[i + 1][j + 1],
+            v4: values[i][j + 1],
+          ),
+        );
       }
     }
 
     quads.sort((a, b) => b.avgDepth.compareTo(a.avgDepth));
 
+    final _VertexBatch batch = _VertexBatch();
     for (final quad in quads) {
       final o1 = quad.p1.project(focalLength, size, panX, panY);
       final o2 = quad.p2.project(focalLength, size, panX, panY);
       final o3 = quad.p3.project(focalLength, size, panX, panY);
       final o4 = quad.p4.project(focalLength, size, panX, panY);
 
-      final normalizedValue =
-          (quad.avgValue - minVal) / (maxVal - minVal);
-      final color = jetColormap(normalizedValue.clamp(0.0, 1.0));
+      // Colour per corner, interpolated across the cell.
+      Color shade(double v) =>
+          plotColormap(((v - minVal) / (maxVal - minVal)).clamp(0.0, 1.0));
 
-      final path =
-          Path()
-            ..moveTo(o1.dx, o1.dy)
-            ..lineTo(o2.dx, o2.dy)
-            ..lineTo(o3.dx, o3.dy)
-            ..lineTo(o4.dx, o4.dy)
-            ..close();
-
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = color.withValues(alpha: 0.85)
-          ..style = PaintingStyle.fill,
-      );
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = _theme.wireframe
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 0.5,
+      batch.addQuad(
+        o1,
+        o2,
+        o3,
+        o4,
+        shade(quad.v1),
+        shade(quad.v2),
+        shade(quad.v3),
+        shade(quad.v4),
       );
     }
+    batch.paint(canvas);
 
     _drawColorbar3D(canvas, size, minVal, maxVal);
   }
@@ -581,7 +810,7 @@ class Plot3DPainter extends CustomPainter {
     for (int level = 0; level < numContours; level++) {
       final threshold = maxMag * (level + 1) / (numContours + 1);
       final normalizedLevel = threshold / maxMag;
-      final color = jetColormap(normalizedLevel);
+      final color = plotColormap(normalizedLevel);
 
       final paint =
           Paint()
@@ -643,7 +872,7 @@ class Plot3DPainter extends CustomPainter {
       final threshold =
           minVal + (maxVal - minVal) * (level + 1) / (numContours + 1);
       final normalizedLevel = (threshold - minVal) / (maxVal - minVal);
-      final color = jetColormap(normalizedLevel);
+      final color = plotColormap(normalizedLevel);
 
       final paint =
           Paint()
@@ -720,15 +949,15 @@ class Plot3DPainter extends CustomPainter {
         }
 
         if (points3D.length >= 2) {
-          final p1 = points3D[0].rotateX(rotationX).rotateZ(rotationZ);
-          final p2 = points3D[1].rotateX(rotationX).rotateZ(rotationZ);
+          final p1 = points3D[0].rotateZ(rotationZ).rotateX(rotationX);
+          final p2 = points3D[1].rotateZ(rotationZ).rotateX(rotationX);
           final proj1 = p1.project(focalLength, size, panX, panY);
           final proj2 = p2.project(focalLength, size, panX, panY);
           canvas.drawLine(proj1, proj2, paint);
         }
         if (points3D.length >= 4) {
-          final p3 = points3D[2].rotateX(rotationX).rotateZ(rotationZ);
-          final p4 = points3D[3].rotateX(rotationX).rotateZ(rotationZ);
+          final p3 = points3D[2].rotateZ(rotationZ).rotateX(rotationX);
+          final p4 = points3D[3].rotateZ(rotationZ).rotateX(rotationX);
           final proj3 = p3.project(focalLength, size, panX, panY);
           final proj4 = p4.project(focalLength, size, panX, panY);
           canvas.drawLine(proj3, proj4, paint);
@@ -796,15 +1025,15 @@ class Plot3DPainter extends CustomPainter {
         }
 
         if (points3D.length >= 2) {
-          final p1 = points3D[0].rotateX(rotationX).rotateZ(rotationZ);
-          final p2 = points3D[1].rotateX(rotationX).rotateZ(rotationZ);
+          final p1 = points3D[0].rotateZ(rotationZ).rotateX(rotationX);
+          final p2 = points3D[1].rotateZ(rotationZ).rotateX(rotationX);
           final proj1 = p1.project(focalLength, size, panX, panY);
           final proj2 = p2.project(focalLength, size, panX, panY);
           canvas.drawLine(proj1, proj2, paint);
         }
         if (points3D.length >= 4) {
-          final p3 = points3D[2].rotateX(rotationX).rotateZ(rotationZ);
-          final p4 = points3D[3].rotateX(rotationX).rotateZ(rotationZ);
+          final p3 = points3D[2].rotateZ(rotationZ).rotateX(rotationX);
+          final p4 = points3D[3].rotateZ(rotationZ).rotateX(rotationX);
           final proj3 = p3.project(focalLength, size, panX, panY);
           final proj4 = p4.project(focalLength, size, panX, panY);
           canvas.drawLine(proj3, proj4, paint);
@@ -814,7 +1043,7 @@ class Plot3DPainter extends CustomPainter {
   }
 
   void _drawContourLines3D(Canvas canvas, Size size, double focalLength) {
-    final parser = MathParser(function);
+    final parser = function;
     const gridSize = 60;
     const numContours = 12;
 
@@ -849,7 +1078,7 @@ class Plot3DPainter extends CustomPainter {
       final threshold =
           minVal + (maxVal - minVal) * (level + 1) / (numContours + 1);
       final normalizedLevel = (threshold - minVal) / (maxVal - minVal);
-      final color = jetColormap(normalizedLevel);
+      final color = plotColormap(normalizedLevel);
 
       final paint =
           Paint()
@@ -870,7 +1099,7 @@ class Plot3DPainter extends CustomPainter {
   }
 
   void _drawSurfaceContours(Canvas canvas, Size size, double focalLength) {
-    final parser = MathParser(function);
+    final parser = function;
     const gridSize = 60;
     const numContours = 10;
 
@@ -907,7 +1136,7 @@ class Plot3DPainter extends CustomPainter {
       final threshold =
           minVal + (maxVal - minVal) * (level + 1) / (numContours + 1);
       final normalizedLevel = (threshold - minVal) / (maxVal - minVal);
-      final color = jetColormap(normalizedLevel);
+      final color = plotColormap(normalizedLevel);
 
       final paint =
           Paint()
@@ -990,15 +1219,15 @@ class Plot3DPainter extends CustomPainter {
         }
 
         if (points3D.length >= 2) {
-          final p1 = points3D[0].rotateX(rotationX).rotateZ(rotationZ);
-          final p2 = points3D[1].rotateX(rotationX).rotateZ(rotationZ);
+          final p1 = points3D[0].rotateZ(rotationZ).rotateX(rotationX);
+          final p2 = points3D[1].rotateZ(rotationZ).rotateX(rotationX);
           final proj1 = p1.project(focalLength, size, panX, panY);
           final proj2 = p2.project(focalLength, size, panX, panY);
           canvas.drawLine(proj1, proj2, paint);
         }
         if (points3D.length >= 4) {
-          final p3 = points3D[2].rotateX(rotationX).rotateZ(rotationZ);
-          final p4 = points3D[3].rotateX(rotationX).rotateZ(rotationZ);
+          final p3 = points3D[2].rotateZ(rotationZ).rotateX(rotationX);
+          final p4 = points3D[3].rotateZ(rotationZ).rotateX(rotationX);
           final proj3 = p3.project(focalLength, size, panX, panY);
           final proj4 = p4.project(focalLength, size, panX, panY);
           canvas.drawLine(proj3, proj4, paint);
@@ -1016,7 +1245,7 @@ class Plot3DPainter extends CustomPainter {
   }
 
   void _drawFloorGrid(Canvas canvas, Size size, double focalLength) {
-    final theme = PlotThemeData.fromColors(colors);
+    final theme = plotTheme;
     final gridPaint =
         Paint()
           ..color = theme.grid
@@ -1034,12 +1263,12 @@ class Plot3DPainter extends CustomPainter {
         i * scaleX,
         -rangeY * scaleY,
         0,
-      ).rotateX(rotationX).rotateZ(rotationZ);
+      ).rotateZ(rotationZ).rotateX(rotationX);
       var end = Point3D(
         i * scaleX,
         rangeY * scaleY,
         0,
-      ).rotateX(rotationX).rotateZ(rotationZ);
+      ).rotateZ(rotationZ).rotateX(rotationX);
       _drawClippedLine(canvas, size, focalLength, start, end, subGridPaint);
     }
     for (double i = -rangeY; i <= rangeY; i += gridSpacingY / 5) {
@@ -1047,12 +1276,12 @@ class Plot3DPainter extends CustomPainter {
         -rangeX * scaleX,
         i * scaleY,
         0,
-      ).rotateX(rotationX).rotateZ(rotationZ);
+      ).rotateZ(rotationZ).rotateX(rotationX);
       var end = Point3D(
         rangeX * scaleX,
         i * scaleY,
         0,
-      ).rotateX(rotationX).rotateZ(rotationZ);
+      ).rotateZ(rotationZ).rotateX(rotationX);
       _drawClippedLine(canvas, size, focalLength, start, end, subGridPaint);
     }
     for (double i = -rangeX; i <= rangeX; i += gridSpacingX) {
@@ -1060,12 +1289,12 @@ class Plot3DPainter extends CustomPainter {
         i * scaleX,
         -rangeY * scaleY,
         0,
-      ).rotateX(rotationX).rotateZ(rotationZ);
+      ).rotateZ(rotationZ).rotateX(rotationX);
       var end = Point3D(
         i * scaleX,
         rangeY * scaleY,
         0,
-      ).rotateX(rotationX).rotateZ(rotationZ);
+      ).rotateZ(rotationZ).rotateX(rotationX);
       _drawClippedLine(canvas, size, focalLength, start, end, gridPaint);
     }
     for (double i = -rangeY; i <= rangeY; i += gridSpacingY) {
@@ -1073,18 +1302,18 @@ class Plot3DPainter extends CustomPainter {
         -rangeX * scaleX,
         i * scaleY,
         0,
-      ).rotateX(rotationX).rotateZ(rotationZ);
+      ).rotateZ(rotationZ).rotateX(rotationX);
       var end = Point3D(
         rangeX * scaleX,
         i * scaleY,
         0,
-      ).rotateX(rotationX).rotateZ(rotationZ);
+      ).rotateZ(rotationZ).rotateX(rotationX);
       _drawClippedLine(canvas, size, focalLength, start, end, gridPaint);
     }
   }
 
   void _drawFloorBoundary(Canvas canvas, Size size, double focalLength) {
-    final theme = PlotThemeData.fromColors(colors);
+    final theme = plotTheme;
     final boundaryPaint =
         Paint()
           ..color = theme.boundary
@@ -1098,8 +1327,8 @@ class Plot3DPainter extends CustomPainter {
     ];
 
     for (int i = 0; i < 4; i++) {
-      final start = corners[i].rotateX(rotationX).rotateZ(rotationZ);
-      final end = corners[(i + 1) % 4].rotateX(rotationX).rotateZ(rotationZ);
+      final start = corners[i].rotateZ(rotationZ).rotateX(rotationX);
+      final end = corners[(i + 1) % 4].rotateZ(rotationZ).rotateX(rotationX);
       _drawClippedLine(canvas, size, focalLength, start, end, boundaryPaint);
     }
   }
@@ -1123,7 +1352,7 @@ class Plot3DPainter extends CustomPainter {
   }
 
   void _drawAxes(Canvas canvas, Size size, double focalLength) {
-    final theme = PlotThemeData.fromColors(colors);
+    final theme = plotTheme;
     final gridSpacingX = _calculateGridSpacing(rangeX);
     final gridSpacingY = _calculateGridSpacing(rangeY);
     final gridSpacingZ = _calculateGridSpacing(rangeZ);
@@ -1158,12 +1387,12 @@ class Plot3DPainter extends CustomPainter {
         -dir.x * range * 2 * scale,
         -dir.y * range * 2 * scale,
         -dir.z * range * 2 * scale,
-      ).rotateX(rotationX).rotateZ(rotationZ);
+      ).rotateZ(rotationZ).rotateX(rotationX);
       final posPoint = Point3D(
         dir.x * range * 2 * scale,
         dir.y * range * 2 * scale,
         dir.z * range * 2 * scale,
-      ).rotateX(rotationX).rotateZ(rotationZ);
+      ).rotateZ(rotationZ).rotateX(rotationX);
 
         _drawClippedLine(
           canvas,
@@ -1186,7 +1415,7 @@ class Plot3DPainter extends CustomPainter {
         dir.x * range * 0.9 * scale,
         dir.y * range * 0.9 * scale,
         dir.z * range * 0.9 * scale,
-      ).rotateX(rotationX).rotateZ(rotationZ);
+      ).rotateZ(rotationZ).rotateX(rotationX);
       final arrowProj = arrowPos.project(focalLength, size, panX, panY);
 
       if (_isPointInRect(
@@ -1197,7 +1426,7 @@ class Plot3DPainter extends CustomPainter {
           0,
           0,
           0,
-        ).rotateX(rotationX).rotateZ(rotationZ);
+        ).rotateZ(rotationZ).rotateX(rotationX);
         final originProj = origin.project(focalLength, size, panX, panY);
         final direction = Offset(
           arrowProj.dx - originProj.dx,
@@ -1258,7 +1487,7 @@ class Plot3DPainter extends CustomPainter {
           dir.x * t * scale,
           dir.y * t * scale,
           dir.z * t * scale,
-        ).rotateX(rotationX).rotateZ(rotationZ);
+        ).rotateZ(rotationZ).rotateX(rotationX);
         final tickProj = tickPos.project(focalLength, size, panX, panY);
 
         if (!_isPointInRect(
@@ -1276,34 +1505,34 @@ class Plot3DPainter extends CustomPainter {
             t * scale,
             tickLen,
             0,
-          ).rotateX(rotationX).rotateZ(rotationZ);
+          ).rotateZ(rotationZ).rotateX(rotationX);
           tick2End = Point3D(
             t * scale,
             0,
             tickLen,
-          ).rotateX(rotationX).rotateZ(rotationZ);
+          ).rotateZ(rotationZ).rotateX(rotationX);
         } else if (label == 'Y') {
           tick1End = Point3D(
             tickLen,
             t * scale,
             0,
-          ).rotateX(rotationX).rotateZ(rotationZ);
+          ).rotateZ(rotationZ).rotateX(rotationX);
           tick2End = Point3D(
             0,
             t * scale,
             tickLen,
-          ).rotateX(rotationX).rotateZ(rotationZ);
+          ).rotateZ(rotationZ).rotateX(rotationX);
         } else {
           tick1End = Point3D(
             tickLen,
             0,
             t * scale,
-          ).rotateX(rotationX).rotateZ(rotationZ);
+          ).rotateZ(rotationZ).rotateX(rotationX);
           tick2End = Point3D(
             0,
             tickLen,
             t * scale,
-          ).rotateX(rotationX).rotateZ(rotationZ);
+          ).rotateZ(rotationZ).rotateX(rotationX);
         }
 
         canvas.drawLine(
@@ -1323,19 +1552,19 @@ class Plot3DPainter extends CustomPainter {
             t * scale,
             -15,
             -10,
-          ).rotateX(rotationX).rotateZ(rotationZ);
+          ).rotateZ(rotationZ).rotateX(rotationX);
         } else if (label == 'Y') {
           labelPos = Point3D(
             -15,
             t * scale,
             -10,
-          ).rotateX(rotationX).rotateZ(rotationZ);
+          ).rotateZ(rotationZ).rotateX(rotationX);
         } else {
           labelPos = Point3D(
             -15,
             -15,
             t * scale,
-          ).rotateX(rotationX).rotateZ(rotationZ);
+          ).rotateZ(rotationZ).rotateX(rotationX);
         }
 
         final labelProj = labelPos.project(focalLength, size, panX, panY);
@@ -1432,7 +1661,7 @@ class Plot3DPainter extends CustomPainter {
 
   void _drawSurface(Canvas canvas, Size size, double focalLength) {
     const gridSize = 50;
-    final parser = MathParser(function);
+    final parser = function;
 
     List<List<Point3D?>> points = [];
     List<List<double>> zValues = [];
@@ -1467,13 +1696,33 @@ class Plot3DPainter extends CustomPainter {
             x * scaleX,
             y * scaleY,
             z * scaleZ,
-          ).rotateX(rotationX).rotateZ(rotationZ),
+          ).rotateZ(rotationZ).rotateX(rotationX),
         );
         zRow.add(z);
       }
       points.add(row);
       zValues.add(zRow);
     }
+
+    // Colour against the surface's own range, not the axis range. Normalising
+    // by rangeZ assumes the data is symmetric about zero and fills the axis:
+    // x²+y² is neither, so its values landed in the upper half of the ramp and
+    // the surface came out nearly one colour regardless of magnitude.
+    double surfaceMin = double.infinity;
+    double surfaceMax = double.negativeInfinity;
+    for (final List<double> zRow in zValues) {
+      for (final double z in zRow) {
+        if (!z.isFinite) continue;
+        if (z < surfaceMin) surfaceMin = z;
+        if (z > surfaceMax) surfaceMax = z;
+      }
+    }
+    // A flat surface has no range to map; keep it mid-ramp rather than
+    // dividing by zero.
+    final double surfaceSpan =
+        (surfaceMax - surfaceMin).isFinite && surfaceMax > surfaceMin
+            ? surfaceMax - surfaceMin
+            : 0.0;
 
     List<Quad> quads = [];
     for (int i = 0; i < gridSize; i++) {
@@ -1492,46 +1741,59 @@ class Plot3DPainter extends CustomPainter {
                 zValues[i + 1][j + 1] +
                 zValues[i][j + 1]) /
             4;
-        quads.add(Quad(p1, p2, p3, p4, avgY, avgValue));
+        quads.add(
+          Quad(
+            p1,
+            p2,
+            p3,
+            p4,
+            avgY,
+            avgValue,
+            v1: zValues[i][j],
+            v2: zValues[i + 1][j],
+            v3: zValues[i + 1][j + 1],
+            v4: zValues[i][j + 1],
+          ),
+        );
       }
     }
 
     quads.sort((a, b) => b.avgDepth.compareTo(a.avgDepth));
 
+    final _VertexBatch batch = _VertexBatch();
     for (final quad in quads) {
       final o1 = quad.p1.project(focalLength, size, panX, panY);
       final o2 = quad.p2.project(focalLength, size, panX, panY);
       final o3 = quad.p3.project(focalLength, size, panX, panY);
       final o4 = quad.p4.project(focalLength, size, panX, panY);
 
-      final normalizedValue = (quad.avgValue + rangeZ) / (2 * rangeZ);
-      final color = surfaceGradientColor(normalizedValue.clamp(0.0, 1.0));
+      // Magnitude ramp, interpolated per corner so the gradient is continuous
+      // across each cell rather than a flat block.
+      Color shade(double v) => plotColormap(
+        surfaceSpan > 0 ? ((v - surfaceMin) / surfaceSpan).clamp(0.0, 1.0) : 0.5,
+      );
 
-      final path =
-          Path()
-            ..moveTo(o1.dx, o1.dy)
-            ..lineTo(o2.dx, o2.dy)
-            ..lineTo(o3.dx, o3.dy)
-            ..lineTo(o4.dx, o4.dy)
-            ..close();
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = color.withValues(alpha: 0.7)
-          ..style = PaintingStyle.fill,
+      batch.addQuad(
+        o1,
+        o2,
+        o3,
+        o4,
+        shade(quad.v1),
+        shade(quad.v2),
+        shade(quad.v3),
+        shade(quad.v4),
       );
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = _theme.wireframe
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 0.5,
-      );
+    }
+    batch.paint(canvas);
+
+    // A magnitude ramp needs a key, or the colours mean nothing.
+    if (surfaceSpan > 0) {
+      _drawColorbar3D(canvas, size, surfaceMin, surfaceMax);
     }
   }
 
   void _drawStandingCurve(Canvas canvas, Size size, double focalLength) {
-    final parser = MathParser(function);
+    final parser = function;
     const steps = 300;
 
     final paint =
@@ -1583,12 +1845,12 @@ class Plot3DPainter extends CustomPainter {
         x * scaleX,
         0,
         z * scaleZ,
-      ).rotateX(rotationX).rotateZ(rotationZ);
+      ).rotateZ(rotationZ).rotateX(rotationX);
       final shadowPoint = Point3D(
         x * scaleX,
         0,
         0,
-      ).rotateX(rotationX).rotateZ(rotationZ);
+      ).rotateZ(rotationZ).rotateX(rotationX);
       final proj = point.project(focalLength, size, panX, panY);
       final shadowProj = shadowPoint.project(focalLength, size, panX, panY);
 
@@ -1616,7 +1878,7 @@ class Plot3DPainter extends CustomPainter {
   }
 
   void _drawScalarField3D(Canvas canvas, Size size, double focalLength) {
-    final parser = MathParser(function);
+    final parser = function;
     const gridCount = 12;
 
     List<FieldPoint3D> points = [];
@@ -1641,7 +1903,7 @@ class Plot3DPainter extends CustomPainter {
               x * scaleX,
               y * scaleY,
               z * scaleZ,
-            ).rotateX(rotationX).rotateZ(rotationZ);
+            ).rotateZ(rotationZ).rotateX(rotationX);
 
             points.add(FieldPoint3D(point3D, val));
           } catch (e) {}
@@ -1661,7 +1923,7 @@ class Plot3DPainter extends CustomPainter {
       }
 
       final normalized = (fp.value - minVal) / (maxVal - minVal);
-      final color = jetColormap(normalized);
+      final color = plotColormap(normalized);
 
       final depthScale = focalLength / (focalLength + fp.point.y);
       final radius = 6.0 * depthScale;
@@ -1797,8 +2059,8 @@ class Plot3DPainter extends CustomPainter {
     if (arrows.isEmpty || maxMag == 0) return;
 
     arrows.sort((a, b) {
-      final aRotated = a.start.rotateX(rotationX).rotateZ(rotationZ);
-      final bRotated = b.start.rotateX(rotationX).rotateZ(rotationZ);
+      final aRotated = a.start.rotateZ(rotationZ).rotateX(rotationX);
+      final bRotated = b.start.rotateZ(rotationZ).rotateX(rotationX);
       return bRotated.y.compareTo(aRotated.y);
     });
 
@@ -1813,7 +2075,7 @@ class Plot3DPainter extends CustomPainter {
       final startPoint = (showSurface && !is3DVector)
           ? Point3D(arrow.start.x, arrow.start.y, surfaceZ * scaleZ)
           : arrow.start;
-      final startRotated = startPoint.rotateX(rotationX).rotateZ(rotationZ);
+      final startRotated = startPoint.rotateZ(rotationZ).rotateX(rotationX);
       final startProj = startRotated.project(focalLength, size, panX, panY);
 
       if (!_isPointInRect(
@@ -1828,11 +2090,11 @@ class Plot3DPainter extends CustomPainter {
         startPoint.y + arrow.dy * arrowLength,
         startPoint.z + arrow.dz * arrowLength,
       );
-      final endRotated = endPoint.rotateX(rotationX).rotateZ(rotationZ);
+      final endRotated = endPoint.rotateZ(rotationZ).rotateX(rotationX);
       final endProj = endRotated.project(focalLength, size, panX, panY);
 
       final normalized = arrow.magnitude / maxMag;
-      final color = jetColormap(normalized);
+      final color = plotColormap(normalized);
 
       final paint =
           Paint()
@@ -1909,7 +2171,7 @@ class Plot3DPainter extends CustomPainter {
               x * scaleX,
               y * scaleY,
               z * scaleZ,
-            ).rotateX(rotationX).rotateZ(rotationZ);
+            ).rotateZ(rotationZ).rotateX(rotationX);
 
             points.add(FieldPoint3D(point3D, mag));
           }
@@ -1930,7 +2192,7 @@ class Plot3DPainter extends CustomPainter {
             x * scaleX,
             y * scaleY,
             0,
-          ).rotateX(rotationX).rotateZ(rotationZ);
+          ).rotateZ(rotationZ).rotateX(rotationX);
 
           points.add(FieldPoint3D(point3D, mag));
         }
@@ -1948,7 +2210,7 @@ class Plot3DPainter extends CustomPainter {
       }
 
       final normalized = fp.value / maxMag;
-      final color = jetColormap(normalized);
+      final color = plotColormap(normalized);
 
       final depthScale = focalLength / (focalLength + fp.point.y);
       final radius = 6.0 * depthScale;
@@ -1969,25 +2231,31 @@ class Plot3DPainter extends CustomPainter {
     _drawColorbar3D(canvas, size, 0, maxMag);
   }
 
+  /// Smooth colorbar with labelled ticks.
+  ///
+  /// The strip matches the surface: both are the continuous ramp, so a colour
+  /// on the plot can be read back against the bar directly. Ticks are spaced
+  /// rather than min/max only, which is what makes an intermediate value
+  /// readable without counting bands.
   void _drawColorbar3D(Canvas canvas, Size size, double minVal, double maxVal) {
-    const barWidth = 15.0;
-    const barHeight = 100.0;
-    const margin = 10.0;
+    const double barWidth = 15.0;
+    const double barHeight = 104.0;
+    const double margin = 10.0;
+    const int ticks = 4;
 
-    final barRect = Rect.fromLTWH(
+    final Rect barRect = Rect.fromLTWH(
       margin,
       size.height / 2 - barHeight / 2,
       barWidth,
       barHeight,
     );
 
+    // Top of the bar is the maximum, so it reads like the axis.
     for (int i = 0; i < barHeight; i++) {
-      final t = 1.0 - i / barHeight;
-      final color = jetColormap(t);
       canvas.drawLine(
         Offset(barRect.left, barRect.top + i),
         Offset(barRect.right, barRect.top + i),
-        Paint()..color = color,
+        Paint()..color = plotColormap(1.0 - i / barHeight),
       );
     }
 
@@ -1999,19 +2267,29 @@ class Plot3DPainter extends CustomPainter {
         ..strokeWidth = 1,
     );
 
-    final textStyle = TextStyle(color: _theme.colorbarText, fontSize: 10);
+    final TextStyle textStyle = TextStyle(
+      color: _theme.colorbarText,
+      fontSize: 9,
+    );
+    for (int i = 0; i <= ticks; i++) {
+      final double t = i / ticks;
+      final double y = barRect.top + barHeight * t;
+      final double value = maxVal - (maxVal - minVal) * t;
 
-    final maxTp = TextPainter(
-      text: TextSpan(text: _formatNumber(maxVal), style: textStyle),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    maxTp.paint(canvas, Offset(barRect.right + 4, barRect.top - 4));
+      canvas.drawLine(
+        Offset(barRect.right, y),
+        Offset(barRect.right + 3, y),
+        Paint()
+          ..color = _theme.colorbarBorder
+          ..strokeWidth = 1,
+      );
 
-    final minTp = TextPainter(
-      text: TextSpan(text: _formatNumber(minVal), style: textStyle),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    minTp.paint(canvas, Offset(barRect.right + 4, barRect.bottom - 6));
+      final TextPainter tp = TextPainter(
+        text: TextSpan(text: _formatNumber(value), style: textStyle),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(barRect.right + 6, y - tp.height / 2));
+    }
   }
 
   @override
