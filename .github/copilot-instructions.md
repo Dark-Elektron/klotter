@@ -1,4 +1,4 @@
-## Copilot / AI Agent Instructions — Klator
+## Copilot / AI Agent Instructions — Klotter
 
 Short, actionable guidance to be immediately productive in this repo.
 

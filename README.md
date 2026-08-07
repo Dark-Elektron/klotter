@@ -1,7 +1,8 @@
-## Klator — Scientific Multiline Calculator
+## Klotter — Scientific Multiline Calculator
 
-Klator is a powerful, multi-line scientific calculator designed for structured mathematics, equation solving, and reusable results. 
-It is optimised for clarity, precision, and fast iterative problem-solving.
+Klotter is a scientific calculator that graphs what you type. Every cell carries a live plot, so
+editing an expression redraws the curve as you write it.
+It is optimised for clarity, precision, and fast iterative exploration.
 
 <p align="center">
   <img src="assets/imgs/basic.jpg" width="20%" />
@@ -24,7 +25,7 @@ Create independent solution cells to structure your work.
 ---
 
 ### Structural Mathematics Input
-Klator supports visually structured mathematics rather than plain text.
+Klotter supports visually structured mathematics rather than plain text.
 - Use / to create fractions.
 - Use xⁿ to insert exponents.
 - Tap any part of an expression to reposition the cursor precisely.
@@ -38,44 +39,32 @@ Quickly correct mistakes without losing progress.
 
 ---
 
-### Result Recall (ans)
-Every calculation is automatically numbered.
-- Each result is assigned an orange cell index on the left.
-- Reuse results by typing ans followed by the cell number  
-  Example: ans0
-
-<p align="center">
-  <img src="assets/imgs/result_recall.jpg" width="20%" />
-</p>
+### Live Plotting
+Every cell graphs as you type.
+- Use `x` for a curve, or `x` and `y` together for a 3D surface
+- A constant draws as a horizontal line; an empty cell shows bare axes
+- Unit vectors (x̂, ŷ, ẑ) make a vector field, coloured by magnitude
+- Long-press the plot for a crosshair reading the value of every curve at that x
 
 ---
 
-### Equation Solver
-Klator includes a built-in equation solver.
-- Supports linear, quadratic, and simultaneous equations
-- Handles up to three variables: x, y, z
-- Enter equations naturally as written in mathematics
-
-<p align="center">
-  <img src="assets/imgs/quadratic.jpg" width="20%" />
-</p>
+### Multiple Curves on One Plot
+- Press ⌘ to add another expression to the same plot
+- Each line is drawn as its own curve, in its own colour
+- A line that cannot be sampled reports why instead of drawing a flat zero
 
 ---
 
-### Multiline Equation Solving
-For systems of equations:
-- Use ⌘ to start a new line for each equation
-- Klator automatically detects the number of variables
-- The solver determines how many equations are required
-
-<p align="center">
-  <img src="assets/imgs/simultaneous_eqn.jpg" width="20%" />
-</p>
+### Plot Navigation
+- Swipe the strip above the keypad to move between plots, or to start a new one
+- 2D: drag to pan, pinch to zoom
+- 3D: drag to rotate, or switch to pan; the zoom control constrains to one axis
+- Switching between 2D and 3D cross-fades and keeps your view
 
 ---
 
 ### Customisation
-Tailor Klator to your preferences.
+Tailor Klotter to your preferences.
 - Decimal precision control
 - Theme selection
 - Haptic feedback toggle

@@ -46,3 +46,8 @@ app.*.map.json
 
 # keystore
 /upload-keystore.jks
+.claude/
+.vscode/
+test_out*
+PLOTT*
+analysis_out*

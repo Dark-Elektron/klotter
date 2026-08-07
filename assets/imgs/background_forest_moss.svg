@@ -1,0 +1,546 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg id="svg2" viewBox="0 0 1080 1080" xmlns="http://www.w3.org/2000/svg">
+  <desc>Source: openclipart.org/detail/209545</desc>
+  <defs>
+    <radialGradient id="radialGradient50" gradientUnits="userSpaceOnUse" cy="13.127" cx="23.404" gradientTransform="matrix(9.477364, 10.273408, 9.367074, -10.407683, -197.356662, 558.973428)" r="14.286">
+      <stop id="stop52" style="stop-color: #ff0008" offset="0"/>
+      <stop id="stop54" style="stop-color: #800005" offset="1"/>
+    </radialGradient>
+  </defs>
+  <path id="path56" style="fill: url('#radialGradient50');" d="M 204.055 605.466 C 214.75 604.543 229.646 602.429 248.771 599.225 C 264.137 597.834 277.424 599.934 288.573 605.466 C 306.758 613.896 320.024 629.981 328.375 653.699 C 339.551 684.468 337.506 719.655 322.147 759.236 C 308.093 794.657 292.335 818.404 274.612 830.49 C 265.714 836.583 249.395 841.504 225.678 845.176 C 195.845 850.309 171.666 851.033 153.011 847.27 C 118.5 841.263 92.898 822.615 76.119 791.384 C 53.338 748.066 44.902 709.443 50.979 675.399 C 57.471 643.707 75.657 620.848 105.468 606.888 C 125.99 597.591 144.113 594.773 160.021 598.529 C 182.359 603.6 197.025 605.943 204.055 605.466 Z"/>
+  <path id="path222" style="fill: rgb(255, 255, 255);" d="M 115.297 659.337 C 125.53 659.721 132.942 662.775 137.622 668.377 C 142.309 673.063 143.255 677.892 140.442 683.048 C 137.622 687.265 132.084 689.381 123.654 689.381 C 115.702 688.905 108.748 686.805 102.655 683.048 C 97.125 679.32 95.938 674.398 99.233 668.377 C 102.891 662.285 108.288 659.337 115.297 659.337 Z"/>
+  <path id="path224" style="fill: rgb(255, 145, 145);" d="M 182.359 626.465 L 190.782 625.068 C 196.782 624.583 201.938 624.583 206.155 625.068 C 212.633 625.521 226.133 622.248 246.655 615.31 C 238.246 623.191 228.255 629.036 216.623 632.714 C 206.391 636.457 198.422 638.331 192.814 638.331 C 185.399 638.785 177.659 636.939 169.791 632.714 C 164.636 629.981 159.103 625.301 153.011 618.732 L 145.349 608.983 L 155.823 615.31 C 164.636 619.903 173.526 623.668 182.359 626.465 Z"/>
+  <path id="path226" style="fill: rgb(128, 0, 5);" d="M 158.612 617.34 C 166.517 618.732 175.166 617.34 184.455 613.199 C 191.003 612.732 193.508 611.56 192.111 609.677 C 192.571 608.74 193.125 607.825 193.508 606.888 C 194.922 605.006 196.088 604.543 197.025 605.466 C 198.905 606.397 204.524 606.177 213.804 604.842 L 210.288 609.677 C 208.414 612.952 209.133 615.529 212.413 617.41 C 218.484 620.153 226.615 620.394 236.826 618.036 L 224.959 622.943 C 212.413 628.099 201.938 630.918 193.508 631.379 C 187.033 631.855 179.306 629.746 170.486 625.068 L 158.612 617.34 Z"/>
+  <path id="path14" style="fill: rgb(140, 161, 1);" d="M 475.2 496.421 L 482.848 518.122 L 485.652 529.3 L 487.768 551.696 L 487.768 561.439 L 485.652 580.344 L 480.732 597.834 L 470.278 618.036 L 460.528 630.684 L 459.115 631.302 L 458.42 632.714 L 452.801 637.636 L 454.194 632.714 L 455.601 623.668 L 454.89 618.732 L 454.194 606.888 L 451.396 595.014 L 441.625 569.102 L 438.11 562.866 L 421.351 539.043 L 399.011 516.035 L 368.262 491.592 L 342.422 463.664 L 328.46 441.962 L 317.921 418.869 L 308.883 386.771 L 306.064 355.32 L 306.758 339.235 L 310.97 315.439 L 318.632 291.708 L 324.234 327.305 L 330.492 346.187 L 341.725 363.678 L 354.997 379.038 L 447.966 455.923 L 463.327 475.529 L 475.2 496.421 Z"/>
+  <path id="path16" style="fill: rgb(97, 110, 1);" d="M 463.327 475.529 L 475.2 496.421 L 482.848 518.122 L 485.652 529.3 L 487.768 550.298 L 486.362 577.524 L 482.151 594.317 L 475.2 611.099 L 462.63 628.581 L 461.237 628.581 L 461.237 629.981 L 454.194 637.636 L 469.583 612.496 L 476.591 595.71 L 480.035 578.235 L 480.732 569.797 L 478.019 546.08 L 473.076 532.814 L 472.38 531.395 L 470.98 529.3 L 461.237 508.373 L 448.662 491.592 L 430.476 473.405 L 371.081 425.181 L 344.459 397.941 L 327.764 369.992 L 318.632 341.976 L 315.11 322.456 L 316.529 304.972 L 319.329 297.957 L 320.72 312.628 L 327.054 339.235 L 340.325 362.969 L 348.677 373.429 L 359.208 383.256 L 447.966 455.923 L 463.327 475.529 Z"/>
+  <path id="path18" style="fill: rgb(108, 125, 2);" d="M 376.607 428.001 L 439.538 480.358 L 455.601 499.241 L 466.066 516.035 L 473.794 533.511 L 478.713 552.393 L 480.732 568.483 L 473.794 538.431 L 455.601 502.769 L 437.414 481.764 L 427.664 472.71 L 368.98 425.878 L 349.38 406.299 L 329.078 376.944 L 316.529 344.071 L 312.397 324.572 L 317.226 320.353 L 327.054 362.272 L 332.592 376.241 L 347.278 398.644 L 374.519 427.269 L 376.607 428.001 Z"/>
+  <path id="path20" style="fill: rgb(104, 120, 2);" d="M 327.764 338.541 L 331.896 347.593 L 327.764 349.703 L 321.45 357.344 L 315.813 367.193 L 313.788 378.342 L 315.11 387.468 L 315.11 391.608 L 317.226 406.299 L 324.234 432.908 L 311.68 397.941 L 306.758 371.405 L 306.064 353.929 L 308.883 327.305 L 318.632 291.708 L 321.45 318.956 L 327.764 338.541 Z"/>
+  <path id="path22" style="fill: rgb(108, 125, 2);" d="M 349.38 402.856 L 352.192 404.176 L 352.895 404.872 L 352.895 407.691 L 352.192 409.099 L 352.192 411.207 L 351.497 414.729 L 352.192 435.627 L 352.895 437.041 L 354.997 445.477 L 350.077 434.221 L 348.677 432.211 L 347.278 426.573 L 345.865 416.823 L 345.865 412.613 L 346.561 409.099 L 347.981 404.872 L 348.677 403.558 L 349.38 402.856 Z"/>
+  <path id="path24" style="fill: rgb(108, 125, 2);" d="M 385.739 437.736 L 386.462 440.555 L 385.739 455.226 L 387.166 462.243 L 389.878 469.195 L 391.298 471.311 L 391.995 474.108 L 392.69 474.813 L 393.401 476.225 L 394.098 478.328 L 394.792 479.661 L 395.509 481.764 L 395.509 483.156 L 396.206 483.156 L 396.206 484.584 L 395.509 483.156 L 383.652 461.54 L 380.832 447.58 L 380.832 442.657 L 380.122 439.838 L 380.122 437.041 L 380.832 437.041 L 380.832 434.924 L 381.527 434.221 L 382.244 434.221 L 385.739 437.736 Z"/>
+  <path id="path26" style="fill: rgb(108, 125, 2);" d="M 433.92 511.112 L 427.664 500.647 L 419.229 480.358 L 415.797 466.397 L 415.797 460.844 L 416.494 461.54 L 418.616 462.953 L 419.937 464.984 L 421.351 467.796 L 422.047 478.328 L 426.265 493.637 L 433.92 511.112 Z"/>
+  <path id="path28" style="fill: rgb(108, 125, 2);" d="M 452.801 508.998 L 452.801 508.373 L 453.498 504.161 L 454.194 502.06 L 454.89 501.363 L 455.601 502.769 L 459.115 527.184 L 457.71 546.783 L 457.71 537.722 L 453.498 513.912 L 453.498 511.809 L 452.801 508.998 Z"/>
+  <path id="path30" style="fill: rgb(108, 125, 2);" d="M 473.794 556.533 L 475.2 549.596 L 476.591 548.174 L 478.713 549.596 L 475.895 557.945 L 475.2 561.439 L 472.38 570.573 L 467.466 581.054 L 473.794 560.744 L 473.794 556.533 Z"/>
+  <path id="path32" style="fill: rgb(108, 125, 2);" d="M 362.644 406.996 L 352.895 409.099 L 350.771 403.558 L 352.895 401.456 L 354.997 400.044 L 358.512 400.044 L 365.464 402.856 L 371.081 404.176 L 383.652 409.099 L 371.777 406.996 L 362.644 406.996 Z"/>
+  <path id="path34" style="fill: rgb(108, 125, 2);" d="M 403.868 434.924 L 399.734 433.604 L 396.206 434.221 L 394.098 434.221 L 391.995 434.924 L 386.462 440.555 L 380.832 433.604 L 385.043 431.495 L 394.792 431.495 L 411.58 436.345 L 403.868 434.924 Z"/>
+  <path id="path36" style="fill: rgb(108, 125, 2);" d="M 441.625 461.54 L 438.11 460.844 L 434.616 460.844 L 430.476 460.141 L 427.664 460.141 L 420.634 462.243 L 419.229 462.243 L 418.616 462.953 L 415.797 461.54 L 418.616 458.742 L 429.062 457.323 L 431.179 458.045 L 433.282 459.437 L 441.625 461.54 Z"/>
+  <path id="path38" style="fill: rgb(108, 125, 2);" d="M 466.066 502.06 L 473.076 506.286 L 464.66 502.769 L 461.237 502.06 L 459.115 502.769 L 455.601 502.769 L 454.194 501.363 L 454.89 499.241 L 461.934 499.241 L 464.021 499.95 L 466.066 502.06 Z"/>
+  <path id="path228" style="fill: rgb(162, 176, 2);" d="M 235.506 440.555 C 212.633 488.553 200.297 532.814 198.422 573.312 C 197.499 598.054 199.836 616.168 205.452 627.878 C 197.962 632.018 192.429 632.239 188.673 628.581 C 186.792 626.707 185.633 623.434 185.157 618.732 L 184.455 613.199 C 182.58 608.046 181.656 599.466 181.656 587.281 C 182.119 563.087 186.792 532.814 195.703 496.421 C 206.391 454.04 224.577 414.246 250.176 376.944 C 273.51 343 285.839 319.878 287.252 307.791 L 288.573 288.91 L 294.189 286.09 C 299.346 284.684 305.203 285.628 311.68 288.91 C 320.961 293.582 324.725 297.559 322.843 300.754 C 314.031 311.547 307.235 323.876 302.626 337.844 C 300.283 343.853 291.15 357.663 275.307 379.038 C 257.128 402.856 243.864 423.301 235.506 440.555 Z"/>
+  <path id="path230" style="fill: rgb(131, 150, 2);" d="M 227.779 441.962 C 240.803 418.229 255.247 396.067 271.096 375.629 C 285.533 356.506 297.407 334.564 306.758 309.886 C 309.102 303.808 310.274 296.615 310.274 288.2 L 311.68 288.91 C 320.961 293.582 324.725 297.559 322.843 300.754 C 313.952 311.547 307.235 323.876 302.547 337.844 C 300.204 343.853 291.15 357.663 275.307 379.038 C 257.128 402.856 243.864 423.301 235.506 440.555 C 212.633 488.553 200.297 532.814 198.422 573.312 C 197.499 598.054 199.836 616.168 205.452 627.878 C 197.962 632.018 192.429 632.239 188.673 628.581 L 185.854 622.248 C 190.072 623.668 192.65 624.364 193.579 624.364 C 197.259 624.825 198.422 618.732 197.025 606.177 C 194.766 582.367 194.069 560.289 194.985 539.752 C 196.328 512.27 207.335 479.661 227.779 441.962 Z"/>
+  <path id="path232" style="fill: rgb(200, 219, 70);" d="M 292.088 301.479 C 292.556 296.394 293.253 293.341 294.189 292.404 C 295.126 291.948 296.072 292.88 296.931 295.222 C 298.322 297.957 296.931 305.911 292.798 318.956 C 288.111 334.329 278.127 352.046 262.739 372.1 C 252.911 385.131 247.137 392.303 245.255 393.723 C 242.919 395.604 244.098 393.248 248.771 386.771 C 259.92 369.529 268.277 357.586 273.908 351.11 C 278.127 345.953 282.259 337.844 286.478 326.667 C 289.758 316.376 291.613 308.033 292.088 301.479 Z"/>
+  <rect width="1080" height="1080" style="stroke-width: 1; fill: rgb(232, 240, 229);"/>
+  <text x="30" y="45" font-family="Arial, sans-serif" font-size="32" fill="#4A6741" opacity="0.7" transform="matrix(0.965926, -0.258819, 0.258819, 0.965926, -21.048279, 0.350371)" style="white-space: pre; stroke-width: 1; font-size: 32px;">+</text>
+  <text x="95" y="60" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.65" transform="matrix(0.927184, 0.374607, -0.374607, 0.927184, 18.970288, -40.166188)" style="white-space: pre; stroke-width: 1; font-size: 30px;">×</text>
+  <text transform="matrix(0.990268, -0.139173, 0.139173, 0.990268, -14.433464, 37.709439)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 55px; white-space: pre; opacity: 0.6;" x="160" y="40" dx="-3.72" dy="1.789">÷</text>
+  <text transform="matrix(0.951057, 0.309017, -0.309017, 0.951057, 17.584578, -75.784486)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 47px; white-space: pre; opacity: 0.7;" x="225" y="55">−</text>
+  <text transform="matrix(0.978148, -0.207912, 0.207912, 0.978148, 107.1129, -57.985983)" style="fill: rgb(74, 103, 65); font-family: Georgia, serif; font-size: 38px; font-style: italic; white-space: pre; opacity: 0.65; transform-box: fill-box; transform-origin: 50% 50%;" x="290" y="50" dx="115.401" dy="596.826">E=mc²</text>
+  <text x="400" y="60" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.6" transform="matrix(0.906308, 0.422618, -0.422618, 0.906308, 52.410344, -172.373355)" style="white-space: pre; stroke-width: 1; font-size: 29px;">√</text>
+  <text transform="matrix(0.984808, -0.173648, 0.173648, 0.984808, -11.173424, 72.48253)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 60px; white-space: pre; opacity: 0.65;" x="465" y="45" dx="-6.492" dy="50.002">∫</text>
+  <text x="530" y="55" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.62" transform="matrix(0.965926, 0.258819, -0.258819, 0.965926, 21.870724, -144.247591)" style="white-space: pre; stroke-width: 1; font-size: 30px;">π</text>
+  <text x="595" y="42" font-family="Arial, sans-serif" font-size="31" fill="#4A6741" opacity="0.68" transform="matrix(0.951057, -0.309017, 0.309017, 0.951057, 5.719014, 176.973223)" style="white-space: pre; stroke-width: 1; font-size: 31px;">∑</text>
+  <text x="660" y="58" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.63" transform="matrix(0.978148, 0.207912, -0.207912, 0.978148, 16.057818, -144.901858)" style="white-space: pre; stroke-width: 1; font-size: 29px;">Ω</text>
+  <text x="725" y="48" font-family="Arial, sans-serif" font-size="32" fill="#4A6741" opacity="0.67" transform="matrix(0.939693, -0.34202, 0.34202, 0.939693, 16.882239, 241.911854)" style="white-space: pre; stroke-width: 1; font-size: 32px;">∞</text>
+  <text x="790" y="55" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.61" transform="matrix(0.990268, 0.139173, -0.139173, 0.990268, 4.919098, -118.359041)" style="white-space: pre; stroke-width: 1; font-size: 28px;">θ</text>
+  <text x="855" y="45" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.66" transform="matrix(0.970296, -0.241922, 0.241922, 0.970296, 4.087021, 199.232425)" style="white-space: pre; stroke-width: 1; font-size: 30px;">λ</text>
+  <text x="920" y="60" font-family="Arial, sans-serif" font-size="31" fill="#4A6741" opacity="0.64" transform="matrix(0.939693, 0.34202, -0.34202, 0.939693, 65.580361, -319.987737)" style="white-space: pre; stroke-width: 1; font-size: 31px;">α</text>
+  <text x="985" y="50" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.62" transform="matrix(0.961262, -0.275637, 0.275637, 0.961262, 13.951719, 264.492222)" style="white-space: pre; stroke-width: 1; font-size: 29px;">β</text>
+  <text x="1050" y="55" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.65" transform="matrix(0.984808, 0.173648, -0.173648, 0.984808, 15.078871, -190.442569)" style="white-space: pre; stroke-width: 1; font-size: 30px;">γ</text>
+  <circle cx="49.576" cy="21.051" r="3" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="119.576" cy="56.051" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="184.576" cy="26.051" r="2.5" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="249.576" cy="56.051" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="359.577" cy="31.051" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="424.577" cy="56.051" r="3" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="489.577" cy="26.051" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="554.577" cy="56.051" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="619.577" cy="26.051" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="684.577" cy="56.051" r="3" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="749.577" cy="26.051" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="814.577" cy="56.051" r="2.5" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="879.577" cy="26.051" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="944.577" cy="56.051" r="3" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="1009.58" cy="26.051" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <text x="25" y="115" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.6" transform="matrix(0.939693, -0.34202, 0.34202, 0.939693, -48.248284, 6.538313)" style="white-space: pre; stroke-width: 1; font-size: 28px;">∂</text>
+  <text transform="matrix(0.984808, 0.173648, -0.173648, 0.984808, 13.517925, -22.600901)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 37px; white-space: pre; opacity: 0.65;" x="90" y="130" dx="11.47" dy="18.902">∇</text>
+  <text transform="matrix(0.951057, -0.309017, 0.309017, 0.951057, -36.829281, 44.333893)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 32px; white-space: pre; opacity: 0.6;" x="155" y="110" dx="10.695" dy="-21.802">∈</text>
+  <text transform="matrix(0.906308, -0.422618, 0.422618, 0.906308, -42.638646, 95.74003)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 44px; white-space: pre; opacity: 0.7;" x="220" y="125">∀</text>
+  <text transform="matrix(0.965926, 0.258819, -0.258819, 0.965926, 30.345786, -78.622102)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 40px; white-space: pre; opacity: 0.6;" x="285" y="120" dx="-20.396" dy="25.613">∃</text>
+  <text transform="matrix(0.984808, -0.173648, 0.173648, 0.984808, -28.548867, 53.880299)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 34px; white-space: pre; opacity: 0.65;" x="350" y="135" dx="-70.42" dy="63.143">⊕</text>
+  <text transform="matrix(0.939693, 0.34202, -0.34202, 0.939693, 53.936242, -143.950564)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 27px; white-space: pre; opacity: 0.6;" x="415" y="115" dx="-17.699" dy="14.97">⊗</text>
+  <text x="480" y="130" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.68" transform="matrix(0.978148, -0.207912, 0.207912, 0.978148, -26.963013, 93.690912)" style="white-space: pre; stroke-width: 1; font-size: 29px;">ℏ</text>
+  <text x="545" y="118" font-family="Arial, sans-serif" font-size="26" fill="#4A6741" opacity="0.63" transform="matrix(0.990268, 0.139173, -0.139173, 0.990268, 11.302683, -83.64853)" style="white-space: pre; stroke-width: 1; font-size: 26px;">δ</text>
+  <text x="610" y="128" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.66" transform="matrix(0.927184, -0.374607, 0.374607, 0.927184, -13.955445, 228.882984)" style="white-space: pre; stroke-width: 1; font-size: 30px;">ε</text>
+  <text x="675" y="112" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.62" transform="matrix(0.970296, 0.241922, -0.241922, 0.970296, 36.722001, -168.917971)" style="white-space: pre; stroke-width: 1; font-size: 28px;">ζ</text>
+  <text x="740" y="132" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.64" transform="matrix(0.961262, -0.275637, 0.275637, 0.961262, -18.141436, 200.137607)" style="white-space: pre; stroke-width: 1; font-size: 27px;">η</text>
+  <text x="805" y="120" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.67" transform="matrix(0.951057, 0.309017, -0.309017, 0.951057, 66.057908, -251.833073)" style="white-space: pre; stroke-width: 1; font-size: 29px;">κ</text>
+  <text x="870" y="125" font-family="Arial, sans-serif" font-size="26" fill="#4A6741" opacity="0.61" transform="matrix(0.990268, -0.139173, 0.139173, 0.990268, -19.353508, 113.34955)" style="white-space: pre; stroke-width: 1; font-size: 26px;">μ</text>
+  <text x="935.001" y="115" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.65" transform="matrix(0.978148, 0.207912, -0.207912, 0.978148, 33.918202, -200.831973)" style="white-space: pre; stroke-width: 1; font-size: 30px;">ν</text>
+  <text transform="matrix(0.965926, -0.258819, 0.258819, 0.965926, -9.99595, 254.301167)" style="fill: rgb(74, 103, 65); font-family: Georgia, serif; font-size: 35px; font-style: italic; white-space: pre; opacity: 0.63;" x="1000" y="130" dx="-33.194" dy="8.883">F=ma</text>
+  <g transform="matrix(0.866025, 0.5, -0.5, 0.866025, 59.576363, 86.052476)" opacity="0.55">
+    <circle cx="0" cy="0" r="5" fill="#4A6741"/>
+    <ellipse cx="0" cy="0" rx="22" ry="8" fill="none" stroke="#4A6741" stroke-width="1.2"/>
+    <ellipse cx="0" cy="0" rx="8" ry="22" fill="none" stroke="#4A6741" stroke-width="1.2"/>
+    <circle cx="22" cy="0" r="3" fill="#4A6741"/>
+    <circle cx="-22" cy="0" r="3" fill="#4A6741"/>
+    <circle cx="0" cy="22" r="3" fill="#4A6741"/>
+  </g>
+  <circle cx="109.576" cy="91.051" r="2.5" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="179.576" cy="131.051" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="244.576" cy="96.051" r="3" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="309.576" cy="131.051" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="374.577" cy="96.051" r="2.5" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="439.577" cy="131.051" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="504.577" cy="91.051" r="3" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="569.577" cy="131.051" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="634.577" cy="96.051" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="699.577" cy="131.051" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="764.577" cy="91.051" r="3" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="829.577" cy="131.051" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="894.577" cy="96.051" r="2.5" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="959.577" cy="131.051" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="1049.57" cy="96.051" r="3" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <path fill="none" stroke="#4A6741" opacity="0.35" style="stroke-width: 4px; transform-box: fill-box; transform-origin: 50% 50%;" d="M 376.816 447.758 L 389.779 478.815 L 364.9 469.456 L 376.816 447.758 Z" transform="matrix(0.965926, 0.258819, -0.258819, 0.965926, 0.000001, 0.000009)"/>
+  <polygon points="759.577 91.051 769.577 111.051 749.577 111.051" fill="none" stroke="#4A6741" stroke-width="1.2" opacity="0.32" style="stroke-width: 1.2; transform-box: fill-box; transform-origin: 50% 50%;" transform="matrix(0.939693, -0.34202, 0.34202, 0.939693, 0.000003, 0.000014)"/>
+  <text transform="matrix(0.996195, -0.087156, 0.087156, 0.996195, -26.850052, -5.174097)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 43px; white-space: pre; opacity: 0.65;" x="35" y="190">=</text>
+  <text transform="matrix(0.882947, 0.469472, -0.469472, 0.882947, 97.523286, -31.898982)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 57px; white-space: pre; opacity: 0.6;" x="100" y="205" dx="24.042" dy="-1.114">∞</text>
+  <text x="165" y="185" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.7" transform="matrix(0.927184, -0.374607, 0.374607, 0.927184, -67.711206, 66.333543)" style="white-space: pre; stroke-width: 1; font-size: 30px;">%</text>
+  <text x="230" y="200" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.65" transform="matrix(0.978148, 0.207912, -0.207912, 0.978148, 36.184754, -52.396748)" style="white-space: pre; stroke-width: 1; font-size: 28px;">ξ</text>
+  <text transform="matrix(0.961262, -0.275637, 0.275637, 0.961262, -50.815682, 79.648301)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 32px; white-space: pre; opacity: 0.6;" x="295" y="188" dx="51.016" dy="-69.929">ρ</text>
+  <text transform="matrix(0.990268, 0.139173, -0.139173, 0.990268, 21.192822, -57.084004)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 47px; white-space: pre; opacity: 0.65;" x="360" y="202">σ</text>
+  <text transform="matrix(0.951057, -0.309017, 0.309017, 0.951057, -48.953934, 131.781862)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 39px; white-space: pre; opacity: 0.6;" x="425" y="192">τ</text>
+  <text transform="matrix(0.970296, 0.241922, -0.241922, 0.970296, 53.725449, -121.399904)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 28px; white-space: pre; opacity: 0.68;" x="490" y="205" dx="-166.039" dy="1.283">φ</text>
+  <text transform="matrix(0.984808, -0.173648, 0.173648, 0.984808, -34.116871, 90.237787)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 30px; white-space: pre; opacity: 0.63;" x="555" y="185" dx="-28.256" dy="-37.531">χ</text>
+  <text x="620" y="198" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.66" transform="matrix(0.939693, 0.34202, -0.34202, 0.939693, 94.686937, -209.059207)" style="white-space: pre; stroke-width: 1; font-size: 27px;">ψ</text>
+  <text transform="matrix(0.965926, -0.258819, 0.258819, 0.965926, -35.740826, 174.749484)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 29px; white-space: pre; opacity: 0.62;" x="685" y="188" dx="-2.566" dy="-12.539">ω</text>
+  <text transform="matrix(0.984808, 0.173648, -0.173648, 0.984808, 36.047482, -136.11487)" style="fill: rgb(74, 103, 65); font-family: Georgia, serif; font-size: 36px; font-style: italic; white-space: pre; opacity: 0.64;" x="750" y="202" dx="-48.611" dy="14.383">a²+b²=c²</text>
+  <text x="880.001" y="190" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.67" transform="matrix(0.978148, -0.207912, 0.207912, 0.978148, -30.696755, 178.16672)" style="white-space: pre; stroke-width: 1; font-size: 28px;">Δ</text>
+  <text x="945" y="205" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.61" transform="matrix(0.961262, 0.275637, -0.275637, 0.961262, 82.689721, -261.483555)" style="white-space: pre; stroke-width: 1; font-size: 30px;">Γ</text>
+  <text x="1010" y="188" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.65" transform="matrix(0.990268, -0.139173, 0.139173, 0.990268, -26.758942, 133.446917)" style="white-space: pre; stroke-width: 1; font-size: 27px;">Θ</text>
+  <circle cx="54.576" cy="166.053" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="124.576" cy="201.053" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="189.576" cy="169.053" r="3" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="254.576" cy="201.053" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="319.576" cy="171.053" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="384.577" cy="201.053" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="449.577" cy="169.053" r="3" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="514.577" cy="201.053" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="579.577" cy="166.053" r="2.5" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="644.577" cy="201.053" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="709.577" cy="169.053" r="3" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="839.577" cy="201.053" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="904.577" cy="166.053" r="2.5" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="969.577" cy="201.053" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="1034.58" cy="169.053" r="3" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <rect x="815" y="175" width="10" height="10" fill="none" stroke="#4A6741" stroke-width="1.2" opacity="0.32" transform="matrix(0.906308, 0.422618, -0.422618, 0.906308, 142.475283, -338.63001)" style="stroke-width: 1.2;"/>
+  <text x="20" y="270" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.7" transform="matrix(0.927184, 0.374607, -0.374607, 0.927184, 92.176477, 3.220686)" style="white-space: pre; stroke-width: 1; font-size: 30px;">Ξ</text>
+  <text transform="matrix(0.978148, -0.207912, 0.207912, 0.978148, -67.821038, 14.952895)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 28px; white-space: pre; opacity: 0.65;" x="85" y="285" dx="-21.08" dy="16.585">Π</text>
+  <text transform="matrix(0.996195, 0.087156, -0.087156, 0.996195, 13.243427, -21.012507)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 32px; white-space: pre; opacity: 0.7;" x="150" y="265" dx="113.811" dy="118.747">+</text>
+  <text transform="matrix(0.939693, -0.34202, 0.34202, 0.939693, -93.223215, 81.472871)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 49px; white-space: pre; opacity: 0.6;" x="215" y="280" dx="22.769" dy="67.982">×</text>
+  <text transform="matrix(0.961262, 0.275637, -0.275637, 0.961262, 75.396447, -75.589204)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 27px; white-space: pre; opacity: 0.65;" x="280" y="272" dx="20.439" dy="-3.479">Σ</text>
+  <text transform="matrix(0.990268, -0.139173, 0.139173, 0.990268, -47.147996, 41.869992)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 29px; white-space: pre; opacity: 0.6;" x="345" y="288" dx="10.221" dy="9.529">Υ</text>
+  <text x="410" y="268" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.7" transform="matrix(0.970296, 0.241922, -0.241922, 0.970296, 66.590188, -100.174806)" style="white-space: pre; stroke-width: 1; font-size: 28px;">Φ</text>
+  <text transform="matrix(0.951057, -0.309017, 0.309017, 0.951057, -74.318292, 151.637637)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 30px; white-space: pre; opacity: 0.65;" x="475" y="282" dx="-22.727" dy="10.671">Ψ</text>
+  <text x="540" y="270" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.62" transform="matrix(0.984808, 0.173648, -0.173648, 0.984808, 44.665185, -98.615663)" style="white-space: pre; stroke-width: 1; font-size: 27px;">Ω</text>
+  <text x="605" y="285" font-family="Georgia, serif" font-size="24" fill="#4A6741" opacity="0.64" font-style="italic" transform="matrix(0.965926, -0.258819, 0.258819, 0.965926, -63.572209, 157.349154)" style="white-space: pre; stroke-width: 1; font-size: 24px;">V=IR</text>
+  <text x="710" y="268" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.67" transform="matrix(0.939693, 0.34202, -0.34202, 0.939693, 124.056009, -235.61951)" style="white-space: pre; stroke-width: 1; font-size: 29px;">±</text>
+  <text x="775" y="280" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.61" transform="matrix(0.984808, -0.173648, 0.173648, 0.984808, -47.271157, 129.883623)" style="white-space: pre; stroke-width: 1; font-size: 28px;">≈</text>
+  <text x="840.001" y="272" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.65" transform="matrix(0.978148, 0.207912, -0.207912, 0.978148, 64.484361, -177.649539)" style="white-space: pre; stroke-width: 1; font-size: 30px;">≠</text>
+  <text x="905" y="288" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.63" transform="matrix(0.961262, -0.275637, 0.275637, 0.961262, -54.749047, 251.660908)" style="white-space: pre; stroke-width: 1; font-size: 27px;">≤</text>
+  <text x="970" y="265" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.66" transform="matrix(0.990268, 0.139173, -0.139173, 0.990268, 35.89721, -141.366518)" style="white-space: pre; stroke-width: 1; font-size: 29px;">≥</text>
+  <text x="1035" y="280" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.62" transform="matrix(0.970296, -0.241922, 0.241922, 0.970296, -47.417863, 249.758839)" style="white-space: pre; stroke-width: 1; font-size: 28px;">∝</text>
+  <g transform="matrix(0.906308, -0.422618, 0.422618, 0.906308, 239.576359, 241.052479)" opacity="0.5">
+    <circle cx="0" cy="0" r="4.5" fill="#4A6741"/>
+    <ellipse cx="0" cy="0" rx="20" ry="7" fill="none" stroke="#4A6741" stroke-width="1.1"/>
+    <ellipse cx="0" cy="0" rx="7" ry="20" fill="none" stroke="#4A6741" stroke-width="1.1"/>
+    <circle cx="20" cy="0" r="2.5" fill="#4A6741"/>
+    <circle cx="-20" cy="0" r="2.5" fill="#4A6741"/>
+    <circle cx="0" cy="20" r="2.5" fill="#4A6741"/>
+  </g>
+  <circle cx="44.576" cy="246.053" r="2.5" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="109.576" cy="281.053" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="174.576" cy="249.053" r="3" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="299.576" cy="281.053" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="364.577" cy="246.053" r="2.5" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="429.577" cy="281.053" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="494.577" cy="249.053" r="3" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="559.577" cy="281.053" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="669.577" cy="246.053" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="734.577" cy="281.053" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="799.577" cy="249.053" r="3" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="864.577" cy="281.053" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="929.577" cy="246.053" r="2.5" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="994.577" cy="281.053" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <text x="30" y="350" font-family="Arial, sans-serif" font-size="31" fill="#4A6741" opacity="0.65" transform="matrix(0.951057, 0.309017, -0.309017, 0.951057, 99.200624, -1.087823)" style="white-space: pre; stroke-width: 1; font-size: 31px;">÷</text>
+  <text x="95" y="340" font-family="Arial, sans-serif" font-size="26" fill="#4A6741" opacity="0.6" transform="matrix(0.906308, -0.422618, 0.422618, 0.906308, -145.213106, 63.056565)" style="white-space: pre; stroke-width: 1; font-size: 26px;">∧</text>
+  <text x="160" y="355" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.7" transform="matrix(0.984808, 0.173648, -0.173648, 0.984808, 53.65223, -31.338038)" style="white-space: pre; stroke-width: 1; font-size: 30px;">∨</text>
+  <text x="225" y="345" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.65" transform="matrix(0.965926, -0.258819, 0.258819, 0.965926, -92.049539, 61.042344)" style="white-space: pre; stroke-width: 1; font-size: 29px;">¬</text>
+  <text x="290" y="358" font-family="Arial, sans-serif" font-size="32" fill="#4A6741" opacity="0.7" transform="matrix(0.992546, 0.121869, -0.121869, 0.992546, 35.367203, -41.621174)" style="white-space: pre; stroke-width: 1; font-size: 32px;">−</text>
+  <text transform="matrix(0.984808, -0.173648, 0.173648, 0.984808, -64.418077, 57.89333)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 45px; white-space: pre; opacity: 0.6;" x="355" y="342" dx="-15.181" dy="33.358">⊂</text>
+  <text x="420" y="355" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.65" transform="matrix(0.939693, 0.34202, -0.34202, 0.939693, 136.322619, -131.186892)" style="white-space: pre; stroke-width: 1; font-size: 30px;">⊃</text>
+  <text x="485" y="345" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.62" transform="matrix(0.951057, -0.309017, 0.309017, 0.951057, -93.29693, 157.811236)" style="white-space: pre; stroke-width: 1; font-size: 27px;">⊆</text>
+  <text x="550" y="358" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.67" transform="matrix(0.978148, 0.207912, -0.207912, 0.978148, 76.027566, -115.475832)" style="white-space: pre; stroke-width: 1; font-size: 29px;">⊇</text>
+  <text x="615" y="342" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.63" transform="matrix(0.990268, -0.139173, 0.139173, 0.990268, -52.035722, 79.972245)" style="white-space: pre; stroke-width: 1; font-size: 28px;">∩</text>
+  <text x="680" y="355" font-family="Georgia, serif" font-size="22" fill="#4A6741" opacity="0.65" font-style="italic" transform="matrix(0.965926, 0.258819, -0.258819, 0.965926, 104.627573, -172.848178)" style="white-space: pre; stroke-width: 1; font-size: 22px;">PV=nRT</text>
+  <text x="810" y="345" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.61" transform="matrix(0.978148, -0.207912, 0.207912, 0.978148, -64.452744, 167.000048)" style="white-space: pre; stroke-width: 1; font-size: 30px;">∪</text>
+  <text x="875" y="358" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.66" transform="matrix(0.951057, 0.309017, -0.309017, 0.951057, 143.030001, -261.815708)" style="white-space: pre; stroke-width: 1; font-size: 27px;">∅</text>
+  <text x="940" y="342" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.64" transform="matrix(0.939693, -0.34202, 0.34202, 0.939693, -70.705606, 333.176549)" style="white-space: pre; stroke-width: 1; font-size: 29px;">ℓ</text>
+  <text x="1005" y="355" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.62" transform="matrix(0.990268, 0.139173, -0.139173, 0.990268, 48.763406, -145.361696)" style="white-space: pre; stroke-width: 1; font-size: 28px;">ℜ</text>
+  <circle cx="54.576" cy="326.053" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="119.576" cy="356.053" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="184.576" cy="329.053" r="3" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="249.576" cy="356.053" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="314.576" cy="326.053" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="379.577" cy="356.053" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="444.577" cy="329.053" r="3" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="509.577" cy="356.053" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="574.577" cy="326.053" r="2.5" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="769.577" cy="356.053" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="834.577" cy="326.053" r="3" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="899.577" cy="356.053" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="964.577" cy="329.053" r="2.5" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="1029.58" cy="356.053" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <polygon points="639.577 326.053 649.577 346.053 629.577 346.053" fill="none" stroke="#4A6741" stroke-width="1.2" opacity="0.35" style="stroke-width: 1.2; transform-box: fill-box; transform-origin: 50% 50%;" transform="matrix(0.984808, -0.173648, 0.173648, 0.984808, 0.000002, -0.000008)"/>
+  <text transform="matrix(0.951057, -0.309017, 0.309017, 0.951057, -138.987215, 19.334166)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 52px; white-space: pre; opacity: 0.6;" x="25" y="420">℘</text>
+  <text transform="matrix(0.978148, 0.207912, -0.207912, 0.978148, 81.984666, -18.153818)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 53px; white-space: pre; opacity: 0.7;" x="90" y="435">ℵ</text>
+  <text transform="matrix(0.965926, 0.258819, -0.258819, 0.965926, 104.855966, -34.582978)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 54px; white-space: pre; opacity: 0.65;" x="155" y="425" dx="2.693" dy="94.092">√</text>
+  <text x="220" y="440" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.6" transform="matrix(0.927184, -0.374607, 0.374607, 0.927184, -159.23102, 105.505022)" style="white-space: pre; stroke-width: 1; font-size: 28px;">∴</text>
+  <text x="285" y="428" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.7" transform="matrix(0.990268, 0.139173, -0.139173, 0.990268, 51.916051, -44.446614)" style="white-space: pre; stroke-width: 1; font-size: 30px;">∵</text>
+  <text x="350" y="438" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.65" transform="matrix(0.970296, -0.241922, 0.241922, 0.970296, -105.988947, 88.735612)" style="white-space: pre; stroke-width: 1; font-size: 29px;">⊥</text>
+  <text transform="matrix(0.994522, 0.104528, -0.104528, 0.994522, 35.960789, -50.015095)" style="white-space: pre; stroke-width: 1; font-size: 24px;" x="415" y="422" opacity="0.62" font-style="italic" font-size="24" font-family="Georgia, serif" fill="#4A6741">P=IV</text>
+  <text x="520" y="435" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.68" transform="matrix(0.984808, -0.173648, 0.173648, 0.984808, -78.060647, 87.958146)" style="white-space: pre; stroke-width: 1; font-size: 28px;">∥</text>
+  <text x="585" y="425" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.63" transform="matrix(0.951057, 0.309017, -0.309017, 0.951057, 149.540514, -168.921542)" style="white-space: pre; stroke-width: 1; font-size: 30px;">∠</text>
+  <text transform="matrix(0.961262, -0.275637, 0.275637, 0.961262, -106.524194, 187.261615)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 27px; white-space: pre; opacity: 0.66;" x="650" y="440" dx="-48.217" dy="-60.271">∡</text>
+  <text transform="matrix(0.984808, 0.173648, -0.173648, 0.984808, 74.76024, -126.603731)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 29px; white-space: pre; opacity: 0.62;" x="715" y="428" dx="-49.812" dy="66.904">∢</text>
+  <text transform="matrix(0.990268, -0.139173, 0.139173, 0.990268, -63.790563, 103.870073)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 31px; white-space: pre; opacity: 0.67;" x="780" y="438" dx="25.148" dy="-47.33">△</text>
+  <text x="845" y="422" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.61" transform="matrix(0.970296, 0.241922, -0.241922, 0.970296, 116.767519, -200.836368)" style="white-space: pre; stroke-width: 1; font-size: 28px;">□</text>
+  <text transform="matrix(0.939693, -0.34202, 0.34202, 0.939693, -104.322702, 328.524541)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 30px; white-space: pre; opacity: 0.65;" x="910" y="435" dx="15.946" dy="-13.688">○</text>
+  <text x="975.047" y="428" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.63" transform="matrix(0.978148, 0.207912, -0.207912, 0.978148, 99.868669, -202.308627)" style="white-space: pre; stroke-width: 1; font-size: 27px;">◇</text>
+  <text x="1040" y="440" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.66" transform="matrix(0.965926, -0.258819, 0.258819, 0.965926, -88.866891, 275.216954)" style="white-space: pre; stroke-width: 1; font-size: 29px;">∎</text>
+  <g transform="matrix(0.707107, 0.707107, -0.707107, 0.707107, 169.576358, 391.052496)" opacity="0.53">
+    <circle cx="0" cy="0" r="4.8" fill="#4A6741"/>
+    <ellipse cx="0" cy="0" rx="21" ry="7.5" fill="none" stroke="#4A6741" stroke-width="1.15"/>
+    <ellipse cx="0" cy="0" rx="7.5" ry="21" fill="none" stroke="#4A6741" stroke-width="1.15"/>
+    <circle cx="21" cy="0" r="4.419" fill="#4A6741"/>
+    <circle cx="-21" cy="0" r="2.8" fill="#4A6741"/>
+    <circle cx="0" cy="21" r="1.99" fill="#4A6741"/>
+  </g>
+  <circle cx="44.576" cy="406.053" r="2.5" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="109.576" cy="436.053" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="244.576" cy="406.053" r="3" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="309.576" cy="436.053" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="479.577" cy="406.053" r="2.5" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="544.577" cy="436.053" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="609.577" cy="409.053" r="3" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="674.577" cy="436.053" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="739.577" cy="406.053" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="804.577" cy="436.053" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="869.577" cy="409.053" r="3" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="934.577" cy="436.053" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="999.577" cy="406.053" r="2.5" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <text x="35" y="505" font-family="Arial, sans-serif" font-size="25" fill="#4A6741" opacity="0.58" transform="matrix(0.866025, -0.5, 0.5, 0.866025, -258.234562, 76.209642)" style="white-space: pre; stroke-width: 1; font-size: 25px;">∗</text>
+  <text x="100" y="520" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.62" transform="matrix(0.906308, 0.422618, -0.422618, 0.906308, 218.70708, -2.489435)" style="white-space: pre; stroke-width: 1; font-size: 27px;">∘</text>
+  <text x="165" y="510" font-family="Arial, sans-serif" font-size="26" fill="#4A6741" opacity="0.59" transform="matrix(0.990268, -0.139173, 0.139173, 0.990268, -79.796167, 18.979323)" style="white-space: pre; stroke-width: 1; font-size: 26px;">∙</text>
+  <text x="230" y="525" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.63" transform="matrix(0.956305, 0.292372, -0.292372, 0.956305, 153.121416, -53.253041)" style="white-space: pre; stroke-width: 1; font-size: 28px;">⋅</text>
+  <text x="295" y="512" font-family="Arial, sans-serif" font-size="24" fill="#4A6741" opacity="0.6" transform="matrix(0.978148, -0.207912, 0.207912, 0.978148, -110.427988, 63.574845)" style="white-space: pre; stroke-width: 1; font-size: 24px;">⋆</text>
+  <text x="360" y="522" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.61" transform="matrix(0.987688, 0.156434, -0.156434, 0.987688, 75.667352, -58.837285)" style="white-space: pre; stroke-width: 1; font-size: 27px;">⋄</text>
+  <text x="425" y="508" font-family="Arial, sans-serif" font-size="25" fill="#4A6741" opacity="0.58" transform="matrix(0.939693, -0.34202, 0.34202, 0.939693, -158.539263, 167.047198)" style="white-space: pre; stroke-width: 1; font-size: 25px;">⊙</text>
+  <text x="490" y="518" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.64" transform="matrix(0.970296, 0.241922, -0.241922, 0.970296, 129.446993, -112.10248)" style="white-space: pre; stroke-width: 1; font-size: 28px;">⊚</text>
+  <text transform="matrix(0.961262, -0.275637, 0.275637, 0.961262, -128.12076, 163.594073)" style="white-space: pre; stroke-width: 1; font-size: 26px;" x="555" y="505" opacity="0.6" font-size="26" font-family="Arial, sans-serif" fill="#4A6741">⊛</text>
+  <text transform="matrix(0.990268, 0.139173, -0.139173, 0.990268, 68.258523, -90.154817)" style="fill: rgb(74, 103, 65); font-family: Georgia, serif; font-size: 24px; font-style: italic; white-space: pre; opacity: 0.62;" x="620" y="522" dx="46.442" dy="9.657">v=λf</text>
+  <text x="730" y="510" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.65" transform="matrix(0.984808, -0.173648, 0.173648, 0.984808, -87.893884, 125.563684)" style="white-space: pre; stroke-width: 1; font-size: 29px;">+</text>
+  <text x="795" y="520" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.61" transform="matrix(0.951057, 0.309017, -0.309017, 0.951057, 189.175265, -229.1655)" style="white-space: pre; stroke-width: 1; font-size: 27px;">×</text>
+  <text x="860" y="508" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.66" transform="matrix(0.970296, -0.241922, 0.241922, 0.970296, -107.774301, 214.195117)" style="white-space: pre; stroke-width: 1; font-size: 30px;">÷</text>
+  <text x="925.001" y="522" font-family="Arial, sans-serif" font-size="26" fill="#4A6741" opacity="0.62" transform="matrix(0.978148, 0.207912, -0.207912, 0.978148, 118.319742, -189.85892)" style="white-space: pre; stroke-width: 1; font-size: 26px;">−</text>
+  <text x="990" y="510" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.64" transform="matrix(0.990268, -0.139173, 0.139173, 0.990268, -71.767327, 133.797152)" style="white-space: pre; stroke-width: 1; font-size: 28px;">=</text>
+  <text x="1050" y="520" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.6" transform="matrix(0.965926, 0.258819, -0.258819, 0.965926, 159.940142, -262.989018)" style="white-space: pre; stroke-width: 1; font-size: 27px;">∞</text>
+  <circle cx="54.576" cy="486.053" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="119.576" cy="521.053" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="184.576" cy="489.053" r="3" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="249.576" cy="521.053" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="314.576" cy="486.053" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="379.577" cy="521.053" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="444.577" cy="489.053" r="3" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="509.577" cy="521.053" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="574.577" cy="486.053" r="2.5" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="689.577" cy="521.053" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="754.577" cy="486.053" r="3" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="819.577" cy="521.053" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="884.577" cy="489.053" r="2.5" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="949.577" cy="521.053" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="1014.58" cy="486.053" r="3" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <rect x="655" y="495" width="10" height="10" fill="none" stroke="#4A6741" stroke-width="1.2" opacity="0.32" transform="matrix(0.939693, 0.34202, -0.34202, 0.939693, 200.3893, -204.527164)" style="stroke-width: 1.2;"/>
+  <text x="20" y="590" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.66" transform="matrix(0.97437, 0.224951, -0.224951, 0.97437, 122.810083, 1.675093)" style="white-space: pre; stroke-width: 1; font-size: 30px;">∫</text>
+  <text x="85" y="580" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.66" transform="matrix(0.961262, -0.275637, 0.275637, 0.961262, -167.000582, 36.949856)" style="white-space: pre; stroke-width: 1; font-size: 30px;">Σ</text>
+  <text x="150" y="595" font-family="Arial, sans-serif" font-size="26" fill="#4A6741" opacity="0.6" transform="matrix(0.981627, 0.190809, -0.190809, 0.981627, 105.863649, -26.63708)" style="white-space: pre; stroke-width: 1; font-size: 26px;">Π</text>
+  <text x="215" y="585" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.64" transform="matrix(0.945519, -0.325568, 0.325568, 0.945519, -189.167544, 92.921274)" style="white-space: pre; stroke-width: 1; font-size: 28px;">π</text>
+  <text x="280" y="598" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.65" transform="matrix(0.970296, 0.241922, -0.241922, 0.970296, 142.562868, -58.922551)" style="white-space: pre; stroke-width: 1; font-size: 29px;">α</text>
+  <text x="345" y="588" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.61" transform="matrix(0.981627, -0.190809, 0.190809, 0.981627, -116.280725, 67.6848)" style="white-space: pre; stroke-width: 1; font-size: 27px;">β</text>
+  <text transform="matrix(0.951057, 0.309017, -0.309017, 0.951057, 193.508304, -106.523164)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 30px; white-space: pre; opacity: 0.66;" x="410" y="595" dx="0.024" dy="44.528">γ</text>
+  <text x="475" y="582" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.63" transform="matrix(0.990268, -0.139173, 0.139173, 0.990268, -86.799737, 62.823689)" style="white-space: pre; stroke-width: 1; font-size: 28px;">δ</text>
+  <text transform="matrix(0.984808, 0.173648, -0.173648, 0.984808, 100.579904, -93.723756)" style="fill: rgb(74, 103, 65); font-family: Georgia, serif; font-size: 20px; font-style: italic; white-space: pre; opacity: 0.64;" x="540" y="592" dx="-352.458" dy="-495.816">ΔG=ΔH−TΔS</text>
+  <text x="720" y="585" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.62" transform="matrix(0.965926, -0.258819, 0.258819, 0.965926, -137.29941, 197.33562)" style="white-space: pre; stroke-width: 1; font-size: 29px;">ε</text>
+  <text x="785" y="598" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.65" transform="matrix(0.978148, 0.207912, -0.207912, 0.978148, 131.061678, -159.090518)" style="white-space: pre; stroke-width: 1; font-size: 27px;">ζ</text>
+  <text x="850" y="582" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.67" transform="matrix(0.951057, -0.309017, 0.309017, 0.951057, -148.669588, 282.202061)" style="white-space: pre; stroke-width: 1; font-size: 30px;">η</text>
+  <text x="915" y="595" font-family="Arial, sans-serif" font-size="26" fill="#4A6741" opacity="0.61" transform="matrix(0.990268, 0.139173, -0.139173, 0.990268, 81.289079, -130.50046)" style="white-space: pre; stroke-width: 1; font-size: 26px;">θ</text>
+  <text x="980.047" y="588" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.64" transform="matrix(0.978148, -0.207912, 0.207912, 0.978148, -111.260385, 207.655185)" style="white-space: pre; stroke-width: 1; font-size: 29px;">κ</text>
+  <text x="1045" y="595" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.62" transform="matrix(0.961262, 0.275637, -0.275637, 0.961262, 194.062121, -273.939366)" style="white-space: pre; stroke-width: 1; font-size: 28px;">λ</text>
+  <g transform="matrix(0.766044, -0.642788, 0.642788, 0.766044, 379.576422, 556.05256)" opacity="0.51">
+    <circle cx="0" cy="0" r="4.6" fill="#4A6741"/>
+    <ellipse cx="0" cy="0" rx="20.5" ry="21.715" fill="none" stroke="#4A6741" stroke-width="1.12"/>
+    <circle cx="20.5" cy="0" r="2.6" fill="#4A6741"/>
+    <circle cx="-20.5" cy="0" r="2.6" fill="#4A6741"/>
+  </g>
+  <circle cx="44.576" cy="566.053" r="2.5" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="109.576" cy="596.053" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="174.576" cy="569.053" r="3" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="239.576" cy="596.053" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="304.576" cy="566.053" r="2.5" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="679.577" cy="596.053" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="744.577" cy="566.053" r="3" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="809.577" cy="596.053" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="874.577" cy="569.053" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="939.577" cy="596.053" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="1004.58" cy="566.053" r="3" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <text x="30" y="665.001" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.65" transform="matrix(0.933581, 0.358368, -0.358368, 0.933581, 229.88364, 24.470457)" style="white-space: pre; stroke-width: 1; font-size: 29px;">μ</text>
+  <text x="95" y="655" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.64" transform="matrix(0.97437, -0.224951, 0.224951, 0.97437, -155.331759, 29.210434)" style="white-space: pre; stroke-width: 1; font-size: 28px;">ν</text>
+  <text x="160" y="670" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.66" transform="matrix(0.987688, 0.156434, -0.156434, 0.987688, 96.357332, -25.728266)" style="white-space: pre; stroke-width: 1; font-size: 30px;">ξ</text>
+  <text x="225" y="660" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.61" transform="matrix(0.956305, -0.292372, 0.292372, 0.956305, -193.557559, 85.674974)" style="white-space: pre; stroke-width: 1; font-size: 27px;">ρ</text>
+  <text x="290" y="672" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.65" transform="matrix(0.965926, 0.258819, -0.258819, 0.965926, 173.384265, -61.107243)" style="white-space: pre; stroke-width: 1; font-size: 29px;">σ</text>
+  <text x="355" y="658" font-family="Arial, sans-serif" font-size="26" fill="#4A6741" opacity="0.6" transform="matrix(0.984808, -0.173648, 0.173648, 0.984808, -119.290918, 62.694077)" style="white-space: pre; stroke-width: 1; font-size: 26px;">τ</text>
+  <text x="420" y="668" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.64" transform="matrix(0.978148, 0.207912, -0.207912, 0.978148, 137.639391, -81.673066)" style="white-space: pre; stroke-width: 1; font-size: 28px;">φ</text>
+  <text x="485" y="655" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.67" transform="matrix(0.939693, -0.34202, 0.34202, 0.939693, -205.197787, 196.433597)" style="white-space: pre; stroke-width: 1; font-size: 30px;">χ</text>
+  <text x="550" y="670" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.62" transform="matrix(0.990268, 0.139173, -0.139173, 0.990268, 88.174913, -78.972383)" style="white-space: pre; stroke-width: 1; font-size: 27px;">ψ</text>
+  <text x="615" y="660" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.65" transform="matrix(0.970296, -0.241922, 0.241922, 0.970296, -151.823992, 159.439288)" style="white-space: pre; stroke-width: 1; font-size: 29px;">ω</text>
+  <text transform="matrix(0.951057, 0.309017, -0.309017, 0.951057, 230.517353, -186.18909)" style="fill: rgb(74, 103, 65); font-family: Georgia, serif; font-size: 25px; font-style: italic; white-space: pre; opacity: 0.63;" x="680" y="672" dx="-28.307" dy="9.198">S=k·lnW</text>
+  <text x="820" y="658" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.61" transform="matrix(0.990268, -0.139173, 0.139173, 0.990268, -94.019372, 111.57802)" style="white-space: pre; stroke-width: 1; font-size: 28px;">Γ</text>
+  <text x="885" y="668" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.66" transform="matrix(0.970296, 0.241922, -0.241922, 0.970296, 177.468463, -203.205997)" style="white-space: pre; stroke-width: 1; font-size: 30px;">Δ</text>
+  <text x="950" y="655" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.62" transform="matrix(0.961262, -0.275637, 0.275637, 0.961262, -154.164751, 278.28159)" style="white-space: pre; stroke-width: 1; font-size: 27px;">Θ</text>
+  <text x="1015" y="670" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.64" transform="matrix(0.984808, 0.173648, -0.173648, 0.984808, 121.340769, -175.02167)" style="white-space: pre; stroke-width: 1; font-size: 29px;">Λ</text>
+  <circle cx="54.576" cy="641.053" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="119.576" cy="671.053" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="184.576" cy="644.053" r="3" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="249.576" cy="671.053" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="314.576" cy="641.053" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="379.577" cy="671.053" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="444.577" cy="644.053" r="3" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="509.577" cy="671.053" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="574.577" cy="641.053" r="2.5" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="779.577" cy="671.053" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="844.577" cy="641.053" r="3" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="909.577" cy="671.053" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="974.577" cy="644.053" r="2.5" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="1039.58" cy="671.053" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <polygon points="716.379 603.697 726.379 623.697 706.379 623.697" fill="none" stroke="#4A6741" stroke-width="1.2" opacity="0.35" style="stroke-width: 1.2; transform-box: fill-box; transform-origin: 50% 50%;" transform="matrix(0.906308, 0.422618, -0.422618, 0.906308, 0.000001, 0.000009)"/>
+  <text transform="matrix(0.965926, -0.258819, 0.258819, 0.965926, -201.097903, 22.737837)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 30px; white-space: pre; opacity: 0.66;" x="25" y="740" dx="90.715" dy="-11.248">Π</text>
+  <text x="90" y="755" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.61" transform="matrix(0.945519, 0.325568, -0.325568, 0.945519, 240.283664, 2.88481)" style="white-space: pre; stroke-width: 1; font-size: 27px;">Σ</text>
+  <text x="155" y="745" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.65" transform="matrix(0.992546, -0.121869, 0.121869, 0.992546, -100.060968, 15.49533)" style="white-space: pre; stroke-width: 1; font-size: 29px;">Υ</text>
+  <text x="220" y="758" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.64" transform="matrix(0.961262, 0.275637, -0.275637, 0.961262, 207.031909, -40.224141)" style="white-space: pre; stroke-width: 1; font-size: 28px;">Φ</text>
+  <text x="285" y="742" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.66" transform="matrix(0.978148, -0.207912, 0.207912, 0.978148, -158.466204, 66.521791)" style="white-space: pre; stroke-width: 1; font-size: 30px;">Ψ</text>
+  <text x="350" y="755" font-family="Arial, sans-serif" font-size="26" fill="#4A6741" opacity="0.6" transform="matrix(0.990268, 0.139173, -0.139173, 0.990268, 98.058244, -50.310536)" style="white-space: pre; stroke-width: 1; font-size: 26px;">Ω</text>
+  <text transform="matrix(0.939693, 0.34202, -0.34202, 0.939693, -104.259721, 9.575542)" style="fill: rgb(74, 103, 65); font-family: Georgia, serif; font-size: 28px; font-style: italic; white-space: pre; opacity: 0.62; transform-box: fill-box; transform-origin: 42.9246% 41.9366%;" x="415" y="745" dx="-300.112" dy="-517.299">∇×E=−∂B/∂t</text>
+  <text x="590" y="758" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.67" transform="matrix(0.951057, 0.309017, -0.309017, 0.951057, 252.687931, -154.168429)" style="white-space: pre; stroke-width: 1; font-size: 29px;">+</text>
+  <text x="655" y="742" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.62" transform="matrix(0.984808, -0.173648, 0.173648, 0.984808, -129.319674, 116.064668)" style="white-space: pre; stroke-width: 1; font-size: 27px;">×</text>
+  <text x="720" y="755" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.65" transform="matrix(0.978148, 0.207912, -0.207912, 0.978148, 162.283434, -142.145418)" style="white-space: pre; stroke-width: 1; font-size: 30px;">÷</text>
+  <text x="785" y="745" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.63" transform="matrix(0.961262, -0.275637, 0.275637, 0.961262, -185.363925, 236.287861)" style="white-space: pre; stroke-width: 1; font-size: 28px;">−</text>
+  <text x="850" y="758" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.66" transform="matrix(0.990268, 0.139173, -0.139173, 0.990268, 103.341722, -119.867891)" style="white-space: pre; stroke-width: 1; font-size: 29px;">=</text>
+  <text x="915" y="742" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.61" transform="matrix(0.951057, -0.309017, 0.309017, 0.951057, -194.931003, 310.119115)" style="white-space: pre; stroke-width: 1; font-size: 27px;">∞</text>
+  <text transform="matrix(0.970296, 0.241922, -0.241922, 0.970296, 201.337573, -223.604343)" style="fill: rgb(74, 103, 65); font-family: Arial, sans-serif; font-size: 30px; white-space: pre; opacity: 0.64;" x="980" y="755" dx="-27.465" dy="-34.446">π</text>
+  <text x="1045" y="745" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.62" transform="matrix(0.984808, -0.173648, 0.173648, 0.984808, -123.915667, 183.833056)" style="white-space: pre; stroke-width: 1; font-size: 28px;">∫</text>
+  <g transform="matrix(0.939693, 0.34202, -0.34202, 0.939693, 49.576363, 711.052501)" opacity="0.52">
+    <circle cx="0" cy="0" r="4.7" fill="#4A6741"/>
+    <ellipse cx="0" cy="0" rx="21.5" ry="7.8" fill="none" stroke="#4A6741" stroke-width="1.18"/>
+    <ellipse cx="0" cy="0" rx="7.8" ry="21.5" fill="none" stroke="#4A6741" stroke-width="1.18"/>
+    <circle cx="21.5" cy="0" r="2.9" fill="#4A6741"/>
+    <circle cx="-21.5" cy="0" r="2.9" fill="#4A6741"/>
+    <circle cx="0" cy="21.5" r="2.9" fill="#4A6741"/>
+  </g>
+  <circle cx="119.576" cy="726.053" r="2.5" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="184.576" cy="756.052" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="249.576" cy="729.053" r="3" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="314.576" cy="756.052" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="549.577" cy="726.053" r="2.5" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="614.577" cy="756.052" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="679.577" cy="729.053" r="3" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="744.577" cy="756.052" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="809.577" cy="726.053" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="874.577" cy="756.052" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="939.577" cy="729.053" r="3" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="1004.58" cy="756.052" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <text x="35" y="820" font-family="Arial, sans-serif" font-size="31" fill="#4A6741" opacity="0.67" transform="matrix(0.981627, 0.190809, -0.190809, 0.981627, 146.682787, -0.560159)" style="white-space: pre; stroke-width: 1; font-size: 31px;">ℓ</text>
+  <text x="100" y="835" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.65" transform="matrix(0.951057, -0.309017, 0.309017, 0.951057, -263.558537, 62.82198)" style="white-space: pre; stroke-width: 1; font-size: 29px;">ℜ</text>
+  <text x="165" y="825" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.64" transform="matrix(0.970296, 0.241922, -0.241922, 0.970296, 194.063129, -24.358637)" style="white-space: pre; stroke-width: 1; font-size: 28px;">ℑ</text>
+  <text x="230" y="840" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.66" transform="matrix(0.987688, -0.156434, 0.156434, 0.987688, -138.996935, 37.374188)" style="white-space: pre; stroke-width: 1; font-size: 30px;">℘</text>
+  <text x="295" y="832" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.61" transform="matrix(0.956305, 0.292372, -0.292372, 0.956305, 245.719761, -58.842778)" style="white-space: pre; stroke-width: 1; font-size: 27px;">ℵ</text>
+  <text x="360" y="840" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.65" transform="matrix(0.97437, -0.224951, 0.224951, 0.97437, -190.155795, 93.564004)" style="white-space: pre; stroke-width: 1; font-size: 29px;">∴</text>
+  <text x="425" y="822" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.62" transform="matrix(0.984808, 0.173648, -0.173648, 0.984808, 138.771883, -70.260011)" style="white-space: pre; stroke-width: 1; font-size: 28px;">∵</text>
+  <text transform="matrix(0.965926, -0.258819, 0.258819, 0.965926, -210.617694, 146.427981)" style="fill: rgb(74, 103, 65); font-family: Georgia, serif; font-size: 34px; font-style: italic; white-space: pre; opacity: 0.64;" x="490" y="838" dx="-42.347" dy="-107.343">W=Fd</text>
+  <text x="600" y="825" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.66" transform="matrix(0.990268, 0.139173, -0.139173, 0.990268, 110.233339, -84.422578)" style="white-space: pre; stroke-width: 1; font-size: 30px;">⊥</text>
+  <text x="665" y="840" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.61" transform="matrix(0.939693, -0.34202, 0.34202, 0.939693, -257.616184, 269.154087)" style="white-space: pre; stroke-width: 1; font-size: 27px;">∥</text>
+  <text x="730" y="822.001" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.65" transform="matrix(0.978148, 0.207912, -0.207912, 0.978148, 176.432025, -142.760439)" style="white-space: pre; stroke-width: 1; font-size: 29px;">∠</text>
+  <text x="795" y="838" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.63" transform="matrix(0.984808, -0.173648, 0.173648, 0.984808, -143.862993, 141.833895)" style="white-space: pre; stroke-width: 1; font-size: 28px;">∡</text>
+  <text x="860" y="825" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.67" transform="matrix(0.961262, 0.275637, -0.275637, 0.961262, 250.292149, -214.036624)" style="white-space: pre; stroke-width: 1; font-size: 30px;">△</text>
+  <text x="925" y="840" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.62" transform="matrix(0.970296, -0.241922, 0.241922, 0.970296, -186.161609, 239.781818)" style="white-space: pre; stroke-width: 1; font-size: 27px;">□</text>
+  <text x="990.001" y="822" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.64" transform="matrix(0.951057, 0.309017, -0.309017, 0.951057, 292.042393, -274.642887)" style="white-space: pre; stroke-width: 1; font-size: 29px;">○</text>
+  <text x="1050" y="838" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.6" transform="matrix(0.990268, -0.139173, 0.139173, 0.990268, -116.832201, 145.339602)" style="white-space: pre; stroke-width: 1; font-size: 28px;">◇</text>
+  <circle cx="54.576" cy="806.052" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="119.576" cy="836.052" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="184.576" cy="809.052" r="3" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="249.576" cy="836.052" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="314.576" cy="806.052" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="379.577" cy="836.052" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="444.577" cy="809.052" r="3" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="559.577" cy="836.052" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="624.577" cy="806.052" r="2.5" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="689.577" cy="836.052" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="754.577" cy="809.052" r="3" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="819.577" cy="836.052" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="884.577" cy="806.052" r="2.5" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="949.577" cy="836.052" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="1014.58" cy="809.052" r="3" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <rect x="520" y="815" width="10" height="10" fill="none" stroke="#4A6741" stroke-width="1.2" opacity="0.32" transform="matrix(0.965926, -0.258819, 0.258819, 0.965926, -204.76636, 154.873309)" style="stroke-width: 1.2;"/>
+  <text x="25" y="905.001" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.66" transform="matrix(0.978148, -0.207912, 0.207912, 0.978148, -198.037448, 16.026686)" style="white-space: pre; stroke-width: 1; font-size: 30px;">∎</text>
+  <text x="90" y="920" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.63" transform="matrix(0.965926, 0.258819, -0.258819, 0.965926, 230.756565, -0.893022)" style="white-space: pre; stroke-width: 1; font-size: 28px;">∗</text>
+  <text x="155" y="910" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.65" transform="matrix(0.990268, -0.139173, 0.139173, 0.990268, -135.562746, 21.48036)" style="white-space: pre; stroke-width: 1; font-size: 29px;">∘</text>
+  <text x="220" y="922" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.61" transform="matrix(0.939693, 0.34202, -0.34202, 0.939693, 318.186559, -28.588587)" style="white-space: pre; stroke-width: 1; font-size: 27px;">∙</text>
+  <text x="285" y="908" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.67" transform="matrix(0.961262, -0.275637, 0.275637, 0.961262, -249.662006, 104.783495)" style="white-space: pre; stroke-width: 1; font-size: 30px;">⋅</text>
+  <text x="350" y="920" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.62" transform="matrix(0.984808, 0.173648, -0.173648, 0.984808, 154.649966, -55.747563)" style="white-space: pre; stroke-width: 1; font-size: 28px;">⋆</text>
+  <text x="415" y="910" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.64" transform="matrix(0.970296, -0.241922, 0.241922, 0.970296, -218.245349, 118.480944)" style="white-space: pre; stroke-width: 1; font-size: 29px;">⋄</text>
+  <text transform="matrix(0.961262, 0.275637, -0.275637, 0.961262, 34.39638, -24.431156)" style="fill: rgb(74, 103, 65); font-family: Georgia, serif; font-size: 34px; font-style: italic; white-space: pre; opacity: 0.63; transform-box: fill-box; transform-origin: 50.006% 49.5085%;" x="480" y="922" dx="117.75" dy="-472.728">KE=½mv²</text>
+  <text x="620" y="908" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.66" transform="matrix(0.984808, -0.173648, 0.173648, 0.984808, -158.67702, 112.508898)" style="white-space: pre; stroke-width: 1; font-size: 30px;">⊙</text>
+  <text x="685" y="920" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.61" transform="matrix(0.951057, 0.309017, -0.309017, 0.951057, 307.398289, -175.596194)" style="white-space: pre; stroke-width: 1; font-size: 27px;">⊚</text>
+  <text x="750" y="910" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.65" transform="matrix(0.939693, -0.34202, 0.34202, 0.939693, -276.431523, 302.447331)" style="white-space: pre; stroke-width: 1; font-size: 29px;">⊛</text>
+  <text x="815" y="922.001" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.63" transform="matrix(0.978148, 0.207912, -0.207912, 0.978148, 199.080646, -158.247683)" style="white-space: pre; stroke-width: 1; font-size: 28px;">+</text>
+  <text x="880" y="908" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.67" transform="matrix(0.990268, -0.139173, 0.139173, 0.990268, -128.228731, 122.361391)" style="white-space: pre; stroke-width: 1; font-size: 30px;">×</text>
+  <text x="945" y="920" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.62" transform="matrix(0.970296, 0.241922, -0.241922, 0.970296, 240.215061, -210.235843)" style="white-space: pre; stroke-width: 1; font-size: 27px;">÷</text>
+  <text x="1010" y="910" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.64" transform="matrix(0.961262, -0.275637, 0.275637, 0.961262, -222.128009, 304.698094)" style="white-space: pre; stroke-width: 1; font-size: 29px;">−</text>
+  <g transform="matrix(0.819152, 0.573577, -0.573577, 0.819152, 289.576359, 881.052564)" opacity="0.5">
+    <circle cx="0" cy="0" r="4.5" fill="#4A6741"/>
+    <ellipse cx="0" cy="0" rx="20" ry="7" fill="none" stroke="#4A6741" stroke-width="1.1"/>
+    <ellipse cx="0" cy="0" rx="7" ry="20" fill="none" stroke="#4A6741" stroke-width="1.1"/>
+    <circle cx="20" cy="0" r="2.5" fill="#4A6741"/>
+    <circle cx="-20" cy="0" r="2.5" fill="#4A6741"/>
+    <circle cx="0" cy="20" r="2.5" fill="#4A6741"/>
+  </g>
+  <circle cx="44.576" cy="886.052" r="2.5" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="109.576" cy="916.052" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="174.576" cy="889.052" r="3" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="239.576" cy="916.052" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="374.577" cy="886.052" r="2.5" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="439.577" cy="916.052" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="579.577" cy="889.052" r="3" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="644.577" cy="916.052" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="709.577" cy="886.052" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="774.577" cy="916.052" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="839.577" cy="889.052" r="3" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="904.577" cy="916.052" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="969.577" cy="886.052" r="2.5" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="1034.58" cy="916.052" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <polygon points="549.576 886.052 559.576 906.052 539.576 906.052" fill="none" stroke="#4A6741" stroke-width="1.2" opacity="0.35" style="stroke-width: 1.2; transform-box: fill-box; transform-origin: 50% 50%;" transform="matrix(0.866025, 0.5, -0.5, 0.866025, 0.000016, 0.000015)"/>
+  <text x="30" y="985" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.65" transform="matrix(0.951057, 0.309017, -0.309017, 0.951057, 295.426396, 26.158402)" style="white-space: pre; stroke-width: 1; font-size: 29px;">=</text>
+  <text x="95" y="998" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.61" transform="matrix(0.984808, -0.173648, 0.173648, 0.984808, -182.281283, 18.878002)" style="white-space: pre; stroke-width: 1; font-size: 27px;">∞</text>
+  <text x="160" y="988" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.67" transform="matrix(0.970296, 0.241922, -0.241922, 0.970296, 233.347873, -22.140126)" style="white-space: pre; stroke-width: 1; font-size: 30px;">π</text>
+  <text x="225" y="1000" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.63" transform="matrix(0.939693, -0.34202, 0.34202, 0.939693, -338.8747, 124.481478)" style="white-space: pre; stroke-width: 1; font-size: 28px;">∫</text>
+  <text x="290" y="985" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.64" transform="matrix(0.990268, 0.139173, -0.139173, 0.990268, 129.484118, -39.721787)" style="white-space: pre; stroke-width: 1; font-size: 29px;">Σ</text>
+  <text x="355" y="998" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.62" transform="matrix(0.965926, -0.258819, 0.258819, 0.965926, -256.628757, 113.106355)" style="white-space: pre; stroke-width: 1; font-size: 27px;">Ω</text>
+  <text x="420" y="988.044" font-family="Georgia, serif" font-size="22" fill="#4A6741" opacity="0.65" font-style="italic" transform="matrix(0.978148, 0.207912, -0.207912, 0.978148, 204.171115, -78.513192)" style="white-space: pre; stroke-width: 1; font-size: 22px;">λ=h/p</text>
+  <text x="540" y="1000" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.66" transform="matrix(0.990268, -0.139173, 0.139173, 0.990268, -144.341524, 72.104982)" style="white-space: pre; stroke-width: 1; font-size: 30px;">θ</text>
+  <text x="605" y="985" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.61" transform="matrix(0.961262, 0.275637, -0.275637, 0.961262, 284.515843, -137.550936)" style="white-space: pre; stroke-width: 1; font-size: 28px;">λ</text>
+  <text x="670" y="998.044" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.65" transform="matrix(0.978148, -0.207912, 0.207912, 0.978148, -203.278445, 148.329119)" style="white-space: pre; stroke-width: 1; font-size: 29px;">α</text>
+  <text x="735" y="988" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.63" transform="matrix(0.939693, 0.34202, -0.34202, 0.939693, 371.818212, -204.581592)" style="white-space: pre; stroke-width: 1; font-size: 27px;">β</text>
+  <text x="800" y="1000" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.67" transform="matrix(0.970296, -0.241922, 0.241922, 0.970296, -228.582172, 210.461383)" style="white-space: pre; stroke-width: 1; font-size: 30px;">γ</text>
+  <text x="865" y="985" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.62" transform="matrix(0.984808, 0.173648, -0.173648, 0.984808, 173.761111, -144.188875)" style="white-space: pre; stroke-width: 1; font-size: 28px;">δ</text>
+  <text x="930" y="998.001" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.64" transform="matrix(0.951057, -0.309017, 0.309017, 0.951057, -273.30521, 323.450994)" style="white-space: pre; stroke-width: 1; font-size: 29px;">ε</text>
+  <text x="995" y="988" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.61" transform="matrix(0.990268, 0.139173, -0.139173, 0.990268, 136.762667, -137.809664)" style="white-space: pre; stroke-width: 1; font-size: 27px;">ζ</text>
+  <text x="1050" y="1000" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.66" transform="matrix(0.984808, -0.173648, 0.173648, 0.984808, -168.119982, 184.742419)" style="white-space: pre; stroke-width: 1; font-size: 30px;">η</text>
+  <circle cx="54.576" cy="966.052" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="119.576" cy="992.21" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="184.576" cy="969.052" r="3" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="249.576" cy="992.21" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="314.576" cy="966.052" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="379.577" cy="992.21" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="499.577" cy="969.052" r="3" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="564.577" cy="992.21" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="629.577" cy="966.052" r="2.5" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="694.577" cy="992.21" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="759.577" cy="969.052" r="3" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="824.577" cy="992.21" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="889.577" cy="966.052" r="2.5" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="954.577" cy="992.21" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="1014.58" cy="969.052" r="3" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <rect x="455" y="975" width="10" height="10" fill="none" stroke="#4A6741" stroke-width="1.2" opacity="0.32" transform="matrix(0.906308, 0.422618, -0.422618, 0.906308, 446.840735, -111.533602)" style="stroke-width: 1.2;"/>
+  <text x="25" y="1060" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.64" transform="matrix(0.965926, -0.258819, 0.258819, 0.965926, -283.920048, 28.80867)" style="white-space: pre; stroke-width: 1; font-size: 28px;">κ</text>
+  <text x="90" y="1072" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.67" transform="matrix(0.978148, 0.207912, -0.207912, 0.978148, 214.424411, -9.066728)" style="white-space: pre; stroke-width: 1; font-size: 30px;">μ</text>
+  <text x="155" y="1058" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.61" transform="matrix(0.990268, -0.139173, 0.139173, 0.990268, -156.160357, 18.08778)" style="white-space: pre; stroke-width: 1; font-size: 27px;">ν</text>
+  <text x="220" y="1070" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.65" transform="matrix(0.951057, 0.309017, -0.309017, 0.951057, 330.992131, -29.394661)" style="white-space: pre; stroke-width: 1; font-size: 29px;">ξ</text>
+  <text x="285" y="1060" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.63" transform="matrix(0.939693, -0.34202, 0.34202, 0.939693, -355.777471, 147.621157)" style="white-space: pre; stroke-width: 1; font-size: 28px;">ρ</text>
+  <text x="350" y="1072" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.66" transform="matrix(0.984808, 0.173648, -0.173648, 0.984808, 181.044497, -58.271214)" style="white-space: pre; stroke-width: 1; font-size: 30px;">σ</text>
+  <text x="415" y="1058" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.62" transform="matrix(0.970296, -0.241922, 0.241922, 0.970296, -254.049793, 118.044268)" style="white-space: pre; stroke-width: 1; font-size: 27px;">τ</text>
+  <text x="480" y="1070" font-family="Georgia, serif" font-size="22" fill="#4A6741" opacity="0.64" font-style="italic" transform="matrix(0.990268, 0.139173, -0.139173, 0.990268, 143.16292, -70.170388)" style="white-space: pre; stroke-width: 1; font-size: 22px;">c=λf</text>
+  <text x="580" y="1060" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.65" transform="matrix(0.984808, -0.173648, 0.173648, 0.984808, -185.679232, 103.039293)" style="white-space: pre; stroke-width: 1; font-size: 29px;">φ</text>
+  <text x="645" y="1072" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.63" transform="matrix(0.961262, 0.275637, -0.275637, 0.961262, 310.045812, -150.039111)" style="white-space: pre; stroke-width: 1; font-size: 28px;">χ</text>
+  <text x="710" y="1058" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.67" transform="matrix(0.978148, -0.207912, 0.207912, 0.978148, -214.879047, 156.956728)" style="white-space: pre; stroke-width: 1; font-size: 30px;">ψ</text>
+  <text x="775" y="1070" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.61" transform="matrix(0.939693, 0.34202, -0.34202, 0.939693, 402.27619, -214.317188)" style="white-space: pre; stroke-width: 1; font-size: 27px;">ω</text>
+  <text x="840" y="1060" font-family="Arial, sans-serif" font-size="29" fill="#4A6741" opacity="0.64" transform="matrix(0.990268, -0.139173, 0.139173, 0.990268, -149.772326, 113.440813)" style="white-space: pre; stroke-width: 1; font-size: 29px;">+</text>
+  <text x="905" y="1072" font-family="Arial, sans-serif" font-size="28" fill="#4A6741" opacity="0.62" transform="matrix(0.970296, 0.241922, -0.241922, 0.970296, 275.799015, -200.876819)" style="white-space: pre; stroke-width: 1; font-size: 28px;">×</text>
+  <text x="970" y="1058" font-family="Arial, sans-serif" font-size="30" fill="#4A6741" opacity="0.66" transform="matrix(0.961262, -0.275637, 0.275637, 0.961262, -264.471836, 294.572941)" style="white-space: pre; stroke-width: 1; font-size: 30px;">÷</text>
+  <text x="1035" y="1070" font-family="Arial, sans-serif" font-size="27" fill="#4A6741" opacity="0.61" transform="matrix(0.984808, 0.173648, -0.173648, 0.984808, 191.103885, -177.250628)" style="white-space: pre; stroke-width: 1; font-size: 27px;">=</text>
+  <g transform="matrix(0.866025, -0.5, 0.5, 0.866025, 839.576429, 1026.21962)" opacity="0.52">
+    <circle cx="0" cy="0" r="4.6" fill="#4A6741"/>
+    <ellipse cx="0" cy="0" rx="20.5" ry="7.2" fill="none" stroke="#4A6741" stroke-width="1.12"/>
+    <ellipse cx="0" cy="0" rx="7.2" ry="20.5" fill="none" stroke="#4A6741" stroke-width="1.12"/>
+    <circle cx="20.5" cy="0" r="2.6" fill="#4A6741"/>
+    <circle cx="-20.5" cy="0" r="2.6" fill="#4A6741"/>
+    <circle cx="0" cy="20.5" r="2.6" fill="#4A6741"/>
+  </g>
+  <circle cx="44.576" cy="1036.23" r="2.5" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="109.576" cy="1061.23" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="174.576" cy="1038.23" r="3" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="239.576" cy="1061.23" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="304.576" cy="1036.23" r="2.5" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="369.577" cy="1061.23" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="539.577" cy="1038.23" r="3" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="604.577" cy="1061.23" r="2" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="669.577" cy="1036.23" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="734.577" cy="1061.23" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="924.577" cy="1036.23" r="3" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="989.577" cy="1061.23" r="2" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <polygon points="434.576 1036.23 444.577 1056.23 424.576 1056.23" fill="none" stroke="#4A6741" stroke-width="1.2" opacity="0.35" style="stroke-width: 1.2; transform-box: fill-box; transform-origin: 50% 50%;" transform="matrix(0.939693, -0.34202, 0.34202, 0.939693, 0.000018, 0.000009)"/>
+  <text x="780" y="130" font-family="Georgia, serif" font-size="20" fill="#4A6741" opacity="0.58" font-style="italic" transform="matrix(0.927184, 0.374607, -0.374607, 0.927184, 95.071825, -291.674687)" style="white-space: pre; stroke-width: 1; font-size: 20px;">ℏω</text>
+  <text transform="matrix(0.951057, -0.309017, 0.309017, 0.951057, -78.014016, 144.303759)" style="fill: rgb(74, 103, 65); font-family: Georgia, serif; font-size: 27px; font-style: italic; white-space: pre; opacity: 0.55;" x="450" y="290" dx="22.396" dy="-54.112">Δx·Δp≥ℏ/2</text>
+  <text transform="matrix(0.965926, 0.258819, -0.258819, 0.965926, 137.393191, -231.727756)" style="fill: rgb(74, 103, 65); font-family: Georgia, serif; font-size: 40px; font-style: italic; white-space: pre; opacity: 0.58;" x="920" y="450" dx="-48.928" dy="29.702">∮B·dl</text>
+  <text transform="matrix(0.978148, -0.207912, 0.207912, 0.978148, -123.576357, 34.476578)" style="fill: rgb(74, 103, 65); font-family: Georgia, serif; font-size: 35px; font-style: italic; white-space: pre; opacity: 0.56;" x="150" y="560" dx="76.443" dy="-45.782">∇²ψ</text>
+  <text transform="matrix(0.939693, 0.34202, -0.34202, 0.939693, 303.383488, -288.636235)" style="fill: rgb(74, 103, 65); font-family: Georgia, serif; font-size: 33px; font-style: italic; white-space: pre; opacity: 0.57;" x="950" y="750" dx="-19.161" dy="27.684">e^iθ</text>
+  <g transform="matrix(0.642788, 0.766044, -0.766044, 0.642788, 689.576426, 311.052495)" opacity="0.48">
+    <circle cx="0" cy="0" r="4.2" fill="#4A6741"/>
+    <ellipse cx="0" cy="0" rx="19" ry="6.5" fill="none" stroke="#4A6741" stroke-width="1"/>
+    <circle cx="19" cy="0" r="2.3" fill="#4A6741"/>
+    <circle cx="-19" cy="0" r="2.3" fill="#4A6741"/>
+  </g>
+  <g transform="matrix(0.573577, -0.819152, 0.819152, 0.573577, 489.576423, 771.052563)" opacity="0.47">
+    <circle cx="0" cy="0" r="4.3" fill="#4A6741"/>
+    <ellipse cx="0" cy="0" rx="19.5" ry="6.8" fill="none" stroke="#4A6741" stroke-width="1.05"/>
+    <ellipse cx="0" cy="0" rx="6.8" ry="19.5" fill="none" stroke="#4A6741" stroke-width="1.05"/>
+    <circle cx="19.5" cy="0" r="2.4" fill="#4A6741"/>
+    <circle cx="-19.5" cy="0" r="2.4" fill="#4A6741"/>
+    <circle cx="0" cy="19.5" r="2.4" fill="#4A6741"/>
+  </g>
+  <circle cx="34.576" cy="146.053" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="509.577" cy="231.053" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="969.577" cy="311.053" r="3" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="99.576" cy="476.053" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="629.577" cy="536.053" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="1019.58" cy="626.053" r="3" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="219.576" cy="706.053" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <circle cx="739.577" cy="861.052" r="2.5" fill="#4A6741" opacity="0.25" style="stroke-width: 1;"/>
+  <circle cx="409.577" cy="941.052" r="3" fill="#4A6741" opacity="0.3" style="stroke-width: 1;"/>
+  <circle cx="879.577" cy="1006.22" r="2" fill="#4A6741" opacity="0.28" style="stroke-width: 1;"/>
+  <polygon points="969.577 186.053 979.577 206.053 959.577 206.053" fill="none" stroke="#4A6741" stroke-width="1.2" opacity="0.32" style="stroke-width: 1.2; transform-box: fill-box; transform-origin: 50% 50%;" transform="matrix(0.906308, -0.422618, 0.422618, 0.906308, 0.000004, 0.000016)"/>
+  <polygon points="95.312 403.028" fill="none" stroke="#4A6741" stroke-width="1.2" opacity="0.35" style="stroke-width: 2.307;"/>
+  <polygon points="823.551 684.385 833.551 704.385 813.55 704.385" fill="none" stroke="#4A6741" stroke-width="1.2" opacity="0.33" style="stroke-width: 1.2; transform-box: fill-box; transform-origin: 50% 50%;" transform="matrix(0.965926, 0.258819, -0.258819, 0.965926, 0.00001, 0.000016)"/>
+  <polygon points="289.577 781.052 299.577 801.052 279.577 801.052" fill="none" stroke="#4A6741" stroke-width="1.2" opacity="0.34" style="stroke-width: 1.2; transform-box: fill-box; transform-origin: 50% 50%;" transform="matrix(0.866025, -0.5, 0.5, 0.866025, -0.00002, -0.000001)"/>
+  <polygon points="1009.58 881.052 1019.58 901.052 999.577 901.052" fill="none" stroke="#4A6741" stroke-width="1.2" opacity="0.32" style="stroke-width: 1.2; transform-box: fill-box; transform-origin: 50% 50%;" transform="matrix(0.766044, 0.642788, -0.642788, 0.766044, 0.000006, 0.000001)"/>
+  <rect x="420" y="514.5" width="21" height="21" fill="none" stroke="#4A6741" opacity="0.3" transform="matrix(0.866025, 0.5, -0.5, 0.866025, 86.265603, -421.348029)" style="stroke-width: 3px;"/>
+  <rect x="600" y="475" width="10" height="10" fill="none" stroke="#4A6741" stroke-width="1.2" opacity="0.32" transform="matrix(0.939693, -0.34202, 0.34202, 0.939693, -138.107378, 226.922229)" style="stroke-width: 1.2;"/>
+  <rect x="350" y="635" width="10" height="10" fill="none" stroke="#4A6741" stroke-width="1.2" opacity="0.31" transform="matrix(0.707107, 0.707107, -0.707107, 0.707107, 546.101876, -72.5188)" style="stroke-width: 1.2;"/>
+  <rect x="920" y="795" width="10" height="10" fill="none" stroke="#4A6741" stroke-width="1.2" opacity="0.33" transform="matrix(0.819152, -0.573577, 0.573577, 0.819152, -302.000493, 666.289072)" style="stroke-width: 1.2;"/>
+  <rect x="150" y="945" width="10" height="10" fill="none" stroke="#4A6741" stroke-width="1.2" opacity="0.3" transform="matrix(0.906308, 0.422618, -0.422618, 0.906308, 405.586066, 14.554244)" style="stroke-width: 1.2;"/>
+</svg>

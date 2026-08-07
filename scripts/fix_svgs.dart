@@ -53,6 +53,11 @@ void main() {
       'sym': 'rgb(197, 165, 126)',
       'sym_hex': '#C5A57E',
     },
+    'forest_moss': {
+      'bg': 'rgb(232, 240, 229)',
+      'sym': 'rgb(74, 103, 65)',
+      'sym_hex': '#4A6741',
+    },
   };
 
   for (final entry in themes.entries) {

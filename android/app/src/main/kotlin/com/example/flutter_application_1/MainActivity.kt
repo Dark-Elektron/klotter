@@ -1,4 +1,4 @@
-package app.darkelektron.klator
+package app.darkelektron.klotter
 
 import android.os.Bundle
 import androidx.activity.enableEdgeToEdge
