@@ -18,6 +18,14 @@ class MathTextStyle {
     _multiplySign = sign;
   }
 
+  static String _fontFamily = FONTFAMILY;
+
+  static String get fontFamily => _fontFamily;
+
+  static void setFontFamily(String family) {
+    _fontFamily = family;
+  }
+
   static const Set<String> _allMultiplySigns = {multiplyDot, multiplyTimes};
 
   static const Set<String> _paddedOperators = {
@@ -34,16 +42,16 @@ class MathTextStyle {
 
   /// Checks if a character at the given position should have padding.
   /// Minus signs following scientific E do NOT get padding.
-  static bool _isPaddedOperatorAt(String text, int index) {
+  /// When [forceLeadingBinary] is true, operators at index 0 are treated
+  /// as binary (padded) even if they would normally be unary.
+  static bool _isPaddedOperatorAt(
+    String text,
+    int index, {
+    bool forceLeadingBinary = false,
+  }) {
     final char = text[index];
 
     if (!_paddedOperators.contains(char)) {
-      return false;
-    }
-
-    // Unary +/− should stick to the following value (e.g., -23, (+3), (-x))
-    if ((char == plusSign || char == '-' || char == minusSign) &&
-        _isUnarySignAt(text, index)) {
       return false;
     }
 
@@ -53,6 +61,17 @@ class MathTextStyle {
       if (prevChar == scientificE || prevChar == 'E' || prevChar == 'e') {
         return false;
       }
+    }
+
+    // Unary +/− should stick to the following value (e.g., -23, (+3), (-x))
+    // BUT when forceLeadingBinary is true and index == 0, skip the unary check
+    if ((char == plusSign || char == '-' || char == minusSign) &&
+        _isUnarySignAt(text, index)) {
+      if (forceLeadingBinary && index == 0) {
+        // Override: treat as binary at node boundary
+        return true;
+      }
+      return false;
     }
 
     return true;
@@ -89,12 +108,21 @@ class MathTextStyle {
     return TextStyle(
       fontSize: fontSize,
       height: 1.0,
-      fontFamily: FONTFAMILY,
+      fontFamily: _fontFamily,
       fontFeatures: const [FontFeature.tabularFigures()],
     );
   }
 
-  static String toDisplayText(String text) {
+  /// Converts logical text to display text with operator spacing.
+  ///
+  /// When [forceLeadingOperatorPadding] is true, operators at position 0
+  /// are treated as binary (full leading + trailing spaces), overriding
+  /// the default behavior where they are treated as unary/leading.
+  /// This is used when the literal follows another node (e.g., a fraction).
+  static String toDisplayText(
+    String text, {
+    bool forceLeadingOperatorPadding = false,
+  }) {
     if (text.isEmpty) return text;
     final buffer = StringBuffer();
     for (int i = 0; i < text.length; i++) {
@@ -102,12 +130,19 @@ class MathTextStyle {
 
       String displayChar = char;
       if (_isMultiplySign(char) || char == '*') {
-        displayChar = multiplyDot; // Always use dot for exact results
+        displayChar = _multiplySign;
       }
 
-      if (_isPaddedOperatorAt(text, i)) {
-        // Only add leading space if not the first character in the literal
-        if (i > 0) {
+      final bool isPadded = _isPaddedOperatorAt(
+        text,
+        i,
+        forceLeadingBinary: forceLeadingOperatorPadding,
+      );
+
+      if (isPadded) {
+        // Add leading space unless it's the first character AND
+        // forceLeadingOperatorPadding is false
+        if (i > 0 || forceLeadingOperatorPadding) {
           buffer.write(' ');
         }
         buffer.write(displayChar);
@@ -141,13 +176,22 @@ class MathTextStyle {
     return width;
   }
 
-  static int _logicalToDisplayIndex(String text, int logicalIndex) {
+  static int _logicalToDisplayIndex(
+    String text,
+    int logicalIndex, {
+    bool forceLeadingOperatorPadding = false,
+  }) {
     int displayIndex = 0;
     final clampedIndex = logicalIndex.clamp(0, text.length);
 
     for (int i = 0; i < clampedIndex; i++) {
-      if (_isPaddedOperatorAt(text, i)) {
-        if (i == 0) {
+      final bool isPadded = _isPaddedOperatorAt(
+        text,
+        i,
+        forceLeadingBinary: forceLeadingOperatorPadding,
+      );
+      if (isPadded) {
+        if (i == 0 && !forceLeadingOperatorPadding) {
           displayIndex += 2; // char + trailing space
         } else {
           displayIndex += 3; // space + char + space
@@ -164,14 +208,19 @@ class MathTextStyle {
     String text,
     int charIndex,
     double fontSize,
-    TextScaler textScaler,
-  ) {
+    TextScaler textScaler, {
+    bool forceLeadingOperatorPadding = false,
+  }) {
     if (text.isEmpty || charIndex <= 0) return 0.0;
 
-    final displayText = toDisplayText(text);
+    final displayText = toDisplayText(
+      text,
+      forceLeadingOperatorPadding: forceLeadingOperatorPadding,
+    );
     final displayIndex = _logicalToDisplayIndex(
       text,
       charIndex,
+      forceLeadingOperatorPadding: forceLeadingOperatorPadding,
     ).clamp(0, displayText.length);
 
     final textSpan = TextSpan(text: displayText, style: getStyle(fontSize));
@@ -196,11 +245,15 @@ class MathTextStyle {
     String text,
     double xOffset,
     double fontSize,
-    TextScaler textScaler,
-  ) {
+    TextScaler textScaler, {
+    bool forceLeadingOperatorPadding = false,
+  }) {
     if (text.isEmpty) return 0;
 
-    final displayText = toDisplayText(text); // String allocation
+    final displayText = toDisplayText(
+      text,
+      forceLeadingOperatorPadding: forceLeadingOperatorPadding,
+    );
 
     // Creates TextPainter - EXPENSIVE
     final textSpan = TextSpan(text: displayText, style: getStyle(fontSize));
@@ -221,20 +274,33 @@ class MathTextStyle {
     return displayToLogicalIndex(
       text,
       position.offset.clamp(0, displayText.length),
+      forceLeadingOperatorPadding: forceLeadingOperatorPadding,
     );
   }
 
-  static int displayToLogicalIndex(String text, int displayIndex) {
+  static int displayToLogicalIndex(
+    String text,
+    int displayIndex, {
+    bool forceLeadingOperatorPadding = false,
+  }) {
     if (displayIndex <= 0) return 0;
 
     int displayPos = 0;
 
     for (int logical = 0; logical < text.length; logical++) {
-      final isPadded = _isPaddedOperatorAt(text, logical);
+      final isPadded = _isPaddedOperatorAt(
+        text,
+        logical,
+        forceLeadingBinary: forceLeadingOperatorPadding,
+      );
       int charWidth;
 
       if (isPadded) {
-        charWidth = (logical == 0) ? 2 : 3;
+        if (logical == 0 && !forceLeadingOperatorPadding) {
+          charWidth = 2; // char + trailing space
+        } else {
+          charWidth = 3; // space + char + space
+        }
       } else {
         charWidth = 1;
       }
@@ -244,7 +310,12 @@ class MathTextStyle {
 
       if (displayIndex <= displayPos) {
         if (isPadded) {
-          final midpoint = prevDisplayPos + ((logical == 0) ? 1 : 2);
+          int midpoint;
+          if (logical == 0 && !forceLeadingOperatorPadding) {
+            midpoint = prevDisplayPos + 1;
+          } else {
+            midpoint = prevDisplayPos + 2;
+          }
           if (displayIndex <= midpoint) {
             return logical;
           } else {
@@ -258,7 +329,15 @@ class MathTextStyle {
     return text.length;
   }
 
-  static int logicalToDisplayIndex(String text, int logicalIndex) {
-    return _logicalToDisplayIndex(text, logicalIndex);
+  static int logicalToDisplayIndex(
+    String text,
+    int logicalIndex, {
+    bool forceLeadingOperatorPadding = false,
+  }) {
+    return _logicalToDisplayIndex(
+      text,
+      logicalIndex,
+      forceLeadingOperatorPadding: forceLeadingOperatorPadding,
+    );
   }
 }

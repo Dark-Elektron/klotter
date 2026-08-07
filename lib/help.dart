@@ -35,7 +35,7 @@ class HelpPage extends StatelessWidget {
           const SizedBox(height: 24),
 
           Text(
-            'Welcome to Klator',
+            'Welcome to Klotter',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 26,
@@ -45,7 +45,7 @@ class HelpPage extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'A powerful multi-line scientific calculator.',
+            'A scientific calculator that graphs what you type.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 16, color: colors.textSecondary),
           ),
@@ -84,18 +84,18 @@ class HelpPage extends StatelessWidget {
           ),
           _buildHelpStep(
             context,
-            icon: Icons.functions,
-            title: 'Equation Solver',
+            icon: Icons.show_chart,
+            title: 'Live Plotting',
             description:
-                'Solves Linear, Quadratic, and Simultaneous equations. Simply type the equation as you see it; Klator handles up to 3 unknown variables (x, y, z).',
+                'Every cell graphs as you type. Use x for a curve, or x and y together for a 3D surface. Constants draw as a horizontal line, and unit vectors (x̂, ŷ, ẑ) make a vector field.',
             colors: colors,
           ),
           _buildHelpStep(
             context,
             icon: Icons.keyboard_command_key,
-            title: 'Multiline Equations',
+            title: 'Multiple Curves',
             description:
-                'For simultaneous equations, use ⌘ to start a new line for each equation. The solver automatically detects the number of variables which then determines the number of lines needed.',
+                'Press ⌘ to add another expression to the same plot; each line is drawn as its own curve in its own colour. Swipe the strip above the keypad to move between plots, or to start a new one.',
             colors: colors,
           ),
           _buildHelpStep(
@@ -123,7 +123,7 @@ class HelpPage extends StatelessWidget {
             style: TextStyle(fontSize: 14, color: colors.textSecondary),
           ),
           SelectableText(
-            'https://github.com/Dark-Elektron/klator',
+            'https://github.com/Dark-Elektron/klotter',
             style: TextStyle(color: colors.accent, fontStyle: FontStyle.italic),
           ),
 

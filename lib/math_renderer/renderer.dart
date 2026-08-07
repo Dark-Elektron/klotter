@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'sumprod_symbol.dart';
 import '../utils/constants.dart';
 import 'math_editor_controller.dart';
 import 'placeholder_box.dart';
@@ -145,11 +146,43 @@ class MathRenderer extends StatelessWidget {
       final bool isFirstNonEmpty = nodeIndex == firstNonEmptyIndex;
       final bool isLastNonEmpty = nodeIndex == lastNonEmptyIndex;
 
+      // Standard horizontal padding between nodes
+      const double standardPadding = 1.5;
+
       // Empty nodes get 0 padding; non-empty use edge detection
-      final double leftPad =
-          isEmpty ? 0.0 : ((removeLeftPadding && isFirstNonEmpty) ? 0.0 : 1.5);
-      final double rightPad =
-          isEmpty ? 0.0 : ((removeRightPadding && isLastNonEmpty) ? 0.0 : 1.5);
+      double leftPad;
+      double rightPad;
+
+      if (isEmpty) {
+        leftPad = 0.0;
+        rightPad = 0.0;
+      } else {
+        // Remove padding on edges if requested
+        leftPad =
+            (removeLeftPadding && isFirstNonEmpty) ? 0.0 : standardPadding;
+        rightPad =
+            (removeRightPadding && isLastNonEmpty) ? 0.0 : standardPadding;
+      }
+
+      // Determine if this literal's leading operator should be treated
+      // as binary (with full spacing) because it follows another node.
+      bool forceLeadingOp = false;
+      if (node is LiteralNode && node.text.isNotEmpty && !isFirstNonEmpty) {
+        final firstChar = node.text[0];
+        // Check if first char is an operator that would be padded
+        const operatorChars = {
+          '\u002B',
+          '\u2212',
+          '-',
+          '\u00B7',
+          '\u00D7',
+          '*',
+          '=',
+        };
+        if (operatorChars.contains(firstChar)) {
+          forceLeadingOp = true;
+        }
+      }
 
       return Padding(
         padding: EdgeInsets.only(
@@ -164,6 +197,7 @@ class MathRenderer extends StatelessWidget {
           parentId,
           path,
           fontSize,
+          forceLeadingOperatorPadding: forceLeadingOp,
         ),
       );
     }).toList();
@@ -194,8 +228,9 @@ class MathRenderer extends StatelessWidget {
     List<MathNode> siblings,
     String? parentId,
     String? path,
-    double fontSize,
-  ) {
+    double fontSize, {
+    bool forceLeadingOperatorPadding = false,
+  }) {
     // Skip rendering NewlineNode (it's handled by line splitting)
     if (node is NewlineNode) {
       return const SizedBox.shrink();
@@ -213,6 +248,7 @@ class MathRenderer extends StatelessWidget {
         controller: controller,
         structureVersion: structureVersion,
         textScaler: textScaler,
+        forceLeadingOperatorPadding: forceLeadingOperatorPadding,
       );
     }
 
@@ -223,17 +259,25 @@ class MathRenderer extends StatelessWidget {
         textScaler: textScaler,
       );
     }
+
+    // Unit vectors are atomic tokens like constants, drawn as the axis letter
+    // with a combining circumflex (x̂). The editor had metrics for these but no
+    // widget case, so they measured correctly and then drew nothing — the read
+    // -only result display has its own copy of this, which is why they showed
+    // up in results but never in the expression being typed.
     if (node is UnitVectorNode) {
-      return _UnitVectorWidget(
-        axis: node.axis,
-        fontSize: fontSize,
-        color: Colors.white,
+      return Text(
+        '${node.axis}\u0302',
+        style: MathTextStyle.getStyle(fontSize).copyWith(color: Colors.white),
+        textScaler: textScaler,
       );
     }
 
     if (node is FractionNode) {
       final bool numEmpty = _isContentEmpty(node.numerator);
       final bool denEmpty = _isContentEmpty(node.denominator);
+      final double fractionPlaceholderWidth = fontSize * 1.0;
+      final double fractionPlaceholderHeight = fontSize * 0.8;
 
       return _wrapComposite(
         node: node,
@@ -254,19 +298,22 @@ class MathRenderer extends StatelessWidget {
                           index: 0,
                           subIndex: 0,
                         ),
-                    child: PlaceholderBox(
-                      fontSize: fontSize,
-                      minWidth: fontSize * 1.0,
-                      minHeight: fontSize * 0.8,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: _renderNodeList(
-                          node.numerator,
-                          0,
-                          fontSize: fontSize,
-                          parentId: node.id,
-                          path: 'num',
+                    child: SizedBox(
+                      width: fractionPlaceholderWidth,
+                      child: PlaceholderBox(
+                        fontSize: fontSize,
+                        minWidth: fractionPlaceholderWidth,
+                        minHeight: fractionPlaceholderHeight,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: _renderNodeList(
+                            node.numerator,
+                            0,
+                            fontSize: fontSize,
+                            parentId: node.id,
+                            path: 'num',
+                          ),
                         ),
                       ),
                     ),
@@ -301,19 +348,22 @@ class MathRenderer extends StatelessWidget {
                           index: 0,
                           subIndex: 0,
                         ),
-                    child: PlaceholderBox(
-                      fontSize: fontSize,
-                      minWidth: fontSize * 1.0,
-                      minHeight: fontSize * 0.8,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: _renderNodeList(
-                          node.denominator,
-                          0,
-                          fontSize: fontSize,
-                          parentId: node.id,
-                          path: 'den',
+                    child: SizedBox(
+                      width: fractionPlaceholderWidth,
+                      child: PlaceholderBox(
+                        fontSize: fontSize,
+                        minWidth: fractionPlaceholderWidth,
+                        minHeight: fractionPlaceholderHeight,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: _renderNodeList(
+                            node.denominator,
+                            0,
+                            fontSize: fontSize,
+                            parentId: node.id,
+                            path: 'den',
+                          ),
                         ),
                       ),
                     ),
@@ -521,7 +571,12 @@ class MathRenderer extends StatelessWidget {
                   horizontal: fontSize * 0.15,
                   vertical: fontSize * 0.1,
                 ),
-                child: contentWidget,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [contentWidget],
+                ),
               ),
               ScalableParenthesis(
                 isOpening: false,
@@ -537,6 +592,19 @@ class MathRenderer extends StatelessWidget {
 
     if (node is TrigNode) {
       final bool argEmpty = _isContentEmpty(node.argument);
+      final argMetrics = _getListMetrics(node.argument, fontSize);
+      final double vPadding = fontSize * 0.1;
+      final double argContentHeight = argMetrics.$1;
+      final double argAreaHeight = math.max(
+        fontSize,
+        argContentHeight + vPadding * 2,
+      );
+      final double argRefFromTop =
+          vPadding + (argContentHeight - argMetrics.$2);
+      final double labelTop =
+          (argRefFromTop - fontSize / 2)
+              .clamp(0.0, math.max(0.0, argAreaHeight - fontSize))
+              .toDouble();
 
       Widget argWidget =
           argEmpty
@@ -577,6 +645,37 @@ class MathRenderer extends StatelessWidget {
                 ),
               );
 
+      if (node.function.toLowerCase() == 'abs') {
+        return _wrapComposite(
+          node: node,
+          index: index,
+          parentId: parentId,
+          path: path,
+          child: IntrinsicHeight(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ScalableAbsBar(fontSize: fontSize, color: Colors.white),
+                Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: fontSize * 0.15,
+                    vertical: vPadding,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [argWidget],
+                  ),
+                ),
+                ScalableAbsBar(fontSize: fontSize, color: Colors.white),
+              ],
+            ),
+          ),
+        );
+      }
+
       return _wrapComposite(
         node: node,
         index: index,
@@ -585,17 +684,21 @@ class MathRenderer extends StatelessWidget {
         child: IntrinsicHeight(
           child: Row(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Function name (sin, cos, etc.)
-              Text(
-                node.function,
-                style: MathTextStyle.getStyle(
-                  fontSize,
-                ).copyWith(color: Colors.white),
-                textScaler: textScaler,
+              Align(
+                alignment: Alignment.topLeft,
+                child: Transform.translate(
+                  offset: Offset(0, labelTop),
+                  child: Text(
+                    node.function,
+                    style: MathTextStyle.getStyle(
+                      fontSize,
+                    ).copyWith(color: Colors.white),
+                    textScaler: textScaler,
+                  ),
+                ),
               ),
-              // Parentheses with content
               Flexible(
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -609,10 +712,15 @@ class MathRenderer extends StatelessWidget {
                     ),
                     Padding(
                       padding: EdgeInsets.symmetric(
-                        horizontal: fontSize * 0.25,
-                        vertical: fontSize * 0.1,
+                        horizontal: fontSize * 0.15,
+                        vertical: vPadding,
                       ),
-                      child: argWidget,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [argWidget],
+                      ),
                     ),
                     ScalableParenthesis(
                       isOpening: false,
@@ -770,7 +878,12 @@ class MathRenderer extends StatelessWidget {
                         top: fontSize * 0.08,
                         bottom: 2,
                       ),
-                      child: Center(child: radicandWidget),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [radicandWidget],
+                      ),
                     ),
                   ],
                 ),
@@ -783,6 +896,19 @@ class MathRenderer extends StatelessWidget {
 
     if (node is LogNode) {
       final double baseSize = fontSize * 0.8;
+      final argMetrics = _getListMetrics(node.argument, fontSize);
+      final double vPadding = fontSize * 0.1;
+      final double argContentHeight = argMetrics.$1;
+      final double argAreaHeight = math.max(
+        fontSize,
+        argContentHeight + vPadding * 2,
+      );
+      final double argRefFromTop =
+          vPadding + (argContentHeight - argMetrics.$2);
+      final double labelTop =
+          (argRefFromTop - fontSize / 2)
+              .clamp(0.0, math.max(0.0, argAreaHeight - fontSize))
+              .toDouble();
 
       final bool baseEmpty = !node.isNaturalLog && _isContentEmpty(node.base);
       final bool argEmpty = _isContentEmpty(node.argument);
@@ -875,58 +1001,77 @@ class MathRenderer extends StatelessWidget {
         index: index,
         parentId: parentId,
         path: path,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            // "log" or "ln" text
-            Text(
-              node.isNaturalLog ? 'ln' : 'log',
-              style: MathTextStyle.getStyle(
-                fontSize,
-              ).copyWith(color: Colors.white),
-              textScaler: textScaler,
-            ),
-
-            // Subscript base - layout-aware positioning
-            if (!node.isNaturalLog && baseWidget != null)
-              Padding(
-                padding: EdgeInsets.only(left: 1, top: fontSize * 0.5),
-                child: baseWidget,
+        child: IntrinsicHeight(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Align(
+                alignment: Alignment.topLeft,
+                child: Transform.translate(
+                  offset: Offset(0, labelTop),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        node.isNaturalLog ? 'ln' : 'log',
+                        style: MathTextStyle.getStyle(
+                          fontSize,
+                        ).copyWith(color: Colors.white),
+                        textScaler: textScaler,
+                      ),
+                      if (!node.isNaturalLog && baseWidget != null)
+                        Padding(
+                          padding: EdgeInsets.only(
+                            left: 1,
+                            top: fontSize * 0.5,
+                          ),
+                          child: baseWidget,
+                        ),
+                    ],
+                  ),
+                ),
               ),
 
-            // Small gap for natural log
-            if (node.isNaturalLog) SizedBox(width: fontSize * 0.05),
+              // Small gap for natural log
+              if (node.isNaturalLog) SizedBox(width: fontSize * 0.05),
 
-            // Parentheses with argument
-            IntrinsicHeight(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  ScalableParenthesis(
-                    isOpening: true,
-                    fontSize: fontSize,
-                    color: Colors.white,
-                    textScaler: textScaler,
-                  ),
-                  Padding(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: fontSize * 0.08,
-                      vertical: fontSize * 0.1,
+              // Parentheses with argument
+              Flexible(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ScalableParenthesis(
+                      isOpening: true,
+                      fontSize: fontSize,
+                      color: Colors.white,
+                      textScaler: textScaler,
                     ),
-                    child: argWidget,
-                  ),
-                  ScalableParenthesis(
-                    isOpening: false,
-                    fontSize: fontSize,
-                    color: Colors.white,
-                    textScaler: textScaler,
-                  ),
-                ],
+                    Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: fontSize * 0.08,
+                        vertical: vPadding,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [argWidget],
+                      ),
+                    ),
+                    ScalableParenthesis(
+                      isOpening: false,
+                      fontSize: fontSize,
+                      color: Colors.white,
+                      textScaler: textScaler,
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       );
     }
@@ -1167,7 +1312,981 @@ class MathRenderer extends StatelessWidget {
       );
     }
 
+    if (node is SummationNode || node is ProductNode) {
+      final bool isSum = node is SummationNode;
+      final double smallSize = fontSize * 0.7;
+      final variable = isSum ? (node).variable : (node as ProductNode).variable;
+      final lower = isSum ? (node).lower : (node as ProductNode).lower;
+      final upper = isSum ? (node).upper : (node as ProductNode).upper;
+      final body = isSum ? (node).body : (node as ProductNode).body;
+
+      final bool varEmpty = _isContentEmpty(variable);
+      final bool lowerEmpty = _isContentEmpty(lower);
+      final bool upperEmpty = _isContentEmpty(upper);
+      final bool bodyEmpty = _isContentEmpty(body);
+
+      Widget varWidget =
+          varEmpty
+              ? GestureDetector(
+                onTap:
+                    () => controller.navigateTo(
+                      parentId: node.id,
+                      path: 'var',
+                      index: 0,
+                      subIndex: 0,
+                    ),
+                child: PlaceholderBox(
+                  fontSize: smallSize,
+                  minWidth: smallSize * 0.6,
+                  minHeight: smallSize * 0.7,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _renderNodeList(
+                      variable,
+                      0,
+                      fontSize: smallSize,
+                      parentId: node.id,
+                      path: 'var',
+                    ),
+                  ),
+                ),
+              )
+              : Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _renderNodeList(
+                  variable,
+                  0,
+                  fontSize: smallSize,
+                  parentId: node.id,
+                  path: 'var',
+                ),
+              );
+
+      Widget lowerWidget = Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          varWidget,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: Text(
+              '=',
+              style: MathTextStyle.getStyle(
+                smallSize,
+              ).copyWith(color: Colors.white),
+              textScaler: textScaler,
+            ),
+          ),
+          lowerEmpty
+              ? GestureDetector(
+                onTap:
+                    () => controller.navigateTo(
+                      parentId: node.id,
+                      path: 'lower',
+                      index: 0,
+                      subIndex: 0,
+                    ),
+                child: PlaceholderBox(
+                  fontSize: smallSize,
+                  minWidth: smallSize * 0.6,
+                  minHeight: smallSize * 0.7,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _renderNodeList(
+                      lower,
+                      0,
+                      fontSize: smallSize,
+                      parentId: node.id,
+                      path: 'lower',
+                    ),
+                  ),
+                ),
+              )
+              : Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _renderNodeList(
+                  lower,
+                  0,
+                  fontSize: smallSize,
+                  parentId: node.id,
+                  path: 'lower',
+                ),
+              ),
+        ],
+      );
+
+      Widget upperWidget =
+          upperEmpty
+              ? GestureDetector(
+                onTap:
+                    () => controller.navigateTo(
+                      parentId: node.id,
+                      path: 'upper',
+                      index: 0,
+                      subIndex: 0,
+                    ),
+                child: PlaceholderBox(
+                  fontSize: smallSize,
+                  minWidth: smallSize * 0.6,
+                  minHeight: smallSize * 0.7,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _renderNodeList(
+                      upper,
+                      0,
+                      fontSize: smallSize,
+                      parentId: node.id,
+                      path: 'upper',
+                    ),
+                  ),
+                ),
+              )
+              : Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _renderNodeList(
+                  upper,
+                  0,
+                  fontSize: smallSize,
+                  parentId: node.id,
+                  path: 'upper',
+                ),
+              );
+
+      Widget bodyWidget =
+          bodyEmpty
+              ? GestureDetector(
+                onTap:
+                    () => controller.navigateTo(
+                      parentId: node.id,
+                      path: 'body',
+                      index: 0,
+                      subIndex: 0,
+                    ),
+                child: PlaceholderBox(
+                  fontSize: fontSize,
+                  minWidth: fontSize * 0.9,
+                  minHeight: fontSize * 0.9,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _renderNodeList(
+                      body,
+                      0,
+                      fontSize: fontSize,
+                      parentId: node.id,
+                      path: 'body',
+                    ),
+                  ),
+                ),
+              )
+              : Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _renderNodeList(
+                  body,
+                  0,
+                  fontSize: fontSize,
+                  parentId: node.id,
+                  path: 'body',
+                ),
+              );
+
+      // Calculate body metrics for alignment
+      final bodyMetrics = _getListMetrics(body, fontSize);
+      final double bodyHeight = math.max(fontSize, bodyMetrics.$1);
+
+      // Symbol column height
+      final upperMetrics = _getListMetrics(upper, smallSize);
+      final double upperHeight = math.max(upperMetrics.$1, smallSize * 0.7);
+      final double symbolHeight = fontSize * 1.4;
+      final lowerMetrics = _getListMetrics(lower, smallSize);
+      final varMetrics = _getListMetrics(variable, smallSize);
+      final double lowerHeight = math.max(
+        math.max(varMetrics.$1, lowerMetrics.$1),
+        smallSize * 0.7,
+      );
+      final double totalSymbolHeight =
+          upperHeight +
+          fontSize * 0.1 +
+          symbolHeight +
+          fontSize * 0.1 +
+          lowerHeight;
+
+      // Center alignment offset
+      final double symbolCenter = totalSymbolHeight / 2;
+      final double bodyCenter = bodyHeight / 2;
+
+      return _wrapComposite(
+        node: node,
+        index: index,
+        parentId: parentId,
+        path: path,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Symbol column
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                upperWidget,
+                SizedBox(height: fontSize * 0.1),
+                SumProdSymbol(
+                  type: isSum ? SumProdType.sum : SumProdType.product,
+                  fontSize: fontSize,
+                  color: Colors.white,
+                ),
+                SizedBox(height: fontSize * 0.1),
+                lowerWidget,
+              ],
+            ),
+            SizedBox(width: fontSize * 0.2),
+            // Parentheses with body - vertically centered with symbol
+            Padding(
+              padding: EdgeInsets.only(
+                top: math.max(0, symbolCenter - bodyCenter - fontSize * 0.1),
+              ),
+              child: IntrinsicHeight(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ScalableParenthesis(
+                      isOpening: true,
+                      fontSize: fontSize,
+                      color: Colors.white,
+                      textScaler: textScaler,
+                    ),
+                    Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: fontSize * 0.15,
+                        vertical: fontSize * 0.1,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [bodyWidget],
+                      ),
+                    ),
+                    ScalableParenthesis(
+                      isOpening: false,
+                      fontSize: fontSize,
+                      color: Colors.white,
+                      textScaler: textScaler,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (node is DerivativeNode) {
+      final double symbolSize = fontSize;
+      final double evalSize = fontSize * 0.7;
+      final double barHeight = math.max(2.0, symbolSize * 0.08);
+      final double barMargin = symbolSize * 0.06;
+      final variable = node.variable;
+      final at = node.at;
+      final body = node.body;
+
+      final bool varEmpty = _isContentEmpty(variable);
+      final bool atEmpty = _isContentEmpty(at);
+      final bool bodyEmpty = _isContentEmpty(body);
+
+      Widget varWidget =
+          varEmpty
+              ? GestureDetector(
+                onTap:
+                    () => controller.navigateTo(
+                      parentId: node.id,
+                      path: 'var',
+                      index: 0,
+                      subIndex: 0,
+                    ),
+                child: PlaceholderBox(
+                  fontSize: symbolSize,
+                  minWidth: symbolSize * 0.6,
+                  minHeight: symbolSize * 0.7,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _renderNodeList(
+                      variable,
+                      0,
+                      fontSize: symbolSize,
+                      parentId: node.id,
+                      path: 'var',
+                    ),
+                  ),
+                ),
+              )
+              : Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _renderNodeList(
+                  variable,
+                  0,
+                  fontSize: symbolSize,
+                  parentId: node.id,
+                  path: 'var',
+                ),
+              );
+
+      Widget evalAtWidget =
+          atEmpty
+              ? GestureDetector(
+                onTap:
+                    () => controller.navigateTo(
+                      parentId: node.id,
+                      path: 'at',
+                      index: 0,
+                      subIndex: 0,
+                    ),
+                child: PlaceholderBox(
+                  fontSize: evalSize,
+                  minWidth: evalSize * 0.6,
+                  minHeight: evalSize * 0.7,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _renderNodeList(
+                      at,
+                      0,
+                      fontSize: evalSize,
+                      parentId: node.id,
+                      path: 'at',
+                    ),
+                  ),
+                ),
+              )
+              : Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _renderNodeList(
+                  at,
+                  0,
+                  fontSize: evalSize,
+                  parentId: node.id,
+                  path: 'at',
+                ),
+              );
+
+      Widget bodyWidget =
+          bodyEmpty
+              ? GestureDetector(
+                onTap:
+                    () => controller.navigateTo(
+                      parentId: node.id,
+                      path: 'body',
+                      index: 0,
+                      subIndex: 0,
+                    ),
+                child: PlaceholderBox(
+                  fontSize: fontSize,
+                  minWidth: fontSize * 0.9,
+                  minHeight: fontSize * 0.9,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _renderNodeList(
+                      body,
+                      0,
+                      fontSize: fontSize,
+                      parentId: node.id,
+                      path: 'body',
+                    ),
+                  ),
+                ),
+              )
+              : Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _renderNodeList(
+                  body,
+                  0,
+                  fontSize: fontSize,
+                  parentId: node.id,
+                  path: 'body',
+                ),
+              );
+
+      // Calculate metrics
+      final bodyMetrics = _getListMetrics(body, fontSize);
+      final double bodyHeight = math.max(fontSize, bodyMetrics.$1);
+
+      // Fraction measurements
+      final numMetrics = _getListMetrics([LiteralNode(text: 'd')], symbolSize);
+      final varMetrics = _getListMetrics(variable, symbolSize);
+      final double numHeight = numMetrics.$1;
+      final double denHeight = math.max(numMetrics.$1, varMetrics.$1);
+      final double fracHeight =
+          numHeight + barMargin + barHeight + barMargin + denHeight;
+
+      // Fraction center
+      final double fracCenterY = fracHeight / 2;
+
+      // Body (parentheses) measurements
+      final double vPadding = fontSize * 0.1;
+      final double parenHeight = bodyHeight + vPadding * 2;
+
+      // Body center
+      final double parenCenterY = parenHeight / 2;
+
+      // BIDIRECTIONAL centering (like integral)
+      final double fracTopPadding = math.max(0, parenCenterY - fracCenterY);
+      final double parenTopPadding = math.max(0, fracCenterY - parenCenterY);
+
+      // Calculate total height and positions
+      final double fracBottom = fracTopPadding + fracHeight;
+      final double parenBottom = parenTopPadding + parenHeight;
+      final double totalHeight = math.max(fracBottom, parenBottom);
+
+      // Eval bar spans full height
+      final double evalBarHeight = totalHeight;
+      final double evalBarTopPadding = 0.0;
+
+      String varText = '';
+      for (final n in variable) {
+        if (n is LiteralNode) {
+          varText += n.text;
+        }
+      }
+      final String displayVarText = varText.trim().isEmpty ? 'x' : varText;
+
+      final Widget evalSubscript = Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(
+            MathTextStyle.toDisplayText(displayVarText),
+            style: MathTextStyle.getStyle(
+              evalSize,
+            ).copyWith(color: Colors.white),
+            textScaler: textScaler,
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 1),
+            child: Text(
+              '=',
+              style: MathTextStyle.getStyle(
+                evalSize,
+              ).copyWith(color: Colors.white),
+              textScaler: textScaler,
+            ),
+          ),
+          evalAtWidget,
+        ],
+      );
+
+      final double barWidth = math.max(1.2, evalSize * 0.08);
+
+      // Derivative fraction widget
+      Widget fracWidget = IntrinsicWidth(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Text(
+                  'd',
+                  style: MathTextStyle.getStyle(
+                    symbolSize,
+                  ).copyWith(color: Colors.white),
+                  textScaler: textScaler,
+                ),
+              ],
+            ),
+            Container(
+              height: barHeight,
+              width: double.infinity,
+              color: Colors.white,
+              margin: EdgeInsets.symmetric(vertical: barMargin),
+            ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'd',
+                  style: MathTextStyle.getStyle(
+                    symbolSize,
+                  ).copyWith(color: Colors.white),
+                  textScaler: textScaler,
+                ),
+                const SizedBox(width: 1),
+                varWidget,
+              ],
+            ),
+          ],
+        ),
+      );
+
+      // Eval bar widget - spans full height
+      Widget evalBarWidget = SizedBox(
+        height: evalBarHeight,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(width: barWidth, color: Colors.white),
+            SizedBox(width: evalSize * 0.15),
+            Column(
+              mainAxisSize: MainAxisSize.max,
+              mainAxisAlignment: MainAxisAlignment.end,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [evalSubscript],
+            ),
+          ],
+        ),
+      );
+
+      // Parentheses widget
+      Widget parenWidget = IntrinsicHeight(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ScalableParenthesis(
+              isOpening: true,
+              fontSize: fontSize,
+              color: Colors.white,
+              textScaler: textScaler,
+            ),
+            Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: fontSize * 0.15,
+                vertical: vPadding,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [bodyWidget],
+              ),
+            ),
+            ScalableParenthesis(
+              isOpening: false,
+              fontSize: fontSize,
+              color: Colors.white,
+              textScaler: textScaler,
+            ),
+          ],
+        ),
+      );
+
+      return _wrapComposite(
+        node: node,
+        index: index,
+        parentId: parentId,
+        path: path,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Fraction part - pushed down when body is taller
+            Padding(
+              padding: EdgeInsets.only(top: fracTopPadding),
+              child: fracWidget,
+            ),
+            SizedBox(width: fontSize * 0.2),
+            // Parentheses - pushed down when fraction is taller
+            Padding(
+              padding: EdgeInsets.only(top: parenTopPadding),
+              child: parenWidget,
+            ),
+            // Eval bar - only for a definite (evaluated-at-a-point) derivative
+            if (node.isDefinite) ...[
+              SizedBox(width: fontSize * 0.1),
+              Padding(
+                padding: EdgeInsets.only(top: evalBarTopPadding),
+                child: evalBarWidget,
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    if (node is IntegralNode) {
+      final double boundSize = fontSize * 0.7;
+      final double dxSize = fontSize;
+      final double lowerGap = fontSize * 0.18;
+      final variable = node.variable;
+      final lower = node.lower;
+      final upper = node.upper;
+      final body = node.body;
+
+      final bool varEmpty = _isContentEmpty(variable);
+      final bool lowerEmpty = _isContentEmpty(lower);
+      final bool upperEmpty = _isContentEmpty(upper);
+      final bool bodyEmpty = _isContentEmpty(body);
+
+      Widget upperWidget =
+          upperEmpty
+              ? GestureDetector(
+                onTap:
+                    () => controller.navigateTo(
+                      parentId: node.id,
+                      path: 'upper',
+                      index: 0,
+                      subIndex: 0,
+                    ),
+                child: PlaceholderBox(
+                  fontSize: boundSize,
+                  minWidth: boundSize * 0.6,
+                  minHeight: boundSize * 0.7,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _renderNodeList(
+                      upper,
+                      0,
+                      fontSize: boundSize,
+                      parentId: node.id,
+                      path: 'upper',
+                    ),
+                  ),
+                ),
+              )
+              : Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _renderNodeList(
+                  upper,
+                  0,
+                  fontSize: boundSize,
+                  parentId: node.id,
+                  path: 'upper',
+                ),
+              );
+
+      Widget lowerWidget =
+          lowerEmpty
+              ? GestureDetector(
+                onTap:
+                    () => controller.navigateTo(
+                      parentId: node.id,
+                      path: 'lower',
+                      index: 0,
+                      subIndex: 0,
+                    ),
+                child: PlaceholderBox(
+                  fontSize: boundSize,
+                  minWidth: boundSize * 0.6,
+                  minHeight: boundSize * 0.7,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _renderNodeList(
+                      lower,
+                      0,
+                      fontSize: boundSize,
+                      parentId: node.id,
+                      path: 'lower',
+                    ),
+                  ),
+                ),
+              )
+              : Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _renderNodeList(
+                  lower,
+                  0,
+                  fontSize: boundSize,
+                  parentId: node.id,
+                  path: 'lower',
+                ),
+              );
+
+      Widget varWidget =
+          varEmpty
+              ? GestureDetector(
+                onTap:
+                    () => controller.navigateTo(
+                      parentId: node.id,
+                      path: 'var',
+                      index: 0,
+                      subIndex: 0,
+                    ),
+                child: PlaceholderBox(
+                  fontSize: dxSize,
+                  minWidth: dxSize * 0.6,
+                  minHeight: dxSize * 0.7,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _renderNodeList(
+                      variable,
+                      0,
+                      fontSize: dxSize,
+                      parentId: node.id,
+                      path: 'var',
+                    ),
+                  ),
+                ),
+              )
+              : Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _renderNodeList(
+                  variable,
+                  0,
+                  fontSize: dxSize,
+                  parentId: node.id,
+                  path: 'var',
+                ),
+              );
+
+      Widget bodyWidget =
+          bodyEmpty
+              ? GestureDetector(
+                onTap:
+                    () => controller.navigateTo(
+                      parentId: node.id,
+                      path: 'body',
+                      index: 0,
+                      subIndex: 0,
+                    ),
+                child: PlaceholderBox(
+                  fontSize: fontSize,
+                  minWidth: fontSize * 0.9,
+                  minHeight: fontSize * 0.9,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _renderNodeList(
+                      body,
+                      0,
+                      fontSize: fontSize,
+                      parentId: node.id,
+                      path: 'body',
+                    ),
+                  ),
+                ),
+              )
+              : Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _renderNodeList(
+                  body,
+                  0,
+                  fontSize: fontSize,
+                  parentId: node.id,
+                  path: 'body',
+                ),
+              );
+
+      // Calculate metrics for alignment
+      final bodyMetrics = _getListMetrics(body, fontSize);
+      final double bodyHeight = math.max(fontSize, bodyMetrics.$1);
+      final double bodyRef = bodyMetrics.$2; // Reference from bottom
+
+      final upperMetrics = _getListMetrics(upper, boundSize);
+      final double upperHeight = math.max(upperMetrics.$1, boundSize * 0.7);
+      final double symbolHeight = fontSize * 1.4;
+      // Actual rendered height of the ∫ glyph. The nominal fontSize*1.4 under-
+      // measures the text box, so for an indefinite integral (which shows only
+      // the lone ∫) it must be measured to keep the symbol centered on the body.
+      final TextPainter intSymbolPainter =
+          TextPainter(
+            text: TextSpan(
+              text: '∫',
+              style: MathTextStyle.getStyle(symbolHeight),
+            ),
+            textDirection: TextDirection.ltr,
+            textScaler: textScaler,
+          )..layout();
+      final double intSymbolHeight = intSymbolPainter.height;
+      final lowerMetrics = _getListMetrics(lower, boundSize);
+      final double lowerHeight = math.max(lowerMetrics.$1, boundSize * 0.7);
+      // Indefinite integrals show only the ∫ symbol (no bounds).
+      final double totalSymbolHeight =
+          node.isDefinite
+              ? upperHeight +
+                  fontSize * 0.05 +
+                  symbolHeight +
+                  lowerGap +
+                  lowerHeight
+              : intSymbolHeight;
+
+      // Body section measurements
+      final double vPadding = fontSize * 0.1;
+      final double bodyTotalHeight = bodyHeight + vPadding * 2;
+
+      // Bidirectional centering
+      final double columnCenterY = totalSymbolHeight / 2;
+      final double bodyCenterY = bodyTotalHeight / 2;
+
+      final double symbolTopPadding = math.max(0, bodyCenterY - columnCenterY);
+      final double bodyTopPadding = math.max(0, columnCenterY - bodyCenterY);
+
+      // Body reference line from top of IntegralNode
+      final double bodyRefFromTop =
+          bodyTopPadding + vPadding + (bodyHeight - bodyRef);
+
+      final Widget dxWidget = Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(
+            'd',
+            style: MathTextStyle.getStyle(dxSize).copyWith(color: Colors.white),
+            textScaler: textScaler,
+          ),
+          varWidget,
+        ],
+      );
+
+      final Widget integralSymbol = Text(
+        '∫',
+        style: MathTextStyle.getStyle(
+          fontSize * 1.4,
+        ).copyWith(color: Colors.white),
+        textScaler: textScaler,
+      );
+
+      final Widget parenBodyWidget = IntrinsicHeight(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ScalableParenthesis(
+              isOpening: true,
+              fontSize: fontSize,
+              color: Colors.white,
+              textScaler: textScaler,
+            ),
+            Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: fontSize * 0.15,
+                vertical: vPadding,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [bodyWidget],
+              ),
+            ),
+            ScalableParenthesis(
+              isOpening: false,
+              fontSize: fontSize,
+              color: Colors.white,
+              textScaler: textScaler,
+            ),
+          ],
+        ),
+      );
+
+      return _wrapComposite(
+        node: node,
+        index: index,
+        parentId: parentId,
+        path: path,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Integral symbol column
+            Padding(
+              padding: EdgeInsets.only(top: symbolTopPadding),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (node.isDefinite) ...[
+                    upperWidget,
+                    SizedBox(height: fontSize * 0.05),
+                  ],
+                  // A lone indefinite ∫ reads slightly low once box-centered,
+                  // so nudge its paint position up to visually center it on the
+                  // body. Paint-only, so the layout height (and the caret
+                  // alignment) is unaffected.
+                  if (node.isDefinite)
+                    integralSymbol
+                  else
+                    Transform.translate(
+                      offset: Offset(0, -symbolHeight * 0.07),
+                      child: integralSymbol,
+                    ),
+                  if (node.isDefinite) ...[
+                    SizedBox(height: lowerGap),
+                    lowerWidget,
+                  ],
+                ],
+              ),
+            ),
+            SizedBox(width: fontSize * 0.2),
+            // Parentheses with body
+            Padding(
+              padding: EdgeInsets.only(top: bodyTopPadding),
+              child: parenBodyWidget,
+            ),
+            SizedBox(width: fontSize * 0.1),
+            // dx widget — BASELINE ALIGNED with body reference
+            Padding(
+              padding: EdgeInsets.only(top: bodyRefFromTop - dxSize / 2),
+              child: dxWidget,
+            ),
+          ],
+        ),
+      );
+    }
+
     if (node is AnsNode) {
+      final bool indexEmpty = _isContentEmpty(node.index);
+
+      Widget indexWidget =
+          indexEmpty
+              ? GestureDetector(
+                onTap:
+                    () => controller.navigateTo(
+                      parentId: node.id,
+                      path: 'index',
+                      index: 0,
+                      subIndex: 0,
+                    ),
+                child: PlaceholderBox(
+                  fontSize: fontSize,
+                  minWidth: fontSize * 0.6,
+                  minHeight: fontSize * 0.7,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _renderNodeList(
+                      node.index,
+                      0,
+                      fontSize: fontSize,
+                      parentId: node.id,
+                      path: 'index',
+                    ),
+                  ),
+                ),
+              )
+              : Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _renderNodeList(
+                  node.index,
+                  0,
+                  fontSize: fontSize,
+                  parentId: node.id,
+                  path: 'index',
+                ),
+              );
+
       return _wrapComposite(
         node: node,
         index: index,
@@ -1186,21 +2305,246 @@ class MathRenderer extends StatelessWidget {
                 ).copyWith(color: Colors.orangeAccent),
                 textScaler: textScaler,
               ),
+              // Index
+              indexWidget,
+            ],
+          ),
+        ),
+      );
+    }
 
-              // Index - same size as regular text
-              Row(
+    if (node is PermutationNode) {
+      final double smallSize = fontSize * 0.8;
+
+      final bool nEmpty = _isContentEmpty(node.n);
+      final bool rEmpty = _isContentEmpty(node.r);
+
+      // Build n widget (top/superscript)
+      Widget nWidget =
+          nEmpty
+              ? GestureDetector(
+                onTap:
+                    () => controller.navigateTo(
+                      parentId: node.id,
+                      path: 'n',
+                      index: 0,
+                      subIndex: 0,
+                    ),
+                child: PlaceholderBox(
+                  fontSize: smallSize,
+                  minWidth: smallSize * 0.6,
+                  minHeight: smallSize * 0.7,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _renderNodeList(
+                      node.n,
+                      0,
+                      fontSize: smallSize,
+                      parentId: node.id,
+                      path: 'n',
+                    ),
+                  ),
+                ),
+              )
+              : Row(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: _renderNodeList(
-                  node.index,
+                  node.n,
                   0,
-                  fontSize: fontSize,
+                  fontSize: smallSize,
                   parentId: node.id,
-                  path: 'index',
+                  path: 'n',
                 ),
-              ),
-            ],
-          ),
+              );
+
+      // Build r widget (bottom/subscript)
+      Widget rWidget =
+          rEmpty
+              ? GestureDetector(
+                onTap:
+                    () => controller.navigateTo(
+                      parentId: node.id,
+                      path: 'r',
+                      index: 0,
+                      subIndex: 0,
+                    ),
+                child: PlaceholderBox(
+                  fontSize: smallSize,
+                  minWidth: smallSize * 0.6,
+                  minHeight: smallSize * 0.7,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _renderNodeList(
+                      node.r,
+                      0,
+                      fontSize: smallSize,
+                      parentId: node.id,
+                      path: 'r',
+                    ),
+                  ),
+                ),
+              )
+              : Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _renderNodeList(
+                  node.r,
+                  0,
+                  fontSize: smallSize,
+                  parentId: node.id,
+                  path: 'r',
+                ),
+              );
+
+      return _wrapComposite(
+        node: node,
+        index: index,
+        parentId: parentId,
+        path: path,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // n (superscript position)
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [nWidget, SizedBox(height: fontSize * 0.8)],
+            ),
+            // P symbol
+            Text(
+              'P',
+              style: MathTextStyle.getStyle(
+                fontSize,
+              ).copyWith(color: Colors.white),
+              textScaler: textScaler,
+            ),
+            // r (subscript position)
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [SizedBox(height: fontSize * 0.8), rWidget],
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (node is CombinationNode) {
+      final double smallSize = fontSize * 0.8;
+
+      final bool nEmpty = _isContentEmpty(node.n);
+      final bool rEmpty = _isContentEmpty(node.r);
+
+      // Build n widget (top/superscript)
+      Widget nWidget =
+          nEmpty
+              ? GestureDetector(
+                onTap:
+                    () => controller.navigateTo(
+                      parentId: node.id,
+                      path: 'n',
+                      index: 0,
+                      subIndex: 0,
+                    ),
+                child: PlaceholderBox(
+                  fontSize: smallSize,
+                  minWidth: smallSize * 0.6,
+                  minHeight: smallSize * 0.7,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _renderNodeList(
+                      node.n,
+                      0,
+                      fontSize: smallSize,
+                      parentId: node.id,
+                      path: 'n',
+                    ),
+                  ),
+                ),
+              )
+              : Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _renderNodeList(
+                  node.n,
+                  0,
+                  fontSize: smallSize,
+                  parentId: node.id,
+                  path: 'n',
+                ),
+              );
+
+      // Build r widget (bottom/subscript)
+      Widget rWidget =
+          rEmpty
+              ? GestureDetector(
+                onTap:
+                    () => controller.navigateTo(
+                      parentId: node.id,
+                      path: 'r',
+                      index: 0,
+                      subIndex: 0,
+                    ),
+                child: PlaceholderBox(
+                  fontSize: smallSize,
+                  minWidth: smallSize * 0.6,
+                  minHeight: smallSize * 0.7,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _renderNodeList(
+                      node.r,
+                      0,
+                      fontSize: smallSize,
+                      parentId: node.id,
+                      path: 'r',
+                    ),
+                  ),
+                ),
+              )
+              : Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _renderNodeList(
+                  node.r,
+                  0,
+                  fontSize: smallSize,
+                  parentId: node.id,
+                  path: 'r',
+                ),
+              );
+
+      return _wrapComposite(
+        node: node,
+        index: index,
+        parentId: parentId,
+        path: path,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // n (superscript position)
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [nWidget, SizedBox(height: fontSize * 1.0)],
+            ),
+            // C symbol
+            Text(
+              'C',
+              style: MathTextStyle.getStyle(
+                fontSize,
+              ).copyWith(color: Colors.white),
+              textScaler: textScaler,
+            ),
+            // r (subscript position)
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [SizedBox(height: fontSize * 0.8), rWidget],
+            ),
+          ],
         ),
       );
     }
@@ -1230,6 +2574,7 @@ class MathRenderer extends StatelessWidget {
     if (node is ConstantNode) {
       return (fontSize, fontSize / 2);
     }
+
     if (node is UnitVectorNode) {
       return (fontSize, fontSize / 2);
     }
@@ -1283,9 +2628,11 @@ class MathRenderer extends StatelessWidget {
     if (node is TrigNode) {
       final argMetrics = _getListMetrics(node.argument, fontSize);
       final double vPadding = fontSize * 0.1;
-      final height = math.max(fontSize, argMetrics.$1 + vPadding * 2);
+      final double argAreaHeight = argMetrics.$1 + vPadding * 2;
+      final double height = math.max(fontSize, argAreaHeight);
+      final double extraBottom = height - argAreaHeight;
       // Reference follows argument's reference
-      return (height, vPadding + argMetrics.$2);
+      return (height, extraBottom + vPadding + argMetrics.$2);
     }
 
     if (node is RootNode) {
@@ -1305,25 +2652,21 @@ class MathRenderer extends StatelessWidget {
     if (node is LogNode) {
       final argMetrics = _getListMetrics(node.argument, fontSize);
       final double vPadding = fontSize * 0.1;
-
-      // Argument area height
       final double argAreaHeight = argMetrics.$1 + vPadding * 2;
+      final double parenAreaHeight = math.max(fontSize, argAreaHeight);
 
-      // For non-natural log, subscript extends down
-      double subscriptExtent = 0;
+      double labelHeight = fontSize;
       if (!node.isNaturalLog) {
         final baseSize = fontSize * 0.8;
         final baseMetrics = _getListMetrics(node.base, baseSize);
-        subscriptExtent =
-            fontSize * 0.5 +
-            math.max(baseMetrics.$1, baseSize * 0.7) -
-            fontSize;
-        subscriptExtent = math.max(0, subscriptExtent);
+        final double baseHeight = math.max(baseMetrics.$1, baseSize * 0.7);
+        labelHeight = math.max(fontSize, fontSize * 0.5 + baseHeight);
       }
 
-      final height = math.max(fontSize, argAreaHeight) + subscriptExtent;
+      final double height = math.max(parenAreaHeight, labelHeight);
+      final double extraBottom = height - argAreaHeight;
       // Reference follows argument's reference (within the arg area)
-      return (height, subscriptExtent + vPadding + argMetrics.$2);
+      return (height, extraBottom + vPadding + argMetrics.$2);
     }
 
     if (node is PermutationNode) {
@@ -1362,6 +2705,181 @@ class MathRenderer extends StatelessWidget {
       );
 
       return (height, height / 2); // Center of C as baseline
+    }
+
+    if (node is SummationNode || node is ProductNode) {
+      final double smallSize = fontSize * 0.7;
+      final variable =
+          node is SummationNode
+              ? node.variable
+              : (node as ProductNode).variable;
+      final lower =
+          node is SummationNode ? node.lower : (node as ProductNode).lower;
+      final upper =
+          node is SummationNode ? node.upper : (node as ProductNode).upper;
+      final body =
+          node is SummationNode ? node.body : (node as ProductNode).body;
+
+      final varMetrics = _getListMetrics(variable, smallSize);
+      final lowerMetrics = _getListMetrics(lower, smallSize);
+      final upperMetrics = _getListMetrics(upper, smallSize);
+      final bodyMetrics = _getListMetrics(body, fontSize);
+
+      final double bodyHeight = math.max(fontSize, bodyMetrics.$1);
+      final double bodyRef = bodyMetrics.$2;
+
+      final double symbolHeight = fontSize * 1.4;
+      final double upperHeight = math.max(upperMetrics.$1, smallSize * 0.7);
+      final double lowerHeight = math.max(
+        math.max(varMetrics.$1, lowerMetrics.$1),
+        smallSize * 0.7,
+      );
+
+      // Symbol column height
+      final double symbolColumnHeight =
+          upperHeight +
+          fontSize * 0.1 +
+          symbolHeight +
+          fontSize * 0.1 +
+          lowerHeight;
+
+      // Body section measurements (matching render code)
+      final double vPadding = fontSize * 0.1;
+      final double bodyTotalHeight = bodyHeight + vPadding * 2;
+
+      // Symbol center position
+      final double symbolTopOffset = upperHeight + fontSize * 0.1;
+      final double symbolCenterY = symbolTopOffset + symbolHeight / 2;
+
+      // Body top padding to center with symbol
+      final double bodyTopPadding = math.max(
+        0,
+        symbolCenterY - bodyTotalHeight / 2,
+      );
+
+      // Total height
+      final double bodyBottom = bodyTopPadding + bodyTotalHeight;
+      final double totalHeight = math.max(symbolColumnHeight, bodyBottom);
+
+      // Body reference from top of node
+      // Body content starts at bodyTopPadding + vPadding
+      // Body reference line from top = bodyTopPadding + vPadding + (bodyHeight - bodyRef)
+      final double bodyRefFromTop =
+          bodyTopPadding + vPadding + (bodyHeight - bodyRef);
+
+      // Node reference from bottom
+      final double refFromBottom = totalHeight - bodyRefFromTop;
+
+      return (totalHeight, refFromBottom);
+    }
+
+    if (node is DerivativeNode) {
+      final double symbolSize = fontSize;
+      final double barHeight = math.max(2.0, symbolSize * 0.08);
+      final double barMargin = symbolSize * 0.06;
+      final bodyMetrics = _getListMetrics(node.body, fontSize);
+      final varMetrics = _getListMetrics(node.variable, symbolSize);
+
+      final double bodyHeight = math.max(fontSize, bodyMetrics.$1);
+      final double bodyRef = bodyMetrics.$2;
+
+      final numMetrics = _getListMetrics([LiteralNode(text: 'd')], symbolSize);
+      final double numHeight = numMetrics.$1;
+      final double denHeight = math.max(numMetrics.$1, varMetrics.$1);
+      final double fracHeight =
+          numHeight + barMargin + barHeight + barMargin + denHeight;
+
+      // Fraction center
+      final double fracCenterY = fracHeight / 2;
+
+      // Body (parentheses) measurements
+      final double vPadding = fontSize * 0.1;
+      final double parenHeight = bodyHeight + vPadding * 2;
+
+      // Body center
+      final double parenCenterY = parenHeight / 2;
+
+      // BIDIRECTIONAL centering (matches render code)
+      final double fracTopPadding = math.max(0, parenCenterY - fracCenterY);
+      final double parenTopPadding = math.max(0, fracCenterY - parenCenterY);
+
+      // Total height
+      final double fracBottom = fracTopPadding + fracHeight;
+      final double parenBottom = parenTopPadding + parenHeight;
+      final double totalHeight = math.max(fracBottom, parenBottom);
+
+      // Body reference from top of node
+      final double bodyRefFromTop =
+          parenTopPadding + vPadding + (bodyHeight - bodyRef);
+
+      // Node reference from bottom
+      final double refFromBottom = totalHeight - bodyRefFromTop;
+
+      return (totalHeight, refFromBottom);
+    }
+
+    if (node is IntegralNode) {
+      final double boundSize = fontSize * 0.7;
+      final double lowerGap = fontSize * 0.18;
+      final lowerMetrics = _getListMetrics(node.lower, boundSize);
+      final upperMetrics = _getListMetrics(node.upper, boundSize);
+      final bodyMetrics = _getListMetrics(node.body, fontSize);
+
+      final double bodyHeight = math.max(fontSize, bodyMetrics.$1);
+      final double bodyRef = bodyMetrics.$2;
+
+      final double symbolHeight = fontSize * 1.4;
+      final double upperHeight = math.max(upperMetrics.$1, boundSize * 0.7);
+      final double lowerHeight = math.max(lowerMetrics.$1, boundSize * 0.7);
+
+      // Symbol column height. Must mirror the render layout: an indefinite
+      // integral shows only the ∫ glyph (measured), a definite one adds the
+      // upper/lower bounds. If this diverges from the render, adjacent nodes
+      // (and their caret) align to the wrong reference axis.
+      final double intSymbolHeight =
+          (TextPainter(
+                text: TextSpan(
+                  text: '∫',
+                  style: MathTextStyle.getStyle(symbolHeight),
+                ),
+                textDirection: TextDirection.ltr,
+                textScaler: textScaler,
+              )..layout())
+              .height;
+      final double symbolColumnHeight =
+          node.isDefinite
+              ? upperHeight +
+                  fontSize * 0.05 +
+                  symbolHeight +
+                  lowerGap +
+                  lowerHeight
+              : intSymbolHeight;
+
+      // Body section measurements
+      final double vPadding = fontSize * 0.1;
+      final double bodyTotalHeight = bodyHeight + vPadding * 2;
+
+      // FIX: Use column center for centering (matches render code)
+      final double columnCenterY = symbolColumnHeight / 2;
+      final double bodyCenterY = bodyTotalHeight / 2;
+
+      // FIX: Bidirectional centering
+      final double symbolTopPadding = math.max(0, bodyCenterY - columnCenterY);
+      final double bodyTopPadding = math.max(0, columnCenterY - bodyCenterY);
+
+      // Total height accounts for both paddings
+      final double symbolBottom = symbolTopPadding + symbolColumnHeight;
+      final double bodyBottom = bodyTopPadding + bodyTotalHeight;
+      final double totalHeight = math.max(symbolBottom, bodyBottom);
+
+      // Body reference from top of node
+      final double bodyRefFromTop =
+          bodyTopPadding + vPadding + (bodyHeight - bodyRef);
+
+      // Node reference from bottom
+      final double refFromBottom = totalHeight - bodyRefFromTop;
+
+      return (totalHeight, refFromBottom);
     }
 
     if (node is AnsNode) {
@@ -1415,6 +2933,7 @@ class LiteralWidget extends StatefulWidget {
   final MathEditorController controller;
   final int structureVersion;
   final TextScaler textScaler;
+  final bool forceLeadingOperatorPadding;
 
   const LiteralWidget({
     super.key,
@@ -1427,48 +2946,17 @@ class LiteralWidget extends StatefulWidget {
     required this.controller,
     required this.structureVersion,
     required this.textScaler,
+    this.forceLeadingOperatorPadding = false,
   });
 
   @override
   State<LiteralWidget> createState() => _LiteralWidgetState();
 }
 
-class _UnitVectorWidget extends StatelessWidget {
-  final String axis;
-  final double fontSize;
-  final Color color;
-
-  const _UnitVectorWidget({
-    required this.axis,
-    required this.fontSize,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final baseStyle = MathTextStyle.getStyle(fontSize).copyWith(color: color);
-    final hatStyle = baseStyle;
-
-    return SizedBox(
-      height: fontSize,
-      child: Stack(
-        clipBehavior: Clip.none,
-        alignment: Alignment.centerLeft,
-        children: [
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [Text('$axis\u0302', style: hatStyle)],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _LiteralWidgetState extends State<LiteralWidget> {
   int _lastReportedVersion = -1;
   final GlobalKey _textKey = GlobalKey();
+  bool _layoutRetryScheduled = false;
 
   @override
   void initState() {
@@ -1489,14 +2977,19 @@ class _LiteralWidgetState extends State<LiteralWidget> {
   void _reportLayout() {
     if (!mounted) return;
     if (_lastReportedVersion == widget.structureVersion) return;
-    _lastReportedVersion = widget.structureVersion;
 
     final RenderBox? box = context.findRenderObject() as RenderBox?;
-    if (box == null || !box.attached) return;
+    if (box == null || !box.attached) {
+      _scheduleLayoutRetry();
+      return;
+    }
 
     final RenderBox? rootBox =
         widget.rootKey.currentContext?.findRenderObject() as RenderBox?;
-    if (rootBox == null) return;
+    if (rootBox == null || !rootBox.attached) {
+      _scheduleLayoutRetry();
+      return;
+    }
 
     final globalPos = box.localToGlobal(Offset.zero);
     final relativePos = rootBox.globalToLocal(globalPos);
@@ -1518,8 +3011,23 @@ class _LiteralWidgetState extends State<LiteralWidget> {
         fontSize: widget.fontSize,
         textScaler: widget.textScaler,
         renderParagraph: renderParagraph,
+        forceLeadingOperatorPadding: widget.forceLeadingOperatorPadding,
       ),
     );
+
+    _lastReportedVersion = widget.structureVersion;
+  }
+
+  void _scheduleLayoutRetry() {
+    if (_layoutRetryScheduled) return;
+    _layoutRetryScheduled = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _layoutRetryScheduled = false;
+      if (!mounted) return;
+      if (_lastReportedVersion == widget.structureVersion) return;
+      _reportLayout();
+    });
   }
 
   @override
@@ -1533,7 +3041,10 @@ class _LiteralWidgetState extends State<LiteralWidget> {
       );
     }
 
-    final displayText = MathTextStyle.toDisplayText(text);
+    final displayText = MathTextStyle.toDisplayText(
+      text,
+      forceLeadingOperatorPadding: widget.forceLeadingOperatorPadding,
+    );
 
     return Text(
       key: _textKey,
@@ -1623,6 +3134,8 @@ class _ComplexNodeWrapper extends StatefulWidget {
 }
 
 class _ComplexNodeWrapperState extends State<_ComplexNodeWrapper> {
+  bool _registerRetryScheduled = false;
+
   @override
   void initState() {
     super.initState();
@@ -1642,11 +3155,17 @@ class _ComplexNodeWrapperState extends State<_ComplexNodeWrapper> {
     if (!mounted) return;
 
     final RenderBox? box = context.findRenderObject() as RenderBox?;
-    if (box == null || !box.attached) return;
+    if (box == null || !box.attached) {
+      _scheduleRegisterRetry();
+      return;
+    }
 
     final RenderBox? rootBox =
         widget.rootKey.currentContext?.findRenderObject() as RenderBox?;
-    if (rootBox == null) return;
+    if (rootBox == null || !rootBox.attached) {
+      _scheduleRegisterRetry();
+      return;
+    }
 
     final globalPos = box.localToGlobal(Offset.zero);
     final relativePos = rootBox.globalToLocal(globalPos);
@@ -1661,6 +3180,17 @@ class _ComplexNodeWrapperState extends State<_ComplexNodeWrapper> {
         rect: rect,
       ),
     );
+  }
+
+  void _scheduleRegisterRetry() {
+    if (_registerRetryScheduled) return;
+    _registerRetryScheduled = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _registerRetryScheduled = false;
+      if (!mounted) return;
+      _register();
+    });
   }
 
   @override
@@ -1759,6 +3289,64 @@ class ParenthesisPainter extends CustomPainter {
   }
 }
 
+/// A scalable absolute value bar that grows with content height.
+class ScalableAbsBar extends StatelessWidget {
+  final double fontSize;
+  final Color color;
+
+  const ScalableAbsBar({
+    super.key,
+    required this.fontSize,
+    this.color = Colors.white,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(minHeight: fontSize * 1),
+      child: CustomPaint(
+        size: Size(fontSize * 0.12, double.infinity),
+        painter: AbsBarPainter(
+          color: color,
+          strokeWidth: math.max(1.5, fontSize * 0.06),
+        ),
+      ),
+    );
+  }
+}
+
+/// Custom painter for absolute value bars.
+class AbsBarPainter extends CustomPainter {
+  final Color color;
+  final double strokeWidth;
+
+  AbsBarPainter({required this.color, required this.strokeWidth});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint =
+        Paint()
+          ..color = color
+          ..strokeWidth = strokeWidth
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round;
+
+    final double padding = size.height * 0.05;
+    final double x = size.width / 2;
+
+    canvas.drawLine(
+      Offset(x, padding),
+      Offset(x, size.height - padding),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant AbsBarPainter oldDelegate) {
+    return oldDelegate.color != color || oldDelegate.strokeWidth != strokeWidth;
+  }
+}
+
 /// Information about a complex node's location in the tree
 class ComplexNodeInfo {
   final MathNode node;
@@ -1786,11 +3374,15 @@ class NodeLayoutInfo {
   final double fontSize;
   final TextScaler textScaler;
   final RenderParagraph? renderParagraph;
+  final bool forceLeadingOperatorPadding;
 
   // Cached display text - computed once
   String? _displayText;
   String get displayText =>
-      _displayText ??= MathTextStyle.toDisplayText(node.text);
+      _displayText ??= MathTextStyle.toDisplayText(
+        node.text,
+        forceLeadingOperatorPadding: forceLeadingOperatorPadding,
+      );
 
   NodeLayoutInfo({
     required this.rect,
@@ -1801,6 +3393,7 @@ class NodeLayoutInfo {
     required this.fontSize,
     required this.textScaler,
     this.renderParagraph,
+    this.forceLeadingOperatorPadding = false,
   });
 }
 

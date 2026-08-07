@@ -235,7 +235,9 @@ class WalkthroughOverlay extends StatelessWidget {
                   padding: _spotlightPadding,
                 ),
               )
-              : Container(color: Colors.black.withValues(alpha: _overlayDarkness)),
+              : Container(
+                color: Colors.black.withValues(alpha: _overlayDarkness),
+              ),
     );
   }
 
@@ -549,7 +551,7 @@ class WalkthroughOverlay extends StatelessWidget {
                 const SizedBox(width: 8),
                 Flexible(
                   child: Text(
-                    'You can restart this tutorial anytime. Swipe left on the keypad to find Settings \u2699',
+                    'You can restart this tutorial anytime. Swipe left on the keypad to find Settings \u2630',
                     style: TextStyle(
                       color: Colors.white.withValues(alpha: 0.9),
                       fontSize: 11,

@@ -1,9 +1,14 @@
-import 'dart:math' as math;
-
 /// Base class for all math expression nodes.
 abstract class MathNode {
+  // Monotonic per-process id source. Ids are used as keys in layout/selection
+  // caches, so they must be unique within a session; a random 31-bit value
+  // risked birthday-paradox collisions over a long session. Ids are never
+  // persisted (serialization stores structure only), so resetting to 0 on
+  // each launch is fine.
+  static int _nextId = 0;
+
   final String id;
-  MathNode() : id = math.Random().nextInt(1 << 31).toString();
+  MathNode() : id = (_nextId++).toString();
 }
 
 /// A literal text node containing numbers, variables, and operators.
@@ -79,8 +84,81 @@ class CombinationNode extends MathNode {
   List<MathNode> n; // Top number
   List<MathNode> r; // Bottom number
   CombinationNode({List<MathNode>? n, List<MathNode>? r})
-    : n = n ?? [LiteralNode()],
-      r = r ?? [LiteralNode()];
+      : n = n ?? [LiteralNode()],
+        r = r ?? [LiteralNode()];
+}
+
+/// A summation node (sigma) with variable, bounds, and body.
+class SummationNode extends MathNode {
+  List<MathNode> variable; // The index variable (e.g., x)
+  List<MathNode> lower; // Lower bound
+  List<MathNode> upper; // Upper bound
+  List<MathNode> body; // Expression to sum
+  SummationNode({
+    List<MathNode>? variable,
+    List<MathNode>? lower,
+    List<MathNode>? upper,
+    List<MathNode>? body,
+  }) : variable = variable ?? [LiteralNode(text: 'x')],
+       lower = lower ?? [LiteralNode()],
+       upper = upper ?? [LiteralNode()],
+       body = body ?? [LiteralNode()];
+}
+
+/// A product node (pi) with variable, bounds, and body.
+class ProductNode extends MathNode {
+  List<MathNode> variable; // The index variable (e.g., x)
+  List<MathNode> lower; // Lower bound
+  List<MathNode> upper; // Upper bound
+  List<MathNode> body; // Expression to multiply
+  ProductNode({
+    List<MathNode>? variable,
+    List<MathNode>? lower,
+    List<MathNode>? upper,
+    List<MathNode>? body,
+  }) : variable = variable ?? [LiteralNode(text: 'x')],
+       lower = lower ?? [LiteralNode()],
+       upper = upper ?? [LiteralNode()],
+       body = body ?? [LiteralNode()];
+}
+
+/// A derivative node (d/dx). When [isDefinite] is true it is evaluated at a
+/// point ([at]); when false it is a symbolic (indefinite) derivative and the
+/// evaluation point is neither shown nor editable.
+class DerivativeNode extends MathNode {
+  List<MathNode> variable; // Variable of differentiation (e.g., x)
+  List<MathNode> at; // Evaluation point (x = a)
+  List<MathNode> body; // Expression to differentiate
+  final bool isDefinite;
+  DerivativeNode({
+    List<MathNode>? variable,
+    List<MathNode>? at,
+    List<MathNode>? body,
+    this.isDefinite = true,
+  }) : variable = variable ?? [LiteralNode(text: 'x')],
+       at = at ?? [LiteralNode()],
+       body = body ?? [LiteralNode()];
+}
+
+/// An integral node. When [isDefinite] is true it has lower/upper bounds;
+/// when false it is an indefinite integral and the bounds are neither shown
+/// nor editable.
+class IntegralNode extends MathNode {
+  List<MathNode> variable; // Integration variable (e.g., x)
+  List<MathNode> lower; // Lower bound
+  List<MathNode> upper; // Upper bound
+  List<MathNode> body; // Integrand
+  final bool isDefinite;
+  IntegralNode({
+    List<MathNode>? variable,
+    List<MathNode>? lower,
+    List<MathNode>? upper,
+    List<MathNode>? body,
+    this.isDefinite = true,
+  }) : variable = variable ?? [LiteralNode(text: 'x')],
+       lower = lower ?? [LiteralNode()],
+       upper = upper ?? [LiteralNode()],
+       body = body ?? [LiteralNode()];
 }
 
 /// A complex number node (i * content).

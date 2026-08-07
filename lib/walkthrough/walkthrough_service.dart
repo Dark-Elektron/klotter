@@ -20,11 +20,11 @@ class WalkthroughService extends ChangeNotifier {
 
   // Expected keypad page when ENTERING each swipe step (for mobile, pagesPerView=1)
   // This is the page the user should be on BEFORE performing the swipe
+  // Phone pages are scientific (0) and extras (1). The number pad sits below
+  // them permanently and is not part of the PageView.
   static const Map<String, int> _mobileSwipeStepPages = {
-    'swipe_right_scientific': 1, // On number (1), will swipe to scientific (0)
-    'swipe_left_number': 0,      // On scientific (0), will swipe to number (1)
-    'swipe_left_extras': 1,      // On number (1), will swipe to extras (2)
-    'swipe_right_back': 2,       // On extras (2), will swipe to number (1)
+    'swipe_left_extras': 0, // On scientific (0), swipe left to extras (1)
+    'swipe_right_back': 1, // On extras (1), swipe right to scientific (0)
   };
 
   // Expected keypad page when ENTERING each swipe step (for tablet, pagesPerView=2)
@@ -196,7 +196,14 @@ class WalkthroughService extends ChangeNotifier {
     }
   }
 
-  WalkthroughStep get currentStepData => steps[_currentStep];
+  WalkthroughStep get currentStepData {
+    // `steps` length depends on device mode, which can change (e.g. rotation)
+    // before `_currentStep` is re-clamped. Clamp defensively so switching to a
+    // shorter step list never throws a RangeError.
+    final list = steps;
+    final index = _currentStep.clamp(0, list.length - 1);
+    return list[index];
+  }
 
   void onUserAction(WalkthroughAction action) {
     if (!_isActive) return;

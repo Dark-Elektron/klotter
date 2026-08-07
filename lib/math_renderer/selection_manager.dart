@@ -19,6 +19,15 @@ class SelectionManager {
   String? _selectedCompositeId;
   bool _isBlockMode = false;
 
+  // The context a drag started in, and whether it started as a whole-composite
+  // (block) selection. Used to stop an outward drag from a nested sub-context
+  // (e.g. the argument of log_10(6)) from re-entering a *sibling* sub-context
+  // and collapsing the selection. Drags that start in block mode keep full
+  // re-entry so dragging a handle back into a composite still refines it.
+  String? _originContextParentId;
+  String? _originContextPath;
+  bool _startedInBlockMode = false;
+
   // Bounds cache - separate content bounds from visual bounds
   final Map<String, Rect> _contentBoundsCache = {}; // Just the content
   final Map<String, Rect> _visualBoundsCache = {}; // Including visual elements
@@ -49,6 +58,11 @@ class SelectionManager {
     _selectedCompositeId = _getSingleSelectedCompositeId(selection);
     _isBlockMode = _selectedCompositeId != null;
 
+    // Remember where this drag started so re-entry can be constrained.
+    _originContextParentId = _contextParentId;
+    _originContextPath = _contextPath;
+    _startedInBlockMode = _isBlockMode;
+
     _rebuildBoundsCache();
   }
 
@@ -58,6 +72,9 @@ class SelectionManager {
     _fixedAnchor = null;
     _selectedCompositeId = null;
     _isBlockMode = false;
+    _originContextParentId = null;
+    _originContextPath = null;
+    _startedInBlockMode = false;
   }
 
   /// Adjust position to compensate for handle being below the selection
@@ -157,6 +174,14 @@ class SelectionManager {
   bool _tryReentry(Offset position) {
     if (_selectedCompositeId == null) return false;
 
+    // Don't re-enter if position is outside the composite's visual bounds.
+    // This prevents oscillation where _tryReentry re-enters a child context
+    // and _shouldExit immediately exits it, creating an infinite loop.
+    final compositeBounds = _visualBoundsCache[_selectedCompositeId!];
+    if (compositeBounds != null && !compositeBounds.contains(position)) {
+      return false;
+    }
+
     // We allow re-entry even during dragging to permit refining selections
     // by dragging handles back into composite nodes.
 
@@ -167,6 +192,17 @@ class SelectionManager {
     // Get the content bounds of sub-contexts
     final contexts = _getChildContexts(node);
     for (final ctx in contexts) {
+      // If this drag started inside a sub-context (not as a whole-composite
+      // block selection), only allow re-entry back into that same origin
+      // sub-context. Otherwise an outward drag toward a sibling sub-context
+      // (e.g. from the argument toward the base of a log) would re-enter the
+      // sibling and collapse/deselect the selection.
+      if (!_startedInBlockMode &&
+          !(_selectedCompositeId == _originContextParentId &&
+              ctx.path == _originContextPath)) {
+        continue;
+      }
+
       final ctxBounds =
           _contentBoundsCache['$_selectedCompositeId:${ctx.path}'];
       if (ctxBounds == null) continue;
@@ -882,13 +918,14 @@ class SelectionManager {
     final relX = position.dx - info.rect.left;
 
     if (info.renderParagraph != null) {
-      final displayText = MathTextStyle.toDisplayText(text);
+      final displayText = info.displayText;
       final pos = info.renderParagraph!.getPositionForOffset(
         Offset(relX, info.fontSize / 2),
       );
       return MathTextStyle.displayToLogicalIndex(
         text,
         pos.offset.clamp(0, displayText.length),
+        forceLeadingOperatorPadding: info.forceLeadingOperatorPadding,
       );
     }
 
@@ -897,6 +934,7 @@ class SelectionManager {
       relX,
       info.fontSize,
       info.textScaler,
+      forceLeadingOperatorPadding: info.forceLeadingOperatorPadding,
     );
   }
 
@@ -976,6 +1014,25 @@ class SelectionManager {
       if (path == 'r') return node.r;
     } else if (node is AnsNode) {
       if (path == 'index') return node.index;
+    } else if (node is SummationNode) {
+      if (path == 'var') return node.variable;
+      if (path == 'lower') return node.lower;
+      if (path == 'upper') return node.upper;
+      if (path == 'body') return node.body;
+    } else if (node is ProductNode) {
+      if (path == 'var') return node.variable;
+      if (path == 'lower') return node.lower;
+      if (path == 'upper') return node.upper;
+      if (path == 'body') return node.body;
+    } else if (node is IntegralNode) {
+      if (path == 'var') return node.variable;
+      if (path == 'lower') return node.lower;
+      if (path == 'upper') return node.upper;
+      if (path == 'body') return node.body;
+    } else if (node is DerivativeNode) {
+      if (path == 'var') return node.variable;
+      if (path == 'at') return node.at;
+      if (path == 'body') return node.body;
     }
     return null;
   }
@@ -990,6 +1047,16 @@ class SelectionManager {
     if (node is PermutationNode) return [node.n, node.r];
     if (node is CombinationNode) return [node.n, node.r];
     if (node is AnsNode) return [node.index];
+    if (node is SummationNode) {
+      return [node.variable, node.lower, node.upper, node.body];
+    }
+    if (node is ProductNode) {
+      return [node.variable, node.lower, node.upper, node.body];
+    }
+    if (node is IntegralNode) {
+      return [node.variable, node.lower, node.upper, node.body];
+    }
+    if (node is DerivativeNode) return [node.variable, node.at, node.body];
     return [];
   }
 
@@ -1019,6 +1086,29 @@ class SelectionManager {
       list.add(_ChildContext(path: 'r', nodes: node.r));
     } else if (node is AnsNode) {
       list.add(_ChildContext(path: 'index', nodes: node.index));
+    } else if (node is SummationNode) {
+      list.add(_ChildContext(path: 'var', nodes: node.variable));
+      list.add(_ChildContext(path: 'lower', nodes: node.lower));
+      list.add(_ChildContext(path: 'upper', nodes: node.upper));
+      list.add(_ChildContext(path: 'body', nodes: node.body));
+    } else if (node is ProductNode) {
+      list.add(_ChildContext(path: 'var', nodes: node.variable));
+      list.add(_ChildContext(path: 'lower', nodes: node.lower));
+      list.add(_ChildContext(path: 'upper', nodes: node.upper));
+      list.add(_ChildContext(path: 'body', nodes: node.body));
+    } else if (node is IntegralNode) {
+      list.add(_ChildContext(path: 'var', nodes: node.variable));
+      if (node.isDefinite) {
+        list.add(_ChildContext(path: 'lower', nodes: node.lower));
+        list.add(_ChildContext(path: 'upper', nodes: node.upper));
+      }
+      list.add(_ChildContext(path: 'body', nodes: node.body));
+    } else if (node is DerivativeNode) {
+      list.add(_ChildContext(path: 'var', nodes: node.variable));
+      if (node.isDefinite) {
+        list.add(_ChildContext(path: 'at', nodes: node.at));
+      }
+      list.add(_ChildContext(path: 'body', nodes: node.body));
     }
     return list;
   }
@@ -1030,6 +1120,16 @@ class SelectionManager {
     if (node is LogNode) return ['base', 'arg'];
     if (node is PermutationNode) return ['n', 'r'];
     if (node is CombinationNode) return ['n', 'r'];
+    if (node is SummationNode) return ['var', 'lower', 'upper', 'body'];
+    if (node is ProductNode) return ['var', 'lower', 'upper', 'body'];
+    if (node is IntegralNode) {
+      return node.isDefinite
+          ? ['var', 'lower', 'upper', 'body']
+          : ['var', 'body'];
+    }
+    if (node is DerivativeNode) {
+      return node.isDefinite ? ['var', 'at', 'body'] : ['var', 'body'];
+    }
     return [];
   }
 

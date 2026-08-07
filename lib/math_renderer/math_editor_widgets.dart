@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'expression_selection.dart';
 import 'math_editor_controller.dart';
+import 'scrub.dart';
 import 'renderer.dart';
 
 /// The main math editor widget that handles user interaction.
@@ -10,12 +11,17 @@ class MathEditorInline extends StatefulWidget {
   final VoidCallback? onFocus;
   final double? minWidth;
 
+  /// Called when a drag-to-tune gesture changes a number, so the surrounding
+  /// screen (notably the plot) can rebuild against the new expression.
+  final VoidCallback? onExpressionChanged;
+
   const MathEditorInline({
     super.key,
     required this.controller,
     this.showCursor = true,
     this.onFocus,
     this.minWidth,
+    this.onExpressionChanged,
   });
 
   @override
@@ -37,7 +43,10 @@ class MathEditorInlineState extends State<MathEditorInline>
     _cursorBlinkController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 530),
-    )..repeat(reverse: true);
+    );
+    if (widget.showCursor) {
+      _cursorBlinkController.repeat(reverse: true);
+    }
 
     widget.controller.setContainerKey(_containerKey);
     widget.controller.onSelectionCleared = _onSelectionCleared;
@@ -76,6 +85,15 @@ class MathEditorInlineState extends State<MathEditorInline>
       oldWidget.controller.onSelectionCleared = null;
       widget.controller.onSelectionCleared = _onSelectionCleared;
       widget.controller.setContainerKey(_containerKey);
+    }
+    if (oldWidget.showCursor != widget.showCursor) {
+      if (widget.showCursor) {
+        if (!_cursorBlinkController.isAnimating) {
+          _cursorBlinkController.repeat(reverse: true);
+        }
+      } else {
+        _cursorBlinkController.stop();
+      }
     }
   }
 
@@ -154,24 +172,61 @@ class MathEditorInlineState extends State<MathEditorInline>
     }
   }
 
+  // ============== DRAG TO TUNE ==============
+
+  /// The number currently being scrubbed, if any.
+  ScrubTarget? _scrubTarget;
+  double _scrubStartX = 0;
+
+  Offset? _toContainer(Offset local) {
+    final RenderBox? containerBox =
+        _containerKey.currentContext?.findRenderObject() as RenderBox?;
+    final RenderBox? gestureBox = context.findRenderObject() as RenderBox?;
+    if (containerBox == null || gestureBox == null) return null;
+    return containerBox.globalToLocal(gestureBox.localToGlobal(local));
+  }
+
   void _handleLongPress(LongPressStartDetails details) {
     widget.onFocus?.call();
 
-    final RenderBox? containerBox =
-        _containerKey.currentContext?.findRenderObject() as RenderBox?;
-    if (containerBox == null) return;
+    final Offset? localToContainer = _toContainer(details.localPosition);
+    if (localToContainer == null) return;
 
-    final RenderBox? gestureBox = context.findRenderObject() as RenderBox?;
-    if (gestureBox == null) return;
-
-    final globalPos = gestureBox.localToGlobal(details.localPosition);
-    final localToContainer = containerBox.globalToLocal(globalPos);
+    // Long-press over a number tunes it; long-press anywhere else selects, as
+    // before. Disambiguating here avoids inventing a second gesture on a
+    // surface that already owns tap, double-tap, long-press and pan.
+    final ScrubTarget? target =
+        widget.controller.scrubTargetAt(localToContainer);
+    if (target != null) {
+      setState(() {
+        _scrubTarget = target;
+        _scrubStartX = details.localPosition.dx;
+      });
+      return;
+    }
 
     _processTap(localToContainer, isDoubleTap: false, isLongPress: true);
 
     if (widget.controller.hasSelection) {
       _showSelectionOverlay();
     }
+  }
+
+  void _handleLongPressMove(LongPressMoveUpdateDetails details) {
+    final ScrubTarget? target = _scrubTarget;
+    if (target == null) return;
+    final double dx = details.localPosition.dx - _scrubStartX;
+    widget.controller.applyScrub(
+      target,
+      target.initialValue + dx * target.perPixel,
+    );
+    widget.onExpressionChanged?.call();
+  }
+
+  void _handleLongPressEnd(LongPressEndDetails details) {
+    if (_scrubTarget == null) return;
+    setState(() => _scrubTarget = null);
+    widget.onExpressionChanged?.call();
   }
 
   // ============== SELECTION OVERLAY ==============
@@ -277,6 +332,8 @@ class MathEditorInlineState extends State<MathEditorInline>
             onDoubleTapDown: _handleDoubleTapDown,
             onDoubleTap: _handleDoubleTap,
             onLongPressStart: _handleLongPress,
+            onLongPressMoveUpdate: _handleLongPressMove,
+            onLongPressEnd: _handleLongPressEnd,
             child: ConstrainedBox(
               constraints: BoxConstraints(
                 minWidth:

@@ -66,6 +66,35 @@ class SelectionWrapper {
       return ConstantNode(node.constant);
     } else if (node is UnitVectorNode) {
       return UnitVectorNode(node.axis);
+    } else if (node is SummationNode) {
+      return SummationNode(
+        variable: _deepCopyNodes(node.variable),
+        lower: _deepCopyNodes(node.lower),
+        upper: _deepCopyNodes(node.upper),
+        body: _deepCopyNodes(node.body),
+      );
+    } else if (node is ProductNode) {
+      return ProductNode(
+        variable: _deepCopyNodes(node.variable),
+        lower: _deepCopyNodes(node.lower),
+        upper: _deepCopyNodes(node.upper),
+        body: _deepCopyNodes(node.body),
+      );
+    } else if (node is IntegralNode) {
+      return IntegralNode(
+        variable: _deepCopyNodes(node.variable),
+        lower: _deepCopyNodes(node.lower),
+        upper: _deepCopyNodes(node.upper),
+        body: _deepCopyNodes(node.body),
+        isDefinite: node.isDefinite,
+      );
+    } else if (node is DerivativeNode) {
+      return DerivativeNode(
+        variable: _deepCopyNodes(node.variable),
+        at: _deepCopyNodes(node.at),
+        body: _deepCopyNodes(node.body),
+        isDefinite: node.isDefinite,
+      );
     }
     return LiteralNode(text: '');
   }
@@ -299,6 +328,25 @@ class SelectionWrapper {
       if (path == 'r') return parent.r;
     } else if (parent is AnsNode) {
       if (path == 'index') return parent.index;
+    } else if (parent is SummationNode) {
+      if (path == 'var' || path == 'variable') return parent.variable;
+      if (path == 'lower') return parent.lower;
+      if (path == 'upper') return parent.upper;
+      if (path == 'body') return parent.body;
+    } else if (parent is ProductNode) {
+      if (path == 'var' || path == 'variable') return parent.variable;
+      if (path == 'lower') return parent.lower;
+      if (path == 'upper') return parent.upper;
+      if (path == 'body') return parent.body;
+    } else if (parent is IntegralNode) {
+      if (path == 'var' || path == 'variable') return parent.variable;
+      if (path == 'lower') return parent.lower;
+      if (path == 'upper') return parent.upper;
+      if (path == 'body') return parent.body;
+    } else if (parent is DerivativeNode) {
+      if (path == 'var' || path == 'variable') return parent.variable;
+      if (path == 'at') return parent.at;
+      if (path == 'body') return parent.body;
     }
 
     return null;
@@ -331,6 +379,29 @@ class SelectionWrapper {
         found = _findNodeById(node.n, id) ?? _findNodeById(node.r, id);
       } else if (node is AnsNode) {
         found = _findNodeById(node.index, id);
+      } else if (node is SummationNode) {
+        found =
+            _findNodeById(node.variable, id) ??
+            _findNodeById(node.lower, id) ??
+            _findNodeById(node.upper, id) ??
+            _findNodeById(node.body, id);
+      } else if (node is ProductNode) {
+        found =
+            _findNodeById(node.variable, id) ??
+            _findNodeById(node.lower, id) ??
+            _findNodeById(node.upper, id) ??
+            _findNodeById(node.body, id);
+      } else if (node is IntegralNode) {
+        found =
+            _findNodeById(node.variable, id) ??
+            _findNodeById(node.lower, id) ??
+            _findNodeById(node.upper, id) ??
+            _findNodeById(node.body, id);
+      } else if (node is DerivativeNode) {
+        found =
+            _findNodeById(node.variable, id) ??
+            _findNodeById(node.at, id) ??
+            _findNodeById(node.body, id);
       }
 
       if (found != null) return found;
@@ -758,6 +829,147 @@ class SelectionWrapper {
 
     return true;
   }
+
+  /// Wrap selection in summation (selection becomes body)
+  bool wrapInSummation() {
+    if (!hasValidSelection) return false;
+
+    final content = _getSelectionContent();
+    if (content == null) return false;
+
+    controller.saveStateForUndo();
+
+    final nodesToWrap = _buildNodesToWrap(content);
+    final insertionPoint = _deleteSelectionAndGetInsertionPoint(content);
+    if (insertionPoint == null) return false;
+
+    final sumNode = SummationNode(
+      variable: [LiteralNode(text: 'x')],
+      lower: [LiteralNode(text: '')],
+      upper: [LiteralNode(text: '')],
+      body: nodesToWrap,
+    );
+
+    _insertNodeAtPoint(insertionPoint, sumNode);
+
+    controller.cursor = EditorCursor(
+      parentId: sumNode.id,
+      path: 'body',
+      index: 0,
+      subIndex: 0,
+    );
+
+    controller.clearSelection();
+    controller.notifyAndRecalculate();
+
+    return true;
+  }
+
+  /// Wrap selection in product (selection becomes body)
+  bool wrapInProduct() {
+    if (!hasValidSelection) return false;
+
+    final content = _getSelectionContent();
+    if (content == null) return false;
+
+    controller.saveStateForUndo();
+
+    final nodesToWrap = _buildNodesToWrap(content);
+    final insertionPoint = _deleteSelectionAndGetInsertionPoint(content);
+    if (insertionPoint == null) return false;
+
+    final prodNode = ProductNode(
+      variable: [LiteralNode(text: 'x')],
+      lower: [LiteralNode(text: '')],
+      upper: [LiteralNode(text: '')],
+      body: nodesToWrap,
+    );
+
+    _insertNodeAtPoint(insertionPoint, prodNode);
+
+    controller.cursor = EditorCursor(
+      parentId: prodNode.id,
+      path: 'body',
+      index: 0,
+      subIndex: 0,
+    );
+
+    controller.clearSelection();
+    controller.notifyAndRecalculate();
+
+    return true;
+  }
+
+  /// Wrap selection in derivative (selection becomes body)
+  bool wrapInDerivative({bool definite = false}) {
+    if (!hasValidSelection) return false;
+
+    final content = _getSelectionContent();
+    if (content == null) return false;
+
+    controller.saveStateForUndo();
+
+    final nodesToWrap = _buildNodesToWrap(content);
+    final insertionPoint = _deleteSelectionAndGetInsertionPoint(content);
+    if (insertionPoint == null) return false;
+
+    final diffNode = DerivativeNode(
+      variable: [LiteralNode(text: 'x')],
+      at: [LiteralNode(text: '')],
+      body: nodesToWrap,
+      isDefinite: definite,
+    );
+
+    _insertNodeAtPoint(insertionPoint, diffNode);
+
+    controller.cursor = EditorCursor(
+      parentId: diffNode.id,
+      path: 'body',
+      index: 0,
+      subIndex: 0,
+    );
+
+    controller.clearSelection();
+    controller.notifyAndRecalculate();
+
+    return true;
+  }
+
+  /// Wrap selection in integral (selection becomes body)
+  bool wrapInIntegral({bool definite = false}) {
+    if (!hasValidSelection) return false;
+
+    final content = _getSelectionContent();
+    if (content == null) return false;
+
+    controller.saveStateForUndo();
+
+    final nodesToWrap = _buildNodesToWrap(content);
+    final insertionPoint = _deleteSelectionAndGetInsertionPoint(content);
+    if (insertionPoint == null) return false;
+
+    final intNode = IntegralNode(
+      variable: [LiteralNode(text: 'x')],
+      lower: [LiteralNode(text: '')],
+      upper: [LiteralNode(text: '')],
+      body: nodesToWrap,
+      isDefinite: definite,
+    );
+
+    _insertNodeAtPoint(insertionPoint, intNode);
+
+    controller.cursor = EditorCursor(
+      parentId: intNode.id,
+      path: 'body',
+      index: 0,
+      subIndex: 0,
+    );
+
+    controller.clearSelection();
+    controller.notifyAndRecalculate();
+
+    return true;
+  }
 }
 
 /// Internal class to hold selection content
@@ -801,3 +1013,5 @@ class _InsertionPoint {
     this.path,
   });
 }
+
+

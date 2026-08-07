@@ -2,8 +2,6 @@ import 'selection_manager.dart';
 import 'renderer.dart';
 import 'selection_wrapper.dart';
 import '../math_engine/math_expression_serializer.dart';
-import '../math_engine/math_engine.dart';
-import '../math_engine/math_engine_exact.dart';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'expression_selection.dart';
@@ -84,6 +82,18 @@ class MathEditorController extends ChangeNotifier {
   void saveStateForUndo() {
     if (_isUndoRedoOperation) return;
 
+    // Skip a redundant snapshot when the expression is unchanged since the last
+    // one. This collapses the double snapshots produced when insertCharacter and
+    // a delegating handler (insertAns, _wrapSelectionInParenthesis, ...) both
+    // save before any mutation, so one keystroke maps to one undo entry.
+    if (_undoStack.isNotEmpty) {
+      final lastExpr = MathExpressionSerializer.serialize(
+        _undoStack.last.expression,
+      );
+      final currentExpr = MathExpressionSerializer.serialize(expression);
+      if (lastExpr == currentExpr) return;
+    }
+
     _undoStack.add(EditorState.capture(expression, cursor));
 
     // Limit stack size
@@ -108,10 +118,12 @@ class MathEditorController extends ChangeNotifier {
     EditorState previousState = _undoStack.removeLast();
     expression = previousState.expression;
     cursor = previousState.cursor;
+    _rebuildComplexNodeMap();
     _structureVersion++;
 
     _isUndoRedoOperation = false;
 
+    _scheduleCursorRecalc();
     notifyListeners();
     onResultChanged?.call();
   }
@@ -129,10 +141,12 @@ class MathEditorController extends ChangeNotifier {
     EditorState redoState = _redoStack.removeLast();
     expression = redoState.expression;
     cursor = redoState.cursor;
+    _rebuildComplexNodeMap();
     _structureVersion++;
 
     _isUndoRedoOperation = false;
 
+    _scheduleCursorRecalc();
     notifyListeners();
     onResultChanged?.call();
   }
@@ -255,8 +269,9 @@ class MathEditorController extends ChangeNotifier {
         final displayIndex = MathTextStyle.logicalToDisplayIndex(
           text,
           charIndex,
+          forceLeadingOperatorPadding: info.forceLeadingOperatorPadding,
         );
-        final displayText = MathTextStyle.toDisplayText(text);
+        final displayText = info.displayText; // Use cached display text
         final offset = info.renderParagraph!.getOffsetForCaret(
           TextPosition(offset: displayIndex.clamp(0, displayText.length)),
           Rect.zero,
@@ -270,6 +285,7 @@ class MathEditorController extends ChangeNotifier {
               charIndex,
               info.fontSize,
               info.textScaler,
+              forceLeadingOperatorPadding: info.forceLeadingOperatorPadding,
             );
       }
     }
@@ -376,11 +392,16 @@ class MathEditorController extends ChangeNotifier {
 
         final displayText = info.displayText;
         final displayOffset = pos.offset.clamp(0, displayText.length);
-        charIndex = MathTextStyle.displayToLogicalIndex(text, displayOffset);
+        charIndex = MathTextStyle.displayToLogicalIndex(
+          text,
+          displayOffset,
+          forceLeadingOperatorPadding: info.forceLeadingOperatorPadding,
+        );
 
         final cursorDisplayIndex = MathTextStyle.logicalToDisplayIndex(
           text,
           charIndex,
+          forceLeadingOperatorPadding: info.forceLeadingOperatorPadding,
         );
         final offset = info.renderParagraph!.getOffsetForCaret(
           TextPosition(offset: cursorDisplayIndex.clamp(0, displayText.length)),
@@ -393,6 +414,7 @@ class MathEditorController extends ChangeNotifier {
           relativeX,
           info.fontSize,
           info.textScaler,
+          forceLeadingOperatorPadding: info.forceLeadingOperatorPadding,
         );
         cursorX =
             info.rect.left +
@@ -401,6 +423,7 @@ class MathEditorController extends ChangeNotifier {
               charIndex,
               info.fontSize,
               info.textScaler,
+              forceLeadingOperatorPadding: info.forceLeadingOperatorPadding,
             );
       }
     }
@@ -492,8 +515,10 @@ class MathEditorController extends ChangeNotifier {
         final displayIndex = MathTextStyle.logicalToDisplayIndex(
           text,
           charIndex,
+          forceLeadingOperatorPadding:
+              rightmostInfo.forceLeadingOperatorPadding,
         );
-        final displayText = MathTextStyle.toDisplayText(text);
+        final displayText = rightmostInfo.displayText;
         final offset = rightmostInfo.renderParagraph!.getOffsetForCaret(
           TextPosition(offset: displayIndex.clamp(0, displayText.length)),
           Rect.zero,
@@ -507,6 +532,8 @@ class MathEditorController extends ChangeNotifier {
               charIndex,
               rightmostInfo.fontSize,
               rightmostInfo.textScaler,
+              forceLeadingOperatorPadding:
+                  rightmostInfo.forceLeadingOperatorPadding,
             );
       }
     }
@@ -529,6 +556,13 @@ class MathEditorController extends ChangeNotifier {
   }
 
   void insertCharacter(String char) {
+    // ')' only moves the cursor out of a parenthesis; it makes no structural
+    // change, so it must not create an undo entry. Handle it before snapshotting.
+    if (char == ')') {
+      _exitParenthesis();
+      return;
+    }
+
     saveStateForUndo();
     if (char == '/') {
       _wrapIntoFraction();
@@ -542,11 +576,6 @@ class MathEditorController extends ChangeNotifier {
 
     if (char == '(' || char == '()') {
       _insertParenthesis();
-      return;
-    }
-
-    if (char == ')') {
-      _exitParenthesis();
       return;
     }
 
@@ -602,6 +631,7 @@ class MathEditorController extends ChangeNotifier {
     _rebuildComplexNodeMap(); // Add this line
 
     expression = nodes.isNotEmpty ? nodes : [LiteralNode()];
+    expr = MathExpressionSerializer.serialize(expression);
     _structureVersion++;
     // Position cursor at end of root expression
     int lastIndex = expression.length - 1;
@@ -656,6 +686,12 @@ class MathEditorController extends ChangeNotifier {
       if (parent is FractionNode) {
         break;
       }
+      if (parent is SummationNode ||
+          parent is DerivativeNode ||
+          parent is IntegralNode ||
+          parent is ProductNode) {
+        break;
+      }
 
       // Exit AnsNode, TrigNode, RootNode, LogNode, etc.
       if (parent
@@ -667,7 +703,16 @@ class MathEditorController extends ChangeNotifier {
       // parent is CombinationNode ||
       // parent is ExponentNode
       ) {
+        final EditorCursor before = cursor;
         _moveCursorAfterNode(parent.id);
+        // Safety: if the cursor could not be repositioned (e.g. no valid
+        // position after the node), stop instead of looping forever.
+        if (cursor.parentId == before.parentId &&
+            cursor.path == before.path &&
+            cursor.index == before.index &&
+            cursor.subIndex == before.subIndex) {
+          break;
+        }
         continue;
       }
 
@@ -694,11 +739,43 @@ class MathEditorController extends ChangeNotifier {
 
     // Find the operand before cursor (number or variable to square)
     int operandStart = cursorClick;
+    bool isDigit(String char) {
+      final int code = char.codeUnitAt(0);
+      return code >= 48 && code <= 57;
+    }
+
+    bool isLetter(String char) {
+      final int code = char.codeUnitAt(0);
+      return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+    }
+
     while (operandStart > 0 && !_isWordBoundary(text[operandStart - 1])) {
+      if (operandStart < text.length) {
+        final String prevChar = text[operandStart - 1];
+        final String nextChar = text[operandStart];
+        if (isDigit(prevChar) && isLetter(nextChar)) {
+          break;
+        }
+        if (isLetter(prevChar) && isLetter(nextChar)) {
+          break;
+        }
+      }
       operandStart--;
     }
 
     String baseText = text.substring(operandStart, cursorClick);
+    String prefixText = text.substring(0, operandStart);
+    bool isAllLetters(String value) {
+      for (int i = 0; i < value.length; i++) {
+        if (!isLetter(value[i])) return false;
+      }
+      return value.isNotEmpty;
+    }
+
+    if (baseText.length > 1 && isAllLetters(baseText)) {
+      prefixText += baseText.substring(0, baseText.length - 1);
+      baseText = baseText.substring(baseText.length - 1);
+    }
     int actualIndex = siblings.indexWhere((n) => n.id == currentId);
 
     // Handle case where base is a previous node (like a fraction or parenthesis)
@@ -744,7 +821,7 @@ class MathEditorController extends ChangeNotifier {
       }
     }
 
-    current.text = text.substring(0, operandStart);
+    current.text = prefixText;
 
     // Create exponent with power = 2
     final exp = ExponentNode(
@@ -799,14 +876,29 @@ class MathEditorController extends ChangeNotifier {
           index: actualIndex + 2,
           subIndex: 0,
         );
+      } else {
+        // We are at the very end of the literal (or it was empty).
+        // If 'before' is not empty, we keep it and just apppend the constant.
+        // If 'before' IS empty, we replace the LiteralNode with the ConstantNode.
+        if (before.isNotEmpty) {
+          current.text = before;
+          siblings.insert(actualIndex + 1, node);
+          // Insert a NEW empty LiteralNode after the constant so the user has somewhere to type
+          final tail = LiteralNode(text: "");
+          siblings.insert(actualIndex + 2, tail);
+          cursor = EditorCursor(
+            parentId: cursor.parentId,
+            path: cursor.path,
+            index: actualIndex + 2,
+            subIndex: 0,
+          );
         } else {
-          // We are at the very end of the literal (or it was empty).
-          // If 'before' is not empty, we keep it and just apppend the constant.
-          // If 'before' IS empty, we replace the LiteralNode with the ConstantNode.
-          if (before.isNotEmpty) {
-            current.text = before;
+          // Both before and after are empty. Replace current Literal with Constant.
+          final prevNode = actualIndex > 0 ? siblings[actualIndex - 1] : null;
+          if (prevNode is ConstantNode || prevNode is UnitVectorNode) {
+            // Keep the empty literal as a spacer so the cursor can sit between constants.
             siblings.insert(actualIndex + 1, node);
-            // Insert a NEW empty LiteralNode after the constant so the user has somewhere to type
+            // Still need an empty literal after it to allow further typing
             final tail = LiteralNode(text: "");
             siblings.insert(actualIndex + 2, tail);
             cursor = EditorCursor(
@@ -816,35 +908,20 @@ class MathEditorController extends ChangeNotifier {
               subIndex: 0,
             );
           } else {
-            // Both before and after are empty. Replace current Literal with Constant.
-            final prevNode = actualIndex > 0 ? siblings[actualIndex - 1] : null;
-            if (prevNode is ConstantNode || prevNode is UnitVectorNode) {
-              // Keep the empty literal as a spacer so the cursor can sit between constants.
-              siblings.insert(actualIndex + 1, node);
-              // Still need an empty literal after it to allow further typing
-              final tail = LiteralNode(text: "");
-              siblings.insert(actualIndex + 2, tail);
-              cursor = EditorCursor(
-                parentId: cursor.parentId,
-                path: cursor.path,
-                index: actualIndex + 2,
-                subIndex: 0,
-              );
-            } else {
-              siblings[actualIndex] = node;
-              // Still need an empty literal after it to allow further typing
-              final tail = LiteralNode(text: "");
-              siblings.insert(actualIndex + 1, tail);
-              cursor = EditorCursor(
-                parentId: cursor.parentId,
-                path: cursor.path,
-                index: actualIndex + 1,
-                subIndex: 0,
-              );
-            }
+            siblings[actualIndex] = node;
+            // Still need an empty literal after it to allow further typing
+            final tail = LiteralNode(text: "");
+            siblings.insert(actualIndex + 1, tail);
+            cursor = EditorCursor(
+              parentId: cursor.parentId,
+              path: cursor.path,
+              index: actualIndex + 1,
+              subIndex: 0,
+            );
           }
         }
       }
+    }
     _notifyStructureChanged();
     onCalculate();
   }
@@ -1301,12 +1378,7 @@ class MathEditorController extends ChangeNotifier {
     }
 
     // Create the parenthesis node with selected content
-    if (selectedNodes.isNotEmpty && selectedNodes.first is! LiteralNode) {
-      selectedNodes.insert(0, LiteralNode(text: ""));
-    }
-    if (selectedNodes.isNotEmpty && selectedNodes.last is! LiteralNode) {
-      selectedNodes.add(LiteralNode(text: ""));
-    }
+    _ensureLiteralEdges(selectedNodes);
 
     final paren = ParenthesisNode(content: selectedNodes);
 
@@ -1590,6 +1662,163 @@ class MathEditorController extends ChangeNotifier {
     _notifyStructureChanged();
   }
 
+  void insertSummation() {
+    saveStateForUndo();
+    final siblings = _resolveSiblingList();
+    final current = _resolveCursorNode();
+    if (current is! LiteralNode) return;
+
+    final String currentId = current.id;
+    String text = current.text;
+    int cursorPos = cursor.subIndex;
+    int actualIndex = siblings.indexWhere((n) => n.id == currentId);
+
+    String before = text.substring(0, cursorPos);
+    String after = text.substring(cursorPos);
+
+    current.text = before;
+
+    final sumNode = SummationNode(
+      variable: [LiteralNode(text: 'x')],
+      lower: [LiteralNode(text: '')],
+      upper: [LiteralNode(text: '')],
+      body: [LiteralNode(text: '')],
+    );
+    final tail = LiteralNode(text: after);
+
+    if (actualIndex >= 0) {
+      siblings.insert(actualIndex + 1, sumNode);
+      siblings.insert(actualIndex + 2, tail);
+      cursor = EditorCursor(
+        parentId: sumNode.id,
+        path: 'body',
+        index: 0,
+        subIndex: 0,
+      );
+    }
+
+    _notifyStructureChanged();
+    onCalculate();
+  }
+
+  void insertProduct() {
+    saveStateForUndo();
+    final siblings = _resolveSiblingList();
+    final current = _resolveCursorNode();
+    if (current is! LiteralNode) return;
+
+    final String currentId = current.id;
+    String text = current.text;
+    int cursorPos = cursor.subIndex;
+    int actualIndex = siblings.indexWhere((n) => n.id == currentId);
+
+    String before = text.substring(0, cursorPos);
+    String after = text.substring(cursorPos);
+
+    current.text = before;
+
+    final prodNode = ProductNode(
+      variable: [LiteralNode(text: 'x')],
+      lower: [LiteralNode(text: '')],
+      upper: [LiteralNode(text: '')],
+      body: [LiteralNode(text: '')],
+    );
+    final tail = LiteralNode(text: after);
+
+    if (actualIndex >= 0) {
+      siblings.insert(actualIndex + 1, prodNode);
+      siblings.insert(actualIndex + 2, tail);
+      cursor = EditorCursor(
+        parentId: prodNode.id,
+        path: 'body',
+        index: 0,
+        subIndex: 0,
+      );
+    }
+
+    _notifyStructureChanged();
+    onCalculate();
+  }
+
+  void insertDerivative({bool definite = false}) {
+    saveStateForUndo();
+    final siblings = _resolveSiblingList();
+    final current = _resolveCursorNode();
+    if (current is! LiteralNode) return;
+
+    final String currentId = current.id;
+    String text = current.text;
+    int cursorPos = cursor.subIndex;
+    int actualIndex = siblings.indexWhere((n) => n.id == currentId);
+
+    String before = text.substring(0, cursorPos);
+    String after = text.substring(cursorPos);
+
+    current.text = before;
+
+    final diffNode = DerivativeNode(
+      variable: [LiteralNode(text: 'x')],
+      at: [LiteralNode(text: '')],
+      body: [LiteralNode(text: '')],
+      isDefinite: definite,
+    );
+    final tail = LiteralNode(text: after);
+
+    if (actualIndex >= 0) {
+      siblings.insert(actualIndex + 1, diffNode);
+      siblings.insert(actualIndex + 2, tail);
+      cursor = EditorCursor(
+        parentId: diffNode.id,
+        path: 'body',
+        index: 0,
+        subIndex: 0,
+      );
+    }
+
+    _notifyStructureChanged();
+    onCalculate();
+  }
+
+  void insertIntegral({bool definite = false}) {
+    saveStateForUndo();
+    final siblings = _resolveSiblingList();
+    final current = _resolveCursorNode();
+    if (current is! LiteralNode) return;
+
+    final String currentId = current.id;
+    String text = current.text;
+    int cursorPos = cursor.subIndex;
+    int actualIndex = siblings.indexWhere((n) => n.id == currentId);
+
+    String before = text.substring(0, cursorPos);
+    String after = text.substring(cursorPos);
+
+    current.text = before;
+
+    final intNode = IntegralNode(
+      variable: [LiteralNode(text: 'x')],
+      lower: [LiteralNode(text: '')],
+      upper: [LiteralNode(text: '')],
+      body: [LiteralNode(text: '')],
+      isDefinite: definite,
+    );
+    final tail = LiteralNode(text: after);
+
+    if (actualIndex >= 0) {
+      siblings.insert(actualIndex + 1, intNode);
+      siblings.insert(actualIndex + 2, tail);
+      cursor = EditorCursor(
+        parentId: intNode.id,
+        path: 'body',
+        index: 0,
+        subIndex: 0,
+      );
+    }
+
+    _notifyStructureChanged();
+    onCalculate();
+  }
+
   void insertNewline() {
     saveStateForUndo();
     final siblings = _resolveSiblingList();
@@ -1702,6 +1931,8 @@ class MathEditorController extends ChangeNotifier {
       parentList.removeAt(j);
     }
 
+    _ensureLiteralEdges(numeratorNodes);
+
     final frac = FractionNode(
       num: numeratorNodes,
       den: [LiteralNode(text: "")],
@@ -1768,6 +1999,8 @@ class MathEditorController extends ChangeNotifier {
     for (int j = permIndex; j >= removeStartIndex; j--) {
       parentList.removeAt(j);
     }
+
+    _ensureLiteralEdges(numeratorNodes);
 
     final frac = FractionNode(
       num: numeratorNodes,
@@ -1836,6 +2069,8 @@ class MathEditorController extends ChangeNotifier {
       parentList.removeAt(j);
     }
 
+    _ensureLiteralEdges(numeratorNodes);
+
     final frac = FractionNode(
       num: numeratorNodes,
       den: [LiteralNode(text: "")],
@@ -1872,14 +2107,59 @@ class MathEditorController extends ChangeNotifier {
     int cursorClick = cursor.subIndex;
 
     int operandStart = cursorClick;
+    // Helper functions to identify character types
+    bool isDigit(String char) {
+      final int code = char.codeUnitAt(0);
+      return code >= 48 && code <= 57;
+    }
+
+    bool isLetter(String char) {
+      final int code = char.codeUnitAt(0);
+      return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+    }
+
+    // Scan backwards to find operand start, but stop at digit-letter boundary
+    // This ensures "3x" splits at the boundary: "3" stays as coefficient, "x" becomes base
     while (operandStart > 0 && !_isWordBoundary(text[operandStart - 1])) {
+      if (operandStart < text.length) {
+        final String prevChar = text[operandStart - 1];
+        final String nextChar = text[operandStart];
+        if (isDigit(prevChar) && isLetter(nextChar)) {
+          break;
+        }
+        if (isLetter(prevChar) && isLetter(nextChar)) {
+          break;
+        }
+      }
       operandStart--;
     }
 
     String baseText = text.substring(operandStart, cursorClick);
+    String prefixText = text.substring(0, operandStart);
+    bool isAllLetters(String value) {
+      for (int i = 0; i < value.length; i++) {
+        if (!isLetter(value[i])) return false;
+      }
+      return value.isNotEmpty;
+    }
+
+    if (baseText.length > 1 && isAllLetters(baseText)) {
+      prefixText += baseText.substring(0, baseText.length - 1);
+      baseText = baseText.substring(baseText.length - 1);
+    }
     int actualIndex = siblings.indexWhere((n) => n.id == currentId);
 
-    if (baseText.isEmpty && operandStart == 0 && actualIndex > 0) {
+    // A trailing postfix (factorial/degree/percent) belongs to the operand it
+    // follows, so `(19+2)!` raised to a power wraps the whole `(19+2)!` as the
+    // base rather than just the "!".
+    final bool isPostfixBase =
+        baseText.startsWith('!') ||
+        baseText.startsWith('°') ||
+        baseText.startsWith('%');
+
+    if ((baseText.isEmpty || isPostfixBase) &&
+        operandStart == 0 &&
+        actualIndex > 0) {
       final chainResult = _collectMultiplicationChain(
         siblings,
         actualIndex - 1,
@@ -1900,43 +2180,48 @@ class MathEditorController extends ChangeNotifier {
         }
         int newCurrentIndex = removeStart;
         current.text = text.substring(cursorClick);
+        final List<MathNode> baseNodes = List<MathNode>.from(chainResult.nodes);
+        if (isPostfixBase) {
+          baseNodes.add(LiteralNode(text: baseText));
+        }
+        _ensureLiteralEdges(baseNodes);
         final exp = ExponentNode(
-          base: chainResult.nodes,
+          base: baseNodes,
           power: [LiteralNode(text: "")],
         );
         siblings.insert(newCurrentIndex, exp);
-          cursor = EditorCursor(
-            parentId: exp.id,
-            path: 'pow',
-            index: 0,
-            subIndex: 0,
-          );
-          _notifyStructureChanged();
-          _scheduleCursorRecalc();
-          return;
-        }
-      }
-
-    current.text = text.substring(0, operandStart);
-    final exp = ExponentNode(
-      base: [LiteralNode(text: baseText)],
-      power: [LiteralNode(text: "")],
-    );
-    final tail = LiteralNode(text: text.substring(cursorClick));
-
-      if (actualIndex >= 0) {
-        siblings.insert(actualIndex + 1, exp);
-        siblings.insert(actualIndex + 2, tail);
         cursor = EditorCursor(
           parentId: exp.id,
           path: 'pow',
           index: 0,
           subIndex: 0,
         );
+        _notifyStructureChanged();
+        _scheduleCursorRecalc();
+        return;
       }
-      _notifyStructureChanged();
-      _scheduleCursorRecalc();
     }
+
+    current.text = prefixText;
+    final exp = ExponentNode(
+      base: [LiteralNode(text: baseText)],
+      power: [LiteralNode(text: "")],
+    );
+    final tail = LiteralNode(text: text.substring(cursorClick));
+
+    if (actualIndex >= 0) {
+      siblings.insert(actualIndex + 1, exp);
+      siblings.insert(actualIndex + 2, tail);
+      cursor = EditorCursor(
+        parentId: exp.id,
+        path: 'pow',
+        index: 0,
+        subIndex: 0,
+      );
+    }
+    _notifyStructureChanged();
+    _scheduleCursorRecalc();
+  }
 
   /// Wraps an entire AnsNode into a fraction's numerator
   void _wrapAnsNodeIntoFraction(AnsNode ans) {
@@ -1994,6 +2279,9 @@ class MathEditorController extends ChangeNotifier {
     for (int j = ansIndex; j >= removeStartIndex; j--) {
       parentList.removeAt(j);
     }
+
+    _ensureLiteralEdges(numeratorNodes);
+
     // ========== END NEW ==========
 
     // Create fraction with collected nodes as numerator
@@ -2064,6 +2352,8 @@ class MathEditorController extends ChangeNotifier {
       parentList.removeAt(j);
     }
 
+    _ensureLiteralEdges(numeratorNodes);
+
     final frac = FractionNode(
       num: numeratorNodes,
       den: [LiteralNode(text: "")],
@@ -2128,6 +2418,8 @@ class MathEditorController extends ChangeNotifier {
     for (int j = expIndex; j >= removeStartIndex; j--) {
       parentList.removeAt(j);
     }
+
+    _ensureLiteralEdges(numeratorNodes);
 
     final frac = FractionNode(
       num: numeratorNodes,
@@ -2194,6 +2486,8 @@ class MathEditorController extends ChangeNotifier {
       parentList.removeAt(j);
     }
 
+    _ensureLiteralEdges(numeratorNodes);
+
     final frac = FractionNode(
       num: numeratorNodes,
       den: [LiteralNode(text: "")],
@@ -2258,6 +2552,8 @@ class MathEditorController extends ChangeNotifier {
     for (int j = rootIndex; j >= removeStartIndex; j--) {
       parentList.removeAt(j);
     }
+
+    _ensureLiteralEdges(numeratorNodes);
 
     final frac = FractionNode(
       num: numeratorNodes,
@@ -2326,6 +2622,9 @@ class MathEditorController extends ChangeNotifier {
     for (int j = ansIndex; j >= removeStartIndex; j--) {
       parentList.removeAt(j);
     }
+
+    _ensureLiteralEdges(baseNodes);
+
     // ========== END NEW ==========
 
     final exp = ExponentNode(
@@ -2411,6 +2710,32 @@ class MathEditorController extends ChangeNotifier {
     String numeratorText = text.substring(operandStart, cursorClick);
     int actualIndex = siblings.indexWhere((n) => n.id == currentId);
 
+    // If the cursor sits immediately after a multiplication sign, the user is
+    // multiplying by a fraction (e.g. "18·" then "/"). Insert an empty fraction
+    // after the sign instead of absorbing the sign and the preceding operand
+    // into the numerator.
+    if (cursorClick > 0 && _isMultiplyChar(text[cursorClick - 1])) {
+      current.text = text.substring(0, cursorClick);
+      final frac = FractionNode(
+        num: [LiteralNode(text: "")],
+        den: [LiteralNode(text: "")],
+      );
+      final tail = LiteralNode(text: text.substring(cursorClick));
+      if (actualIndex >= 0) {
+        siblings.insert(actualIndex + 1, frac);
+        siblings.insert(actualIndex + 2, tail);
+        cursor = EditorCursor(
+          parentId: frac.id,
+          path: 'num',
+          index: 0,
+          subIndex: 0,
+        );
+      }
+      _notifyStructureChanged();
+      _scheduleCursorRecalc();
+      return;
+    }
+
     // === DETERMINE IF WE NEED TO COLLECT A CHAIN ===
     bool shouldCollectChain = false;
     String actualOperand = numeratorText;
@@ -2429,6 +2754,35 @@ class MathEditorController extends ChangeNotifier {
         actualIndex > 0) {
       shouldCollectChain = true;
       actualOperand = numeratorText.substring(1);
+    }
+    // Case 4: Implicit multiplication across nodes (e.g., 52 x^2)
+    else if (operandStart == 0 && actualIndex > 0) {
+      final prevNode = siblings[actualIndex - 1];
+      if (prevNode is LiteralNode) {
+        if (prevNode.text.isNotEmpty) {
+          final lastChar = prevNode.text[prevNode.text.length - 1];
+          if (_isDigitOrLetter(lastChar) ||
+              prevNode.text.endsWith(MathTextStyle.multiplySign)) {
+            shouldCollectChain = true;
+          }
+        }
+      } else if (prevNode is ExponentNode ||
+          prevNode is FractionNode ||
+          prevNode is ParenthesisNode ||
+          prevNode is TrigNode ||
+          prevNode is RootNode ||
+          prevNode is AnsNode ||
+          prevNode is LogNode ||
+          prevNode is ConstantNode ||
+          prevNode is UnitVectorNode ||
+          prevNode is PermutationNode ||
+          prevNode is CombinationNode ||
+          prevNode is SummationNode ||
+          prevNode is DerivativeNode ||
+          prevNode is IntegralNode ||
+          prevNode is ProductNode) {
+        shouldCollectChain = true;
+      }
     }
 
     if (shouldCollectChain && actualIndex > 0) {
@@ -2459,10 +2813,24 @@ class MathEditorController extends ChangeNotifier {
 
         List<MathNode> allNumeratorNodes = List.from(chainResult.nodes);
         if (actualOperand.isNotEmpty) {
+          // A trailing postfix (factorial/degree/percent) glues to the operand
+          // it follows, e.g. "(19+2)!"; other operands are separate factors and
+          // get an explicit multiplication sign.
+          final bool isPostfix =
+              actualOperand.startsWith('!') ||
+              actualOperand.startsWith('°') ||
+              actualOperand.startsWith('%');
           allNumeratorNodes.add(
-            LiteralNode(text: MathTextStyle.multiplySign + actualOperand),
+            LiteralNode(
+              text:
+                  isPostfix
+                      ? actualOperand
+                      : MathTextStyle.multiplySign + actualOperand,
+            ),
           );
         }
+
+        _ensureLiteralEdges(allNumeratorNodes);
 
         final frac = FractionNode(
           num: allNumeratorNodes,
@@ -2470,17 +2838,18 @@ class MathEditorController extends ChangeNotifier {
         );
         siblings.insert(newCurrentIndex, frac);
 
-          cursor = EditorCursor(
-            parentId: frac.id,
-            path: 'den',
-            index: 0,
-            subIndex: 0,
-          );
-          _notifyStructureChanged();
-          _scheduleCursorRecalc();
-          return;
-        }
+        final bool numeratorIsEmpty = _isListEffectivelyEmpty(frac.numerator);
+        cursor = EditorCursor(
+          parentId: frac.id,
+          path: numeratorIsEmpty ? 'num' : 'den',
+          index: 0,
+          subIndex: 0,
+        );
+        _notifyStructureChanged();
+        _scheduleCursorRecalc();
+        return;
       }
+    }
 
     // === DEFAULT BEHAVIOR ===
     if (numeratorText.startsWith(MathTextStyle.multiplySign)) {
@@ -2494,19 +2863,20 @@ class MathEditorController extends ChangeNotifier {
     );
     final tail = LiteralNode(text: text.substring(cursorClick));
 
-      if (actualIndex >= 0) {
-        siblings.insert(actualIndex + 1, frac);
-        siblings.insert(actualIndex + 2, tail);
-        cursor = EditorCursor(
-          parentId: frac.id,
-          path: 'den',
-          index: 0,
-          subIndex: 0,
-        );
-      }
-      _notifyStructureChanged();
-      _scheduleCursorRecalc();
+    if (actualIndex >= 0) {
+      siblings.insert(actualIndex + 1, frac);
+      siblings.insert(actualIndex + 2, tail);
+      final bool numeratorIsEmpty = _isListEffectivelyEmpty(frac.numerator);
+      cursor = EditorCursor(
+        parentId: frac.id,
+        path: numeratorIsEmpty ? 'num' : 'den',
+        index: 0,
+        subIndex: 0,
+      );
     }
+    _notifyStructureChanged();
+    _scheduleCursorRecalc();
+  }
 
   void _wrapPreviousNodeIntoPermutation(
     MathNode prevNode,
@@ -2748,29 +3118,14 @@ class MathEditorController extends ChangeNotifier {
 
   // function to calculate the input operation
   void onCalculate({Map<int, String>? ansValues}) {
-    // Get expression from the math editor
+    // Get expression from the math editor (lightweight serialization only)
     expr = MathExpressionSerializer.serialize(expression);
 
-    // Try exact engine first (better for i, fractions, etc.)
-    final exactResult = ExactMathEngine.evaluate(expression);
+    // NOTE: Heavy computation (ExactMathEngine.evaluate + MathSolverNew.solve)
+    // has been moved to ComputeService which runs in a background isolate.
+    // This method now only serializes and notifies, keeping the UI responsive.
 
-    if (!exactResult.isEmpty && !exactResult.hasError) {
-      // Use exact result if it has imaginary parts OR if the input expression contains 'i'
-      // This ensures 5i*5i = -25 is correctly displayed as a numerical result.
-      if ((exactResult.expr?.hasImaginary ?? false) || expr.contains('i')) {
-        result = exactResult.toNumericalString();
-        onResultChanged?.call();
-        // return;
-      }
-
-      // If it's a simple exact result, we can use it.
-      // But for now, let's fall back to MathSolverNew for regular decimals
-      // to maintain exactly the same behavior as before.
-    }
-
-    // Solve it with decimal engine
-    result = MathSolverNew.solve(expr, ansValues: ansValues) ?? '';
-    // Notify that result changed (for cascading updates)
+    // Notify that expression changed (triggers async compute pipeline)
     onResultChanged?.call();
   }
 
@@ -2803,8 +3158,9 @@ class MathEditorController extends ChangeNotifier {
         final displayIndex = MathTextStyle.logicalToDisplayIndex(
           text,
           charIndex,
+          forceLeadingOperatorPadding: info.forceLeadingOperatorPadding,
         );
-        final displayText = MathTextStyle.toDisplayText(text);
+        final displayText = info.displayText; // Use cached display text
         final offset = info.renderParagraph!.getOffsetForCaret(
           TextPosition(offset: displayIndex.clamp(0, displayText.length)),
           Rect.zero,
@@ -2818,6 +3174,7 @@ class MathEditorController extends ChangeNotifier {
               charIndex,
               info.fontSize,
               info.textScaler,
+              forceLeadingOperatorPadding: info.forceLeadingOperatorPadding,
             );
       }
     }
@@ -2865,6 +3222,29 @@ class MathEditorController extends ChangeNotifier {
     if (parent is CombinationNode) {
       return cursor.path == 'n' ? parent.n : parent.r;
     }
+    if (parent is SummationNode) {
+      if (cursor.path == 'var') return parent.variable;
+      if (cursor.path == 'lower') return parent.lower;
+      if (cursor.path == 'upper') return parent.upper;
+      return parent.body;
+    }
+    if (parent is DerivativeNode) {
+      if (cursor.path == 'var') return parent.variable;
+      if (cursor.path == 'at') return parent.at;
+      return parent.body;
+    }
+    if (parent is IntegralNode) {
+      if (cursor.path == 'var') return parent.variable;
+      if (cursor.path == 'lower') return parent.lower;
+      if (cursor.path == 'upper') return parent.upper;
+      return parent.body;
+    }
+    if (parent is ProductNode) {
+      if (cursor.path == 'var') return parent.variable;
+      if (cursor.path == 'lower') return parent.lower;
+      if (cursor.path == 'upper') return parent.upper;
+      return parent.body;
+    }
     if (parent is AnsNode) {
       return parent.index;
     }
@@ -2905,6 +3285,37 @@ class MathEditorController extends ChangeNotifier {
       }
       if (n is CombinationNode) {
         final found = _findNode(n.n, id) ?? _findNode(n.r, id);
+        if (found != null) return found;
+      }
+      if (n is SummationNode) {
+        final found =
+            _findNode(n.variable, id) ??
+            _findNode(n.lower, id) ??
+            _findNode(n.upper, id) ??
+            _findNode(n.body, id);
+        if (found != null) return found;
+      }
+      if (n is DerivativeNode) {
+        final found =
+            _findNode(n.variable, id) ??
+            _findNode(n.at, id) ??
+            _findNode(n.body, id);
+        if (found != null) return found;
+      }
+      if (n is IntegralNode) {
+        final found =
+            _findNode(n.variable, id) ??
+            _findNode(n.lower, id) ??
+            _findNode(n.upper, id) ??
+            _findNode(n.body, id);
+        if (found != null) return found;
+      }
+      if (n is ProductNode) {
+        final found =
+            _findNode(n.variable, id) ??
+            _findNode(n.lower, id) ??
+            _findNode(n.upper, id) ??
+            _findNode(n.body, id);
         if (found != null) return found;
       }
       if (n is AnsNode) {
@@ -2969,6 +3380,44 @@ class MathEditorController extends ChangeNotifier {
         if (result != null) return result;
         result = _searchForParent(node.r, targetId, node.id, 'r');
         if (result != null) return result;
+      } else if (node is SummationNode) {
+        var result = _searchForParent(node.variable, targetId, node.id, 'var');
+        if (result != null) return result;
+        result = _searchForParent(node.lower, targetId, node.id, 'lower');
+        if (result != null) return result;
+        result = _searchForParent(node.upper, targetId, node.id, 'upper');
+        if (result != null) return result;
+        result = _searchForParent(node.body, targetId, node.id, 'body');
+        if (result != null) return result;
+      } else if (node is DerivativeNode) {
+        var result = _searchForParent(node.variable, targetId, node.id, 'var');
+        if (result != null) return result;
+        if (node.isDefinite) {
+          result = _searchForParent(node.at, targetId, node.id, 'at');
+          if (result != null) return result;
+        }
+        result = _searchForParent(node.body, targetId, node.id, 'body');
+        if (result != null) return result;
+      } else if (node is IntegralNode) {
+        var result = _searchForParent(node.variable, targetId, node.id, 'var');
+        if (result != null) return result;
+        if (node.isDefinite) {
+          result = _searchForParent(node.lower, targetId, node.id, 'lower');
+          if (result != null) return result;
+          result = _searchForParent(node.upper, targetId, node.id, 'upper');
+          if (result != null) return result;
+        }
+        result = _searchForParent(node.body, targetId, node.id, 'body');
+        if (result != null) return result;
+      } else if (node is ProductNode) {
+        var result = _searchForParent(node.variable, targetId, node.id, 'var');
+        if (result != null) return result;
+        result = _searchForParent(node.lower, targetId, node.id, 'lower');
+        if (result != null) return result;
+        result = _searchForParent(node.upper, targetId, node.id, 'upper');
+        if (result != null) return result;
+        result = _searchForParent(node.body, targetId, node.id, 'body');
+        if (result != null) return result;
       }
       if (node is LogNode) {
         var result = _searchForParent(node.base, targetId, node.id, 'base');
@@ -2993,26 +3442,30 @@ class MathEditorController extends ChangeNotifier {
     String? prefixToKeep;
     int? prefixNodeIndex;
 
-      int i = startIndex;
-      while (i >= 0) {
-        final node = siblings[i];
+    int i = startIndex;
+    while (i >= 0) {
+      final node = siblings[i];
 
-        if (node is LiteralNode && node.text.isEmpty) {
-          i--;
-          continue;
-        }
+      if (node is LiteralNode && node.text.isEmpty) {
+        i--;
+        continue;
+      }
 
-        if (node is ExponentNode ||
-            node is FractionNode ||
-            node is ParenthesisNode ||
-            node is TrigNode ||
-            node is RootNode ||
+      if (node is ExponentNode ||
+          node is FractionNode ||
+          node is ParenthesisNode ||
+          node is TrigNode ||
+          node is RootNode ||
           node is AnsNode ||
           node is LogNode ||
           node is ConstantNode || // <-- ADD THIS
           node is UnitVectorNode || // <-- ADD THIS
           node is PermutationNode || // <-- ADD THIS
-          node is CombinationNode) {
+          node is CombinationNode ||
+          node is SummationNode ||
+          node is DerivativeNode ||
+          node is IntegralNode ||
+          node is ProductNode) {
         // <-- ADD THIS
         collectedNodes.insert(0, node);
         removeFromIndex = i;
@@ -3045,10 +3498,14 @@ class MathEditorController extends ChangeNotifier {
               prevNode is RootNode ||
               prevNode is AnsNode ||
               prevNode is LogNode ||
-                prevNode is ConstantNode || // <-- ADD THIS
-                prevNode is UnitVectorNode || // <-- ADD THIS
-                prevNode is PermutationNode || // <-- ADD THIS
-                prevNode is CombinationNode) {
+              prevNode is ConstantNode || // <-- ADD THIS
+              prevNode is UnitVectorNode || // <-- ADD THIS
+              prevNode is PermutationNode || // <-- ADD THIS
+              prevNode is CombinationNode ||
+              prevNode is SummationNode ||
+              prevNode is DerivativeNode ||
+              prevNode is IntegralNode ||
+              prevNode is ProductNode) {
             // <-- ADD THIS
             if (i > 1) {
               final prevPrevNode = siblings[i - 2];
@@ -3369,6 +3826,192 @@ class MathEditorController extends ChangeNotifier {
     }
   }
 
+  void _handleDeleteInSummation(SummationNode sum) {
+    if (cursor.path == 'body') {
+      if (_isListEffectivelyEmpty(sum.body)) {
+        // Move to 'upper' limit
+        _moveCursorToEndOfList(sum.upper, sum.id, 'upper');
+        recalculateCursorRect();
+        notifyListeners();
+      } else {
+        _moveCursorBeforeNode(sum.id);
+        recalculateCursorRect();
+        notifyListeners();
+      }
+    } else if (cursor.path == 'upper') {
+      if (_isListEffectivelyEmpty(sum.upper)) {
+        // Move to 'lower' limit
+        _moveCursorToEndOfList(sum.lower, sum.id, 'lower');
+        recalculateCursorRect();
+        notifyListeners();
+      } else {
+        // Move to body if user pressed left or something, but usually backspace
+        // from start of upper should go to... somewhere.
+        // If we are at the start of upper, backspace should trigger this handler.
+        _moveCursorToEndOfList(sum.body, sum.id, 'body');
+        recalculateCursorRect();
+        notifyListeners();
+      }
+    } else if (cursor.path == 'lower') {
+      if (_isListEffectivelyEmpty(sum.lower)) {
+        // Finally remove the node
+        _removeSummation(sum);
+      } else {
+        _moveCursorToEndOfList(sum.upper, sum.id, 'upper');
+        recalculateCursorRect();
+        notifyListeners();
+      }
+    } else {
+      // From 'var' field
+      _moveCursorToEndOfList(sum.body, sum.id, 'body');
+      recalculateCursorRect();
+      notifyListeners();
+    }
+  }
+
+  void _handleDeleteInProduct(ProductNode prod) {
+    if (cursor.path == 'body') {
+      if (_isListEffectivelyEmpty(prod.body)) {
+        // Move to 'upper' limit
+        _moveCursorToEndOfList(prod.upper, prod.id, 'upper');
+        recalculateCursorRect();
+        notifyListeners();
+      } else {
+        _moveCursorBeforeNode(prod.id);
+        recalculateCursorRect();
+        notifyListeners();
+      }
+    } else if (cursor.path == 'upper') {
+      if (_isListEffectivelyEmpty(prod.upper)) {
+        // Move to 'lower' limit
+        _moveCursorToEndOfList(prod.lower, prod.id, 'lower');
+        recalculateCursorRect();
+        notifyListeners();
+      } else {
+        _moveCursorToEndOfList(prod.body, prod.id, 'body');
+        recalculateCursorRect();
+        notifyListeners();
+      }
+    } else if (cursor.path == 'lower') {
+      if (_isListEffectivelyEmpty(prod.lower)) {
+        // Finally remove the node
+        _removeProduct(prod);
+      } else {
+        _moveCursorToEndOfList(prod.upper, prod.id, 'upper');
+        recalculateCursorRect();
+        notifyListeners();
+      }
+    } else {
+      // From 'var' field
+      _moveCursorToEndOfList(prod.body, prod.id, 'body');
+      recalculateCursorRect();
+      notifyListeners();
+    }
+  }
+
+  void _handleDeleteInDerivative(DerivativeNode diff) {
+    if (cursor.path == 'body') {
+      if (_isListEffectivelyEmpty(diff.body)) {
+        // Move to 'at' field (value to be evaluated at)
+        _moveCursorToEndOfList(diff.at, diff.id, 'at');
+        recalculateCursorRect();
+        notifyListeners();
+      } else {
+        _moveCursorBeforeNode(diff.id);
+        recalculateCursorRect();
+        notifyListeners();
+      }
+    } else if (cursor.path == 'at') {
+      if (_isListEffectivelyEmpty(diff.at)) {
+        // Finally remove the node
+        _removeDerivative(diff);
+      } else {
+        _moveCursorToEndOfList(diff.body, diff.id, 'body');
+        recalculateCursorRect();
+        notifyListeners();
+      }
+    } else {
+      // From 'var' field
+      _moveCursorToEndOfList(diff.body, diff.id, 'body');
+      recalculateCursorRect();
+      notifyListeners();
+    }
+  }
+
+  void _handleDeleteInIntegral(IntegralNode integ) {
+    if (cursor.path == 'body') {
+      if (_isListEffectivelyEmpty(integ.body)) {
+        // Move to 'upper' limit
+        _moveCursorToEndOfList(integ.upper, integ.id, 'upper');
+        recalculateCursorRect();
+        notifyListeners();
+      } else {
+        _moveCursorBeforeNode(integ.id);
+        recalculateCursorRect();
+        notifyListeners();
+      }
+    } else if (cursor.path == 'upper') {
+      if (_isListEffectivelyEmpty(integ.upper)) {
+        // Move to 'lower' limit
+        _moveCursorToEndOfList(integ.lower, integ.id, 'lower');
+        recalculateCursorRect();
+        notifyListeners();
+      } else {
+        _moveCursorToEndOfList(integ.body, integ.id, 'body');
+        recalculateCursorRect();
+        notifyListeners();
+      }
+    } else if (cursor.path == 'lower') {
+      if (_isListEffectivelyEmpty(integ.lower)) {
+        // Finally remove the node
+        _removeIntegral(integ);
+      } else {
+        _moveCursorToEndOfList(integ.upper, integ.id, 'upper');
+        recalculateCursorRect();
+        notifyListeners();
+      }
+    } else {
+      // From 'var' field
+      if (!_isListEffectivelyEmpty(integ.variable)) {
+        final int lastIndex = integ.variable.length - 1;
+        final MathNode lastNode = integ.variable[lastIndex];
+
+        if (lastNode is LiteralNode && lastNode.text.isNotEmpty) {
+          lastNode.text = lastNode.text.substring(0, lastNode.text.length - 1);
+          cursor = cursor.copyWith(
+            path: 'var',
+            index: lastIndex,
+            subIndex: lastNode.text.length,
+          );
+          _notifyStructureChanged();
+          return;
+        }
+
+        integ.variable.removeLast();
+        if (integ.variable.isEmpty || integ.variable.last is! LiteralNode) {
+          integ.variable.add(LiteralNode(text: ''));
+        }
+
+        final int newLastIndex = integ.variable.length - 1;
+        final MathNode newLastNode = integ.variable[newLastIndex];
+        final int newSubIndex =
+            newLastNode is LiteralNode ? newLastNode.text.length : 0;
+
+        cursor = cursor.copyWith(
+          path: 'var',
+          index: newLastIndex,
+          subIndex: newSubIndex,
+        );
+        _notifyStructureChanged();
+        return;
+      }
+
+      _moveCursorToEndOfList(integ.body, integ.id, 'body');
+      recalculateCursorRect();
+      notifyListeners();
+    }
+  }
+
   void _handleDeleteInAns(AnsNode ans) {
     if (_isListEffectivelyEmpty(ans.index)) {
       _removeAns(ans);
@@ -3396,10 +4039,25 @@ class MathEditorController extends ChangeNotifier {
         recalculateCursorRect(); // ← ADD THIS
         notifyListeners();
       }
-      } else if (prevNode is ConstantNode || prevNode is UnitVectorNode) {
-        siblings.removeAt(cursor.index - 1);
-        cursor = cursor.copyWith(index: cursor.index - 1);
-        _notifyStructureChanged();
+    } else if (prevNode is ConstantNode || prevNode is UnitVectorNode) {
+      siblings.removeAt(cursor.index - 1);
+      final newIndex = cursor.index - 1;
+      cursor = cursor.copyWith(index: newIndex);
+
+      // After removing a constant, clean up adjacent empty LiteralNode spacers.
+      // When constants are adjacent (e.g. π e), empty literals sit between them.
+      // Deleting the constant can leave consecutive empty literals — merge them.
+      if (newIndex > 0 &&
+          newIndex < siblings.length &&
+          siblings[newIndex] is LiteralNode &&
+          (siblings[newIndex] as LiteralNode).text.isEmpty &&
+          siblings[newIndex - 1] is LiteralNode &&
+          (siblings[newIndex - 1] as LiteralNode).text.isEmpty) {
+        siblings.removeAt(newIndex - 1);
+        cursor = cursor.copyWith(index: newIndex - 1);
+      }
+
+      _notifyStructureChanged();
     } else if (prevNode is NewlineNode) {
       _removeNewline(prevNode);
     } else if (prevNode is FractionNode) {
@@ -3432,7 +4090,23 @@ class MathEditorController extends ChangeNotifier {
       notifyListeners();
     } else if (prevNode is CombinationNode) {
       _moveCursorToEndOfList(prevNode.r, prevNode.id, 'r');
-      recalculateCursorRect(); // ← ADD THIS
+      recalculateCursorRect();
+      notifyListeners();
+    } else if (prevNode is SummationNode) {
+      _moveCursorToEndOfList(prevNode.body, prevNode.id, 'body');
+      recalculateCursorRect();
+      notifyListeners();
+    } else if (prevNode is DerivativeNode) {
+      _moveCursorToEndOfList(prevNode.body, prevNode.id, 'body');
+      recalculateCursorRect();
+      notifyListeners();
+    } else if (prevNode is IntegralNode) {
+      _moveCursorToEndOfList(prevNode.variable, prevNode.id, 'var');
+      recalculateCursorRect();
+      notifyListeners();
+    } else if (prevNode is ProductNode) {
+      _moveCursorToEndOfList(prevNode.body, prevNode.id, 'body');
+      recalculateCursorRect();
       notifyListeners();
     } else if (prevNode is AnsNode) {
       _moveCursorToEndOfList(prevNode.index, prevNode.id, 'index');
@@ -3459,6 +4133,14 @@ class MathEditorController extends ChangeNotifier {
       _handleDeleteInPermutation(parent);
     } else if (parent is CombinationNode) {
       _handleDeleteInCombination(parent);
+    } else if (parent is SummationNode) {
+      _handleDeleteInSummation(parent);
+    } else if (parent is DerivativeNode) {
+      _handleDeleteInDerivative(parent);
+    } else if (parent is IntegralNode) {
+      _handleDeleteInIntegral(parent);
+    } else if (parent is ProductNode) {
+      _handleDeleteInProduct(parent);
     } else if (parent is AnsNode) {
       _handleDeleteInAns(parent);
     }
@@ -3470,6 +4152,19 @@ class MathEditorController extends ChangeNotifier {
       if (node is! LiteralNode) return false;
     }
     return true;
+  }
+
+  void _ensureLiteralEdges(List<MathNode> nodes) {
+    if (nodes.isEmpty) {
+      nodes.add(LiteralNode(text: ""));
+      return;
+    }
+    if (nodes.first is! LiteralNode) {
+      nodes.insert(0, LiteralNode(text: ""));
+    }
+    if (nodes.last is! LiteralNode) {
+      nodes.add(LiteralNode(text: ""));
+    }
   }
 
   void _moveCursorToEndOfList(
@@ -3500,23 +4195,31 @@ class MathEditorController extends ChangeNotifier {
       _moveCursorToEndOfList(lastNode.radicand, lastNode.id, 'radicand');
     } else if (lastNode is LogNode) {
       _moveCursorToEndOfList(lastNode.argument, lastNode.id, 'arg');
-      } else if (lastNode is PermutationNode) {
-        _moveCursorToEndOfList(lastNode.r, lastNode.id, 'r');
-      } else if (lastNode is CombinationNode) {
-        _moveCursorToEndOfList(lastNode.r, lastNode.id, 'r');
-      } else if (lastNode is AnsNode) {
-        _moveCursorToEndOfList(lastNode.index, lastNode.id, 'index');
-      } else if (lastNode is ConstantNode || lastNode is UnitVectorNode) {
-        final insertIndex = lastIndex + 1;
-        nodes.insert(insertIndex, LiteralNode(text: ""));
-        cursor = EditorCursor(
-          parentId: parentId,
-          path: path,
-          index: insertIndex,
-          subIndex: 0,
-        );
-      }
+    } else if (lastNode is PermutationNode) {
+      _moveCursorToEndOfList(lastNode.r, lastNode.id, 'r');
+    } else if (lastNode is CombinationNode) {
+      _moveCursorToEndOfList(lastNode.r, lastNode.id, 'r');
+    } else if (lastNode is SummationNode) {
+      _moveCursorToEndOfList(lastNode.body, lastNode.id, 'body');
+    } else if (lastNode is DerivativeNode) {
+      _moveCursorToEndOfList(lastNode.body, lastNode.id, 'body');
+    } else if (lastNode is IntegralNode) {
+      _moveCursorToEndOfList(lastNode.body, lastNode.id, 'body');
+    } else if (lastNode is ProductNode) {
+      _moveCursorToEndOfList(lastNode.body, lastNode.id, 'body');
+    } else if (lastNode is AnsNode) {
+      _moveCursorToEndOfList(lastNode.index, lastNode.id, 'index');
+    } else if (lastNode is ConstantNode || lastNode is UnitVectorNode) {
+      final insertIndex = lastIndex + 1;
+      nodes.insert(insertIndex, LiteralNode(text: ""));
+      cursor = EditorCursor(
+        parentId: parentId,
+        path: path,
+        index: insertIndex,
+        subIndex: 0,
+      );
     }
+  }
 
   void _moveCursorToStartOfList(
     List<MathNode> nodes,
@@ -3553,22 +4256,30 @@ class MathEditorController extends ChangeNotifier {
       } else {
         _moveCursorToStartOfList(firstNode.base, firstNode.id, 'base');
       }
-      } else if (firstNode is PermutationNode) {
-        _moveCursorToStartOfList(firstNode.n, firstNode.id, 'n');
-      } else if (firstNode is CombinationNode) {
-        _moveCursorToStartOfList(firstNode.n, firstNode.id, 'n');
-      } else if (firstNode is AnsNode) {
-        _moveCursorToStartOfList(firstNode.index, firstNode.id, 'index');
-      } else if (firstNode is ConstantNode || firstNode is UnitVectorNode) {
-        nodes.insert(0, LiteralNode(text: ""));
-        cursor = EditorCursor(
-          parentId: parentId,
-          path: path,
-          index: 0,
-          subIndex: 0,
-        );
-      }
+    } else if (firstNode is PermutationNode) {
+      _moveCursorToStartOfList(firstNode.n, firstNode.id, 'n');
+    } else if (firstNode is CombinationNode) {
+      _moveCursorToStartOfList(firstNode.n, firstNode.id, 'n');
+    } else if (firstNode is SummationNode) {
+      _moveCursorToStartOfList(firstNode.body, firstNode.id, 'body');
+    } else if (firstNode is DerivativeNode) {
+      _moveCursorToStartOfList(firstNode.body, firstNode.id, 'body');
+    } else if (firstNode is IntegralNode) {
+      _moveCursorToStartOfList(firstNode.body, firstNode.id, 'body');
+    } else if (firstNode is ProductNode) {
+      _moveCursorToStartOfList(firstNode.body, firstNode.id, 'body');
+    } else if (firstNode is AnsNode) {
+      _moveCursorToStartOfList(firstNode.index, firstNode.id, 'index');
+    } else if (firstNode is ConstantNode || firstNode is UnitVectorNode) {
+      nodes.insert(0, LiteralNode(text: ""));
+      cursor = EditorCursor(
+        parentId: parentId,
+        path: path,
+        index: 0,
+        subIndex: 0,
+      );
     }
+  }
 
   void _moveCursorBeforeNode(String nodeId) =>
       _findAndPositionBefore(expression, nodeId, null, null);
@@ -3600,6 +4311,152 @@ class MathEditorController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// All editable child lists of a composite node, each paired with the path
+  /// key the cursor system uses to identify it (see [_resolveSiblingList]).
+  /// Order is the caret traversal order. Returns an empty list for atomic
+  /// nodes (literals, constants, unit vectors, newlines). This is the single
+  /// source of truth used to recurse through the whole node tree.
+  List<MapEntry<String, List<MathNode>>> _childListsOf(MathNode node) {
+    if (node is FractionNode) {
+      return [
+        MapEntry('num', node.numerator),
+        MapEntry('den', node.denominator),
+      ];
+    } else if (node is ExponentNode) {
+      return [MapEntry('base', node.base), MapEntry('pow', node.power)];
+    } else if (node is ParenthesisNode) {
+      return [MapEntry('content', node.content)];
+    } else if (node is TrigNode) {
+      return [MapEntry('arg', node.argument)];
+    } else if (node is RootNode) {
+      return [MapEntry('index', node.index), MapEntry('radicand', node.radicand)];
+    } else if (node is LogNode) {
+      return [MapEntry('base', node.base), MapEntry('arg', node.argument)];
+    } else if (node is PermutationNode) {
+      return [MapEntry('n', node.n), MapEntry('r', node.r)];
+    } else if (node is CombinationNode) {
+      return [MapEntry('n', node.n), MapEntry('r', node.r)];
+    } else if (node is SummationNode) {
+      return [
+        MapEntry('var', node.variable),
+        MapEntry('lower', node.lower),
+        MapEntry('upper', node.upper),
+        MapEntry('body', node.body),
+      ];
+    } else if (node is ProductNode) {
+      return [
+        MapEntry('var', node.variable),
+        MapEntry('lower', node.lower),
+        MapEntry('upper', node.upper),
+        MapEntry('body', node.body),
+      ];
+    } else if (node is IntegralNode) {
+      // Indefinite integrals have no editable bounds.
+      return [
+        MapEntry('var', node.variable),
+        if (node.isDefinite) MapEntry('lower', node.lower),
+        if (node.isDefinite) MapEntry('upper', node.upper),
+        MapEntry('body', node.body),
+      ];
+    } else if (node is DerivativeNode) {
+      // Indefinite derivatives have no editable evaluation point.
+      return [
+        MapEntry('var', node.variable),
+        if (node.isDefinite) MapEntry('at', node.at),
+        MapEntry('body', node.body),
+      ];
+    } else if (node is AnsNode) {
+      return [MapEntry('index', node.index)];
+    }
+    return const [];
+  }
+
+  /// Move the cursor into [node] at its logical entry field (respecting the
+  /// hidden index of a square root and the hidden base of a natural log).
+  /// Mirrors the composite handling in [_moveCursorToStartOfList].
+  void _moveCursorIntoNodeStart(MathNode node) {
+    if (node is RootNode && node.isSquareRoot) {
+      _moveCursorToStartOfList(node.radicand, node.id, 'radicand');
+      return;
+    }
+    if (node is LogNode && node.isNaturalLog) {
+      _moveCursorToStartOfList(node.argument, node.id, 'arg');
+      return;
+    }
+    if (node is SummationNode ||
+        node is ProductNode ||
+        node is IntegralNode ||
+        node is DerivativeNode) {
+      // Match _moveCursorToStartOfList: enter these at the body.
+      final body = _childListsOf(node).last;
+      _moveCursorToStartOfList(body.value, node.id, body.key);
+      return;
+    }
+    final lists = _childListsOf(node);
+    if (lists.isNotEmpty) {
+      _moveCursorToStartOfList(lists.first.value, node.id, lists.first.key);
+    }
+  }
+
+  /// Move the cursor to the end of [node]'s logical last field. Mirrors the
+  /// composite handling in [_moveCursorToEndOfList].
+  void _moveCursorIntoNodeEnd(MathNode node) {
+    final lists = _childListsOf(node);
+    if (lists.isNotEmpty) {
+      _moveCursorToEndOfList(lists.last.value, node.id, lists.last.key);
+    }
+  }
+
+  /// Place the cursor immediately after the atomic node (constant/unit vector)
+  /// at [atomicIndex] in [siblings], reusing the following literal as a caret
+  /// anchor or inserting an empty one if there is none.
+  void _positionAfterAtomic(
+    List<MathNode> siblings,
+    int atomicIndex,
+    String? parentId,
+    String? path,
+  ) {
+    final nextIndex = atomicIndex + 1;
+    if (nextIndex >= siblings.length || siblings[nextIndex] is! LiteralNode) {
+      siblings.insert(nextIndex, LiteralNode(text: ""));
+    }
+    cursor = EditorCursor(
+      parentId: parentId,
+      path: path,
+      index: nextIndex,
+      subIndex: 0,
+    );
+  }
+
+  /// Place the cursor immediately before the atomic node (constant/unit vector)
+  /// at [atomicIndex] in [siblings], reusing the preceding literal as a caret
+  /// anchor or inserting an empty one if there is none.
+  void _positionBeforeAtomic(
+    List<MathNode> siblings,
+    int atomicIndex,
+    String? parentId,
+    String? path,
+  ) {
+    final prevIndex = atomicIndex - 1;
+    if (prevIndex >= 0 && siblings[prevIndex] is LiteralNode) {
+      final lit = siblings[prevIndex] as LiteralNode;
+      cursor = EditorCursor(
+        parentId: parentId,
+        path: path,
+        index: prevIndex,
+        subIndex: lit.text.length,
+      );
+    } else {
+      siblings.insert(atomicIndex, LiteralNode(text: ""));
+      cursor = EditorCursor(
+        parentId: parentId,
+        path: path,
+        index: atomicIndex,
+        subIndex: 0,
+      );
+    }
+  }
+
   bool _findAndPositionBefore(
     List<MathNode> nodes,
     String targetId,
@@ -3617,14 +4474,18 @@ class MathEditorController extends ChangeNotifier {
               index: i - 1,
               subIndex: prevNode.text.length,
             );
-          } else if (prevNode is FractionNode) {
-            _moveCursorToEndOfList(prevNode.denominator, prevNode.id, 'den');
-          } else if (prevNode is ExponentNode) {
-            _moveCursorToEndOfList(prevNode.power, prevNode.id, 'pow');
-          } else if (prevNode is ParenthesisNode) {
-            _moveCursorToEndOfList(prevNode.content, prevNode.id, 'content');
-          } else if (prevNode is AnsNode) {
-            _moveCursorToEndOfList(prevNode.index, prevNode.id, 'index');
+          } else if (_childListsOf(prevNode).isNotEmpty) {
+            // Composite previous sibling: step into the end of its last field.
+            _moveCursorIntoNodeEnd(prevNode);
+          } else {
+            // Atomic previous sibling (constant/unit vector/newline): the caret
+            // sits between it and the target.
+            cursor = EditorCursor(
+              parentId: grandParentId,
+              path: path,
+              index: i,
+              subIndex: 0,
+            );
           }
         } else {
           cursor = EditorCursor(
@@ -3636,37 +4497,14 @@ class MathEditorController extends ChangeNotifier {
         }
         return true;
       }
-      final node = nodes[i];
-      if (node is FractionNode) {
-        if (_findAndPositionBefore(node.numerator, targetId, node.id, 'num')) {
-          return true;
-        }
+      // Recurse into every editable child list of composite nodes.
+      for (final child in _childListsOf(nodes[i])) {
         if (_findAndPositionBefore(
-          node.denominator,
+          child.value,
           targetId,
-          node.id,
-          'den',
+          nodes[i].id,
+          child.key,
         )) {
-          return true;
-        }
-      } else if (node is ExponentNode) {
-        if (_findAndPositionBefore(node.base, targetId, node.id, 'base')) {
-          return true;
-        }
-        if (_findAndPositionBefore(node.power, targetId, node.id, 'pow')) {
-          return true;
-        }
-      } else if (node is ParenthesisNode) {
-        if (_findAndPositionBefore(
-          node.content,
-          targetId,
-          node.id,
-          'content',
-        )) {
-          return true;
-        }
-      } else if (node is AnsNode) {
-        if (_findAndPositionBefore(node.index, targetId, node.id, 'index')) {
           return true;
         }
       }
@@ -3684,73 +4522,43 @@ class MathEditorController extends ChangeNotifier {
       if (nodes[i].id == targetId) {
         if (i < nodes.length - 1) {
           final nextNode = nodes[i + 1];
-          if (nextNode is LiteralNode) {
+          if (_childListsOf(nextNode).isEmpty) {
+            // Literal or atomic (constant/unit vector/newline): caret sits
+            // just before the next sibling.
             cursor = EditorCursor(
               parentId: grandParentId,
               path: path,
               index: i + 1,
               subIndex: 0,
             );
-          } else if (nextNode is FractionNode) {
-            _moveCursorToStartOfList(nextNode.numerator, nextNode.id, 'num');
-          } else if (nextNode is ExponentNode) {
-            _moveCursorToStartOfList(nextNode.base, nextNode.id, 'base');
-          } else if (nextNode is ParenthesisNode) {
-            _moveCursorToStartOfList(nextNode.content, nextNode.id, 'content');
-          } else if (nextNode is AnsNode) {
-            _moveCursorToStartOfList(nextNode.index, nextNode.id, 'index');
+          } else {
+            _moveCursorIntoNodeStart(nextNode);
           }
         } else if (grandParentId != null) {
+          // Target is the last node in its field: move to the start of the
+          // grandparent's next editable field, or after the grandparent node.
           final grandParent = _findNode(expression, grandParentId);
-          if (grandParent is FractionNode) {
-            if (path == 'num') {
-              _moveCursorToStartOfList(
-                grandParent.denominator,
-                grandParent.id,
-                'den',
-              );
+          if (grandParent != null) {
+            final gLists = _childListsOf(grandParent);
+            final idx = gLists.indexWhere((e) => e.key == path);
+            if (idx != -1 && idx + 1 < gLists.length) {
+              final next = gLists[idx + 1];
+              _moveCursorToStartOfList(next.value, grandParent.id, next.key);
             } else {
               _moveCursorAfterNode(grandParent.id);
             }
-          } else if (grandParent is ExponentNode) {
-            if (path == 'base') {
-              _moveCursorToStartOfList(
-                grandParent.power,
-                grandParent.id,
-                'pow',
-              );
-            } else {
-              _moveCursorAfterNode(grandParent.id);
-            }
-          } else if (grandParent is ParenthesisNode) {
-            _moveCursorAfterNode(grandParent.id);
-          } else if (grandParent is AnsNode) {
-            _moveCursorAfterNode(grandParent.id);
           }
         }
         return true;
       }
-      final node = nodes[i];
-      if (node is FractionNode) {
-        if (_findAndPositionAfter(node.numerator, targetId, node.id, 'num')) {
-          return true;
-        }
-        if (_findAndPositionAfter(node.denominator, targetId, node.id, 'den')) {
-          return true;
-        }
-      } else if (node is ExponentNode) {
-        if (_findAndPositionAfter(node.base, targetId, node.id, 'base')) {
-          return true;
-        }
-        if (_findAndPositionAfter(node.power, targetId, node.id, 'pow')) {
-          return true;
-        }
-      } else if (node is ParenthesisNode) {
-        if (_findAndPositionAfter(node.content, targetId, node.id, 'content')) {
-          return true;
-        }
-      } else if (node is AnsNode) {
-        if (_findAndPositionAfter(node.index, targetId, node.id, 'index')) {
+      // Recurse into every editable child list of composite nodes.
+      for (final child in _childListsOf(nodes[i])) {
+        if (_findAndPositionAfter(
+          child.value,
+          targetId,
+          nodes[i].id,
+          child.key,
+        )) {
           return true;
         }
       }
@@ -3802,6 +4610,12 @@ class MathEditorController extends ChangeNotifier {
       return;
     }
 
+    NewlineNode? boundaryMarker;
+    if (replacement.isNotEmpty) {
+      boundaryMarker = NewlineNode();
+      parentList.insert(fracIndex + replacement.length, boundaryMarker);
+    }
+
     int mergeStartIndex = (fracIndex > 0) ? fracIndex - 1 : 0;
     _mergeAdjacentLiteralsFrom(parentList, mergeStartIndex);
 
@@ -3834,25 +4648,20 @@ class MathEditorController extends ChangeNotifier {
         );
       }
     } else {
-      // Find the last node of the numerator by its ID
-      MathNode lastNumeratorNode = replacement.last;
+      final String? markerId = boundaryMarker?.id;
+      final int markerIndex =
+          markerId == null
+              ? -1
+              : parentList.indexWhere((n) => n.id == markerId);
+      final int targetIndex = markerIndex > 0 ? markerIndex - 1 : -1;
 
-      int foundIndex = -1;
-      for (int i = 0; i < parentList.length; i++) {
-        if (parentList[i].id == lastNumeratorNode.id) {
-          foundIndex = i;
-          break;
-        }
-      }
-
-      if (foundIndex != -1) {
-        // Found the node, position at its end
-        final node = parentList[foundIndex];
+      if (targetIndex >= 0) {
+        final node = parentList[targetIndex];
         if (node is LiteralNode) {
           cursor = EditorCursor(
             parentId: parentInfo.parentId,
             path: parentInfo.path,
-            index: foundIndex,
+            index: targetIndex,
             subIndex: node.text.length,
           );
         } else if (node is ParenthesisNode) {
@@ -3862,62 +4671,65 @@ class MathEditorController extends ChangeNotifier {
         } else if (node is ExponentNode) {
           _moveCursorToEndOfList(node.power, node.id, 'pow');
         } else if (node is AnsNode) {
-          // <== ADD THIS
           _moveCursorToEndOfList(node.index, node.id, 'index');
         } else if (node is TrigNode) {
-          // <== ADD THIS TOO
           _moveCursorToEndOfList(node.argument, node.id, 'arg');
         } else if (node is RootNode) {
-          // <== AND THIS
           _moveCursorToEndOfList(node.radicand, node.id, 'radicand');
         } else if (node is LogNode) {
-          // <== AND THIS
           _moveCursorToEndOfList(node.argument, node.id, 'arg');
-          } else if (node is PermutationNode) {
-            // <-- ADD THIS
-            _moveCursorToEndOfList(node.r, node.id, 'r');
-          } else if (node is CombinationNode) {
-            // <-- ADD THIS
-            _moveCursorToEndOfList(node.r, node.id, 'r');
-            } else if (node is ConstantNode || node is UnitVectorNode) {
-              if (foundIndex + 1 < parentList.length &&
-                  parentList[foundIndex + 1] is LiteralNode) {
-              cursor = EditorCursor(
-                parentId: parentInfo.parentId,
-                path: parentInfo.path,
-                index: foundIndex + 1,
-                subIndex: 0,
-              );
-            } else {
-              final insertIndex = foundIndex + 1;
-              parentList.insert(insertIndex, LiteralNode(text: ""));
-              cursor = EditorCursor(
-                parentId: parentInfo.parentId,
-                path: parentInfo.path,
-                index: insertIndex,
-                subIndex: 0,
-              );
-            }
+        } else if (node is PermutationNode) {
+          _moveCursorToEndOfList(node.r, node.id, 'r');
+        } else if (node is CombinationNode) {
+          _moveCursorToEndOfList(node.r, node.id, 'r');
+        } else if (node is DerivativeNode) {
+          _moveCursorToEndOfList(node.body, node.id, 'body');
+        } else if (node is IntegralNode) {
+          _moveCursorToEndOfList(node.body, node.id, 'body');
+        } else if (node is SummationNode) {
+          _moveCursorToEndOfList(node.body, node.id, 'body');
+        } else if (node is ProductNode) {
+          _moveCursorToEndOfList(node.body, node.id, 'body');
+        } else if (node is ConstantNode || node is UnitVectorNode) {
+          if (targetIndex + 1 < parentList.length &&
+              parentList[targetIndex + 1] is LiteralNode) {
+            cursor = EditorCursor(
+              parentId: parentInfo.parentId,
+              path: parentInfo.path,
+              index: targetIndex + 1,
+              subIndex: 0,
+            );
+          } else {
+            final insertIndex = targetIndex + 1;
+            parentList.insert(insertIndex, LiteralNode(text: ""));
+            cursor = EditorCursor(
+              parentId: parentInfo.parentId,
+              path: parentInfo.path,
+              index: insertIndex,
+              subIndex: 0,
+            );
           }
         } else {
-        // The last node was a LiteralNode that got merged
-        final mergedNode = parentList[mergeStartIndex];
-        if (mergedNode is LiteralNode) {
           cursor = EditorCursor(
             parentId: parentInfo.parentId,
             path: parentInfo.path,
-            index: mergeStartIndex,
-            subIndex: mergedNode.text.length,
-          );
-        } else {
-          cursor = EditorCursor(
-            parentId: parentInfo.parentId,
-            path: parentInfo.path,
-            index: mergeStartIndex,
+            index: targetIndex,
             subIndex: 0,
           );
         }
+      } else {
+        cursor = EditorCursor(
+          parentId: parentInfo.parentId,
+          path: parentInfo.path,
+          index: 0,
+          subIndex: 0,
+        );
       }
+    }
+
+    final String? markerId = boundaryMarker?.id;
+    if (markerId != null) {
+      parentList.removeWhere((n) => n.id == markerId);
     }
 
     _notifyStructureChanged();
@@ -4052,33 +4864,41 @@ class MathEditorController extends ChangeNotifier {
           _moveCursorToEndOfList(node.radicand, node.id, 'radicand');
         } else if (node is LogNode) {
           _moveCursorToEndOfList(node.argument, node.id, 'arg');
-          } else if (node is PermutationNode) {
-            // <-- ADD THIS
-            _moveCursorToEndOfList(node.r, node.id, 'r');
-          } else if (node is CombinationNode) {
-            // <-- ADD THIS
-            _moveCursorToEndOfList(node.r, node.id, 'r');
-            } else if (node is ConstantNode || node is UnitVectorNode) {
-              if (foundIndex + 1 < parentList.length &&
-                  parentList[foundIndex + 1] is LiteralNode) {
-              cursor = EditorCursor(
-                parentId: parentInfo.parentId,
-                path: parentInfo.path,
-                index: foundIndex + 1,
-                subIndex: 0,
-              );
-            } else {
-              final insertIndex = foundIndex + 1;
-              parentList.insert(insertIndex, LiteralNode(text: ""));
-              cursor = EditorCursor(
-                parentId: parentInfo.parentId,
-                path: parentInfo.path,
-                index: insertIndex,
-                subIndex: 0,
-              );
-            }
+        } else if (node is PermutationNode) {
+          // <-- ADD THIS
+          _moveCursorToEndOfList(node.r, node.id, 'r');
+        } else if (node is CombinationNode) {
+          // <-- ADD THIS
+          _moveCursorToEndOfList(node.r, node.id, 'r');
+        } else if (node is DerivativeNode) {
+          _moveCursorToEndOfList(node.body, node.id, 'body');
+        } else if (node is IntegralNode) {
+          _moveCursorToEndOfList(node.body, node.id, 'body');
+        } else if (node is SummationNode) {
+          _moveCursorToEndOfList(node.body, node.id, 'body');
+        } else if (node is ProductNode) {
+          _moveCursorToEndOfList(node.body, node.id, 'body');
+        } else if (node is ConstantNode || node is UnitVectorNode) {
+          if (foundIndex + 1 < parentList.length &&
+              parentList[foundIndex + 1] is LiteralNode) {
+            cursor = EditorCursor(
+              parentId: parentInfo.parentId,
+              path: parentInfo.path,
+              index: foundIndex + 1,
+              subIndex: 0,
+            );
+          } else {
+            final insertIndex = foundIndex + 1;
+            parentList.insert(insertIndex, LiteralNode(text: ""));
+            cursor = EditorCursor(
+              parentId: parentInfo.parentId,
+              path: parentInfo.path,
+              index: insertIndex,
+              subIndex: 0,
+            );
           }
-        } else {
+        }
+      } else {
         // The last node was a LiteralNode that got merged
         final mergedNode = parentList[mergeStartIndex];
         if (mergedNode is LiteralNode) {
@@ -4367,6 +5187,159 @@ class MathEditorController extends ChangeNotifier {
     _notifyStructureChanged();
   }
 
+  void _removeSummation(SummationNode sum) {
+    final parentInfo = _findParentListOf(sum.id);
+    if (parentInfo == null) return;
+
+    final parentList = parentInfo.list;
+    final sumIndex = parentInfo.index;
+
+    int textLengthBefore = 0;
+    if (sumIndex > 0 && parentList[sumIndex - 1] is LiteralNode) {
+      textLengthBefore = (parentList[sumIndex - 1] as LiteralNode).text.length;
+    }
+
+    parentList.removeAt(sumIndex);
+
+    if (parentList.isEmpty) {
+      parentList.add(LiteralNode());
+      cursor = EditorCursor(
+        parentId: parentInfo.parentId,
+        path: parentInfo.path,
+        index: 0,
+        subIndex: 0,
+      );
+      _notifyStructureChanged();
+      return;
+    }
+
+    int mergeStartIndex = (sumIndex > 0) ? sumIndex - 1 : 0;
+    _mergeAdjacentLiteralsFrom(parentList, mergeStartIndex);
+    _positionCursorAtOffset(
+      parentList,
+      mergeStartIndex,
+      textLengthBefore,
+      parentInfo.parentId,
+      parentInfo.path,
+    );
+    _notifyStructureChanged();
+  }
+
+  void _removeProduct(ProductNode prod) {
+    final parentInfo = _findParentListOf(prod.id);
+    if (parentInfo == null) return;
+
+    final parentList = parentInfo.list;
+    final prodIndex = parentInfo.index;
+
+    int textLengthBefore = 0;
+    if (prodIndex > 0 && parentList[prodIndex - 1] is LiteralNode) {
+      textLengthBefore = (parentList[prodIndex - 1] as LiteralNode).text.length;
+    }
+
+    parentList.removeAt(prodIndex);
+
+    if (parentList.isEmpty) {
+      parentList.add(LiteralNode());
+      cursor = EditorCursor(
+        parentId: parentInfo.parentId,
+        path: parentInfo.path,
+        index: 0,
+        subIndex: 0,
+      );
+      _notifyStructureChanged();
+      return;
+    }
+
+    int mergeStartIndex = (prodIndex > 0) ? prodIndex - 1 : 0;
+    _mergeAdjacentLiteralsFrom(parentList, mergeStartIndex);
+    _positionCursorAtOffset(
+      parentList,
+      mergeStartIndex,
+      textLengthBefore,
+      parentInfo.parentId,
+      parentInfo.path,
+    );
+    _notifyStructureChanged();
+  }
+
+  void _removeDerivative(DerivativeNode diff) {
+    final parentInfo = _findParentListOf(diff.id);
+    if (parentInfo == null) return;
+
+    final parentList = parentInfo.list;
+    final diffIndex = parentInfo.index;
+
+    int textLengthBefore = 0;
+    if (diffIndex > 0 && parentList[diffIndex - 1] is LiteralNode) {
+      textLengthBefore = (parentList[diffIndex - 1] as LiteralNode).text.length;
+    }
+
+    parentList.removeAt(diffIndex);
+
+    if (parentList.isEmpty) {
+      parentList.add(LiteralNode());
+      cursor = EditorCursor(
+        parentId: parentInfo.parentId,
+        path: parentInfo.path,
+        index: 0,
+        subIndex: 0,
+      );
+      _notifyStructureChanged();
+      return;
+    }
+
+    int mergeStartIndex = (diffIndex > 0) ? diffIndex - 1 : 0;
+    _mergeAdjacentLiteralsFrom(parentList, mergeStartIndex);
+    _positionCursorAtOffset(
+      parentList,
+      mergeStartIndex,
+      textLengthBefore,
+      parentInfo.parentId,
+      parentInfo.path,
+    );
+    _notifyStructureChanged();
+  }
+
+  void _removeIntegral(IntegralNode integ) {
+    final parentInfo = _findParentListOf(integ.id);
+    if (parentInfo == null) return;
+
+    final parentList = parentInfo.list;
+    final integIndex = parentInfo.index;
+
+    int textLengthBefore = 0;
+    if (integIndex > 0 && parentList[integIndex - 1] is LiteralNode) {
+      textLengthBefore =
+          (parentList[integIndex - 1] as LiteralNode).text.length;
+    }
+
+    parentList.removeAt(integIndex);
+
+    if (parentList.isEmpty) {
+      parentList.add(LiteralNode());
+      cursor = EditorCursor(
+        parentId: parentInfo.parentId,
+        path: parentInfo.path,
+        index: 0,
+        subIndex: 0,
+      );
+      _notifyStructureChanged();
+      return;
+    }
+
+    int mergeStartIndex = (integIndex > 0) ? integIndex - 1 : 0;
+    _mergeAdjacentLiteralsFrom(parentList, mergeStartIndex);
+    _positionCursorAtOffset(
+      parentList,
+      mergeStartIndex,
+      textLengthBefore,
+      parentInfo.parentId,
+      parentInfo.path,
+    );
+    _notifyStructureChanged();
+  }
+
   void _removeAns(AnsNode ans) {
     final parentInfo = _findParentListOf(ans.id);
     if (parentInfo == null) return;
@@ -4481,20 +5454,23 @@ class MathEditorController extends ChangeNotifier {
         final nextNode = siblings[cursor.index + 1];
         if (nextNode is LiteralNode) {
           cursor = cursor.copyWith(index: cursor.index + 1, subIndex: 0);
-        } else if (nextNode is FractionNode) {
-          _moveCursorToStartOfList(nextNode.numerator, nextNode.id, 'num');
-        } else if (nextNode is ExponentNode) {
-          _moveCursorToStartOfList(nextNode.base, nextNode.id, 'base');
-        } else if (nextNode is ParenthesisNode) {
-          _moveCursorToStartOfList(nextNode.content, nextNode.id, 'content');
-        } else if (nextNode is AnsNode) {
-          _moveCursorToStartOfList(nextNode.index, nextNode.id, 'index');
         } else if (nextNode is NewlineNode) {
           if (cursor.index + 2 < siblings.length) {
             cursor = cursor.copyWith(index: cursor.index + 2, subIndex: 0);
           }
+        } else if (nextNode is ConstantNode || nextNode is UnitVectorNode) {
+          _positionAfterAtomic(
+            siblings,
+            cursor.index + 1,
+            cursor.parentId,
+            cursor.path,
+          );
+        } else {
+          // Enter any composite node (fraction, exponent, parenthesis, ans,
+          // trig, root, log, permutation, combination, sum, product,
+          // integral, derivative).
+          _moveCursorIntoNodeStart(nextNode);
         }
-        // ... other node types
       } else if (cursor.parentId != null) {
         _exitNestedStructureRight();
       }
@@ -4517,14 +5493,6 @@ class MathEditorController extends ChangeNotifier {
           index: cursor.index - 1,
           subIndex: prevNode.text.length,
         );
-      } else if (prevNode is FractionNode) {
-        _moveCursorToEndOfList(prevNode.denominator, prevNode.id, 'den');
-      } else if (prevNode is ExponentNode) {
-        _moveCursorToEndOfList(prevNode.power, prevNode.id, 'pow');
-      } else if (prevNode is ParenthesisNode) {
-        _moveCursorToEndOfList(prevNode.content, prevNode.id, 'content');
-      } else if (prevNode is AnsNode) {
-        _moveCursorToEndOfList(prevNode.index, prevNode.id, 'index');
       } else if (prevNode is NewlineNode) {
         if (cursor.index - 2 >= 0) {
           final beforeNewline = siblings[cursor.index - 2];
@@ -4535,8 +5503,19 @@ class MathEditorController extends ChangeNotifier {
             );
           }
         }
+      } else if (prevNode is ConstantNode || prevNode is UnitVectorNode) {
+        _positionBeforeAtomic(
+          siblings,
+          cursor.index - 1,
+          cursor.parentId,
+          cursor.path,
+        );
+      } else {
+        // Enter any composite node from its end (fraction, exponent,
+        // parenthesis, ans, trig, root, log, permutation, combination, sum,
+        // product, integral, derivative).
+        _moveCursorIntoNodeEnd(prevNode);
       }
-      // ... other node types
       notifyListeners();
       return;
     }
@@ -4587,6 +5566,36 @@ class MathEditorController extends ChangeNotifier {
     } else if (parent is CombinationNode) {
       if (cursor.path == 'n') {
         _moveCursorToStartOfList(parent.r, parent.id, 'r');
+      } else {
+        _moveCursorAfterNode(parent.id);
+      }
+    } else if (parent is SummationNode) {
+      if (cursor.path == 'var' ||
+          cursor.path == 'lower' ||
+          cursor.path == 'upper') {
+        _moveCursorToStartOfList(parent.body, parent.id, 'body');
+      } else {
+        _moveCursorAfterNode(parent.id);
+      }
+    } else if (parent is DerivativeNode) {
+      if (cursor.path == 'var' || cursor.path == 'at') {
+        _moveCursorToStartOfList(parent.body, parent.id, 'body');
+      } else {
+        _moveCursorAfterNode(parent.id);
+      }
+    } else if (parent is IntegralNode) {
+      if (cursor.path == 'var' ||
+          cursor.path == 'lower' ||
+          cursor.path == 'upper') {
+        _moveCursorToStartOfList(parent.body, parent.id, 'body');
+      } else {
+        _moveCursorAfterNode(parent.id);
+      }
+    } else if (parent is ProductNode) {
+      if (cursor.path == 'var' ||
+          cursor.path == 'lower' ||
+          cursor.path == 'upper') {
+        _moveCursorToStartOfList(parent.body, parent.id, 'body');
       } else {
         _moveCursorAfterNode(parent.id);
       }
@@ -4643,6 +5652,30 @@ class MathEditorController extends ChangeNotifier {
     } else if (parent is CombinationNode) {
       if (cursor.path == 'r') {
         _moveCursorToEndOfList(parent.n, parent.id, 'n');
+      } else {
+        _moveCursorBeforeNode(parent.id);
+      }
+    } else if (parent is SummationNode) {
+      if (cursor.path == 'body') {
+        _moveCursorToEndOfList(parent.lower, parent.id, 'lower');
+      } else {
+        _moveCursorBeforeNode(parent.id);
+      }
+    } else if (parent is DerivativeNode) {
+      if (cursor.path == 'body') {
+        _moveCursorToEndOfList(parent.at, parent.id, 'at');
+      } else {
+        _moveCursorBeforeNode(parent.id);
+      }
+    } else if (parent is IntegralNode) {
+      if (cursor.path == 'body') {
+        _moveCursorToEndOfList(parent.lower, parent.id, 'lower');
+      } else {
+        _moveCursorBeforeNode(parent.id);
+      }
+    } else if (parent is ProductNode) {
+      if (cursor.path == 'body') {
+        _moveCursorToEndOfList(parent.lower, parent.id, 'lower');
       } else {
         _moveCursorBeforeNode(parent.id);
       }
@@ -4835,31 +5868,29 @@ class MathEditorController extends ChangeNotifier {
           subIndex: startIdx,
         );
       } else {
-        // Composite node (FractionNode, ExponentNode, etc.) - delete the whole node
-        siblings.removeAt(norm.start.nodeIndex);
+        // Composite node (FractionNode, ExponentNode, etc.) - delete the whole
+        // node, then merge the literals that surrounded it and place the caret
+        // at the join point (matching the behaviour of the _remove* helpers).
+        final int removeIndex = norm.start.nodeIndex;
+        siblings.removeAt(removeIndex);
 
-        // Position cursor at the deletion point
-        int newIndex = norm.start.nodeIndex;
-        if (newIndex >= siblings.length) {
-          newIndex = siblings.length - 1;
-        }
-        if (newIndex < 0) newIndex = 0;
-
-        // If we deleted and there's a literal before or after, position there
-        if (siblings.isNotEmpty && newIndex < siblings.length) {
-          final targetNode = siblings[newIndex];
-          if (targetNode is LiteralNode) {
+        if (siblings.isNotEmpty) {
+          final int beforeIndex = removeIndex - 1;
+          if (beforeIndex >= 0 && siblings[beforeIndex] is LiteralNode) {
+            final int joinOffset =
+                (siblings[beforeIndex] as LiteralNode).text.length;
+            _mergeAdjacentLiteralsFrom(siblings, beforeIndex);
             cursor = EditorCursor(
               parentId: norm.start.parentId,
               path: norm.start.path,
-              index: newIndex,
-              subIndex: 0,
+              index: beforeIndex,
+              subIndex: joinOffset,
             );
           } else {
             cursor = EditorCursor(
               parentId: norm.start.parentId,
               path: norm.start.path,
-              index: newIndex,
+              index: removeIndex.clamp(0, siblings.length - 1),
               subIndex: 0,
             );
           }
@@ -4897,31 +5928,47 @@ class MathEditorController extends ChangeNotifier {
           index: norm.start.nodeIndex,
           subIndex: remainingFromFirst.length,
         );
-      } else {
-        // First node is composite and fully selected - remove it too
-        if (norm.start.charIndex == 0) {
-          siblings.removeAt(norm.start.nodeIndex);
-          // Add remaining text if any
-          if (remainingFromLast.isNotEmpty) {
-            if (norm.start.nodeIndex < siblings.length &&
-                siblings[norm.start.nodeIndex] is LiteralNode) {
-              (siblings[norm.start.nodeIndex] as LiteralNode).text =
-                  remainingFromLast +
-                  (siblings[norm.start.nodeIndex] as LiteralNode).text;
-            } else {
-              siblings.insert(
-                norm.start.nodeIndex,
-                LiteralNode(text: remainingFromLast),
-              );
-            }
+      } else if (norm.start.charIndex == 0) {
+        // First node is composite and fully selected - remove it too.
+        siblings.removeAt(norm.start.nodeIndex);
+        // Add remaining text if any
+        if (remainingFromLast.isNotEmpty) {
+          if (norm.start.nodeIndex < siblings.length &&
+              siblings[norm.start.nodeIndex] is LiteralNode) {
+            (siblings[norm.start.nodeIndex] as LiteralNode).text =
+                remainingFromLast +
+                (siblings[norm.start.nodeIndex] as LiteralNode).text;
+          } else {
+            siblings.insert(
+              norm.start.nodeIndex,
+              LiteralNode(text: remainingFromLast),
+            );
           }
-          cursor = EditorCursor(
-            parentId: norm.start.parentId,
-            path: norm.start.path,
-            index: norm.start.nodeIndex.clamp(0, siblings.length - 1),
-            subIndex: 0,
-          );
         }
+        cursor = EditorCursor(
+          parentId: norm.start.parentId,
+          path: norm.start.path,
+          index: norm.start.nodeIndex.clamp(0, siblings.length - 1),
+          subIndex: 0,
+        );
+      } else {
+        // Selection starts at the right edge of a composite first node
+        // (charIndex == 1): keep the composite and re-attach the surviving
+        // tail of the last node just after it. Without this the tail text was
+        // silently dropped.
+        final int insertAt = norm.start.nodeIndex + 1;
+        if (insertAt < siblings.length && siblings[insertAt] is LiteralNode) {
+          (siblings[insertAt] as LiteralNode).text =
+              remainingFromLast + (siblings[insertAt] as LiteralNode).text;
+        } else {
+          siblings.insert(insertAt, LiteralNode(text: remainingFromLast));
+        }
+        cursor = EditorCursor(
+          parentId: norm.start.parentId,
+          path: norm.start.path,
+          index: insertAt.clamp(0, siblings.length - 1),
+          subIndex: 0,
+        );
       }
     }
 
@@ -4959,11 +6006,29 @@ class MathEditorController extends ChangeNotifier {
     }
 
     final siblings = _resolveSiblingList();
-    final currentNode =
+    final existing =
         cursor.index < siblings.length ? siblings[cursor.index] : null;
 
-    if (currentNode is LiteralNode) {
-      final text = currentNode.text;
+    // If the cursor is on a composite/atomic node (or past the end), there is
+    // no literal to split, so create an empty literal anchor at the cursor
+    // position. Without this, paste silently did nothing on such nodes.
+    late final LiteralNode target;
+    if (existing is LiteralNode) {
+      target = existing;
+    } else {
+      final int insertPos = cursor.index.clamp(0, siblings.length);
+      target = LiteralNode(text: '');
+      siblings.insert(insertPos, target);
+      cursor = EditorCursor(
+        parentId: cursor.parentId,
+        path: cursor.path,
+        index: insertPos,
+        subIndex: 0,
+      );
+    }
+
+    {
+      final text = target.text;
       final cursorPos = cursor.subIndex.clamp(0, text.length);
       final before = text.substring(0, cursorPos);
       final after = text.substring(cursorPos);
@@ -4979,11 +6044,11 @@ class MathEditorController extends ChangeNotifier {
 
       if (_clipboard!.nodes.isEmpty) {
         // Just text - simple insert
-        currentNode.text = before + pastedText + after;
+        target.text = before + pastedText + after;
         cursor = cursor.copyWith(subIndex: before.length + pastedText.length);
       } else {
         // Has complex nodes
-        currentNode.text = before + (_clipboard!.leadingText ?? '');
+        target.text = before + (_clipboard!.leadingText ?? '');
 
         int insertIndex = cursor.index + 1;
 
@@ -5077,6 +6142,29 @@ class MathEditorController extends ChangeNotifier {
       } else if (node is CombinationNode) {
         _buildComplexNodeMapRecursive(node.n, node.id, 'n');
         _buildComplexNodeMapRecursive(node.r, node.id, 'r');
+      } else if (node is SummationNode) {
+        _buildComplexNodeMapRecursive(node.variable, node.id, 'var');
+        _buildComplexNodeMapRecursive(node.lower, node.id, 'lower');
+        _buildComplexNodeMapRecursive(node.upper, node.id, 'upper');
+        _buildComplexNodeMapRecursive(node.body, node.id, 'body');
+      } else if (node is DerivativeNode) {
+        _buildComplexNodeMapRecursive(node.variable, node.id, 'var');
+        if (node.isDefinite) {
+          _buildComplexNodeMapRecursive(node.at, node.id, 'at');
+        }
+        _buildComplexNodeMapRecursive(node.body, node.id, 'body');
+      } else if (node is IntegralNode) {
+        _buildComplexNodeMapRecursive(node.variable, node.id, 'var');
+        if (node.isDefinite) {
+          _buildComplexNodeMapRecursive(node.lower, node.id, 'lower');
+          _buildComplexNodeMapRecursive(node.upper, node.id, 'upper');
+        }
+        _buildComplexNodeMapRecursive(node.body, node.id, 'body');
+      } else if (node is ProductNode) {
+        _buildComplexNodeMapRecursive(node.variable, node.id, 'var');
+        _buildComplexNodeMapRecursive(node.lower, node.id, 'lower');
+        _buildComplexNodeMapRecursive(node.upper, node.id, 'upper');
+        _buildComplexNodeMapRecursive(node.body, node.id, 'body');
       } else if (node is AnsNode) {
         _buildComplexNodeMapRecursive(node.index, node.id, 'index');
       }
@@ -5133,6 +6221,25 @@ class MathEditorController extends ChangeNotifier {
     } else if (parent is CombinationNode) {
       if (path == 'n') return parent.n;
       if (path == 'r') return parent.r;
+    } else if (parent is SummationNode) {
+      if (path == 'var') return parent.variable;
+      if (path == 'lower') return parent.lower;
+      if (path == 'upper') return parent.upper;
+      if (path == 'body') return parent.body;
+    } else if (parent is DerivativeNode) {
+      if (path == 'var') return parent.variable;
+      if (path == 'at') return parent.at;
+      if (path == 'body') return parent.body;
+    } else if (parent is IntegralNode) {
+      if (path == 'var') return parent.variable;
+      if (path == 'lower') return parent.lower;
+      if (path == 'upper') return parent.upper;
+      if (path == 'body') return parent.body;
+    } else if (parent is ProductNode) {
+      if (path == 'var') return parent.variable;
+      if (path == 'lower') return parent.lower;
+      if (path == 'upper') return parent.upper;
+      if (path == 'body') return parent.body;
     } else if (parent is AnsNode) {
       if (path == 'index') return parent.index;
     }
@@ -5187,6 +6294,76 @@ class MathEditorController extends ChangeNotifier {
     _cachedContentBounds = Rect.fromLTRB(minX, minY, maxX, maxY);
     _contentBoundsValid = true;
     return _cachedContentBounds;
+  }
+
+  /// Updates all AnsNode indices in the expression based on a cell insertion or removal.
+  /// [atIndex] is the index where the change occurred.
+  /// [delta] is typically +1 for insertion and -1 for removal.
+  void updateAnsReferences(int atIndex, int delta) {
+    _updateAnsIndicesRecursive(expression, atIndex, delta);
+    // Serialize to update the 'expr' string used for computation trigger
+    expr = MathExpressionSerializer.serialize(expression);
+    _structureVersion++;
+    notifyListeners();
+  }
+
+  void _updateAnsIndicesRecursive(
+    List<MathNode> nodes,
+    int atIndex,
+    int delta,
+  ) {
+    for (final node in nodes) {
+      if (node is AnsNode) {
+        String idxStr = MathExpressionSerializer.serialize(node.index);
+        int? idx = int.tryParse(idxStr);
+        if (idx != null && idx >= atIndex) {
+          int newIdx = idx + delta;
+          if (newIdx < 0) newIdx = 0;
+          node.index = [LiteralNode(text: newIdx.toString())];
+        }
+      }
+
+      if (node is FractionNode) {
+        _updateAnsIndicesRecursive(node.numerator, atIndex, delta);
+        _updateAnsIndicesRecursive(node.denominator, atIndex, delta);
+      } else if (node is ExponentNode) {
+        _updateAnsIndicesRecursive(node.base, atIndex, delta);
+        _updateAnsIndicesRecursive(node.power, atIndex, delta);
+      } else if (node is ParenthesisNode) {
+        _updateAnsIndicesRecursive(node.content, atIndex, delta);
+      } else if (node is TrigNode) {
+        _updateAnsIndicesRecursive(node.argument, atIndex, delta);
+      } else if (node is RootNode) {
+        _updateAnsIndicesRecursive(node.index, atIndex, delta);
+        _updateAnsIndicesRecursive(node.radicand, atIndex, delta);
+      } else if (node is LogNode) {
+        _updateAnsIndicesRecursive(node.base, atIndex, delta);
+        _updateAnsIndicesRecursive(node.argument, atIndex, delta);
+      } else if (node is PermutationNode) {
+        _updateAnsIndicesRecursive(node.n, atIndex, delta);
+        _updateAnsIndicesRecursive(node.r, atIndex, delta);
+      } else if (node is CombinationNode) {
+        _updateAnsIndicesRecursive(node.n, atIndex, delta);
+        _updateAnsIndicesRecursive(node.r, atIndex, delta);
+      } else if (node is SummationNode) {
+        _updateAnsIndicesRecursive(node.lower, atIndex, delta);
+        _updateAnsIndicesRecursive(node.upper, atIndex, delta);
+        _updateAnsIndicesRecursive(node.body, atIndex, delta);
+      } else if (node is ProductNode) {
+        _updateAnsIndicesRecursive(node.lower, atIndex, delta);
+        _updateAnsIndicesRecursive(node.upper, atIndex, delta);
+        _updateAnsIndicesRecursive(node.body, atIndex, delta);
+      } else if (node is IntegralNode) {
+        _updateAnsIndicesRecursive(node.lower, atIndex, delta);
+        _updateAnsIndicesRecursive(node.upper, atIndex, delta);
+        _updateAnsIndicesRecursive(node.body, atIndex, delta);
+      } else if (node is DerivativeNode) {
+        _updateAnsIndicesRecursive(node.at, atIndex, delta);
+        _updateAnsIndicesRecursive(node.body, atIndex, delta);
+      } else if (node is ComplexNode) {
+        _updateAnsIndicesRecursive(node.content, atIndex, delta);
+      }
+    }
   }
 }
 

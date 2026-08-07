@@ -18,6 +18,11 @@ class MathSolverNew {
     numberFormat = value;
   }
 
+  /// Formats a number using current precision and number format settings.
+  static String formatResult(double num) {
+    return _formatResult(num);
+  }
+
   /// Main entry point - determines what type of expression and solves accordingly
   static String? solve(String expression, {Map<int, String>? ansValues}) {
     expression = expression.trim();
@@ -123,7 +128,6 @@ class MathSolverNew {
     expr = expr.replaceAll('\u1D07', 'E');
 
     expr = expr.replaceAll('\u00B0', '*($pi/180)'); // degrees
-    expr = expr.replaceAll('rad', '*((1/$pi)*180)'); // radian
 
     // Handle πi and iπ patterns BEFORE general π replacement
     // πi -> (π)*(i) and iπ -> (i)*(π)
@@ -134,11 +138,9 @@ class MathSolverNew {
     expr = expr.replaceAll('\u03C0*i', '($pi)*(i)');
     expr = expr.replaceAll('i*\u03C0', '(i)*($pi)');
 
-    // Replace pi constant - only add * if preceded by digit, ), subscript 0, or pi
-    // But skip if already processed (check for $ which indicates already replaced)
-    expr = expr.replaceAllMapped(RegExp(r'([\d\)\u2080])?\u03C0(?!\))'), (
-      match,
-    ) {
+    // Replace pi constant - only add * if preceded by digit, ), or subscript 0.
+    // No negative lookahead here; sin(π), cos(π), tan(π), and 2π must all convert.
+    expr = expr.replaceAllMapped(RegExp(r'([\d\)\u2080])?\u03C0'), (match) {
       String? before = match.group(1);
       if (before != null) {
         return '$before*($pi)';
@@ -147,7 +149,16 @@ class MathSolverNew {
     });
 
     // Replace standalone e (Euler's number), but not e⁻ (elementary charge)
-    // Also don't replace if it's part of 'exp' or already replaced
+    // Also don't replace if it's part of 'exp' or already replaced.
+    // First, protect lowercase-'e' scientific notation (e.g. 2e3, 1.5e-10) so
+    // the Euler replacement does not corrupt it: a scientific 'e' is preceded
+    // by a digit/decimal point and followed by an optional sign and a digit —
+    // the same shape the number parser recognises. It is restored just after.
+    final sciSentinel = String.fromCharCode(1);
+    expr = expr.replaceAllMapped(
+      RegExp(r'(?<=[\d.])e(?=[+\-]?\d)'),
+      (_) => sciSentinel,
+    );
     expr = expr.replaceAllMapped(
       RegExp(r'([\d\)\u2080])?(?<![a-zA-Z\$])e(?![a-zA-Z\u207b])'),
       (match) {
@@ -157,6 +168,15 @@ class MathSolverNew {
         }
         return '($e)';
       },
+    );
+
+    // Restore protected scientific-notation exponents.
+    expr = expr.replaceAll(sciSentinel, 'e');
+
+    // Default mode is radians; explicit "rad" unit suffix is a no-op.
+    expr = expr.replaceAll(
+      RegExp(r'(?<=[\d\)])rad\b', caseSensitive: false),
+      '',
     );
 
     // Replace physical constants
@@ -207,6 +227,8 @@ class MathSolverNew {
     // Process special functions
     expr = _preprocessPermuCombination(expr);
     expr = _processFactorials(expr);
+    expr = _preprocessSummationProduct(expr);
+    expr = _preprocessDerivativeIntegral(expr);
 
     // --- Implicit Multiplication ---
     // 1. Number followed by '('
@@ -352,7 +374,13 @@ class MathSolverNew {
       'ln',
       'sqrt',
       'abs',
+      'arg',
+      're',
+      'im',
+      'sgn',
       'exp',
+      'diff',
+      'int',
       'perm',
       'comb',
       'ans',
@@ -441,20 +469,20 @@ class MathSolverNew {
       else if (term.contains(variable) && !term.contains('^')) {
         int varIndex = term.indexOf(variable);
         String coeffPart = term.substring(0, varIndex);
+        String remainder = term.substring(varIndex + variable.length);
         if (coeffPart.endsWith('*')) {
           coeffPart = coeffPart.substring(0, coeffPart.length - 1);
+        }
+        if ((coeffPart.isEmpty || coeffPart == '+' || coeffPart == '-') &&
+            remainder.startsWith('/')) {
+          coeffPart = '${coeffPart}1$remainder';
         }
         double coeff = _parseCoefficient(coeffPart);
         b += coeff;
       }
       // Constant term: no variable
       else if (!term.contains(variable)) {
-        try {
-          double val = double.parse(term);
-          c += val;
-        } catch (e) {
-          // Could not parse constant
-        }
+        c += _parseCoefficient(term);
       }
     }
 
@@ -466,9 +494,24 @@ class MathSolverNew {
     coeff = coeff.trim();
     if (coeff.isEmpty || coeff == '+') return 1.0;
     if (coeff == '-') return -1.0;
+    String normalized = coeff;
+    if (normalized.startsWith('+')) {
+      normalized = normalized.substring(1);
+    }
     try {
-      return double.parse(coeff);
-    } catch (e) {
+      return double.parse(normalized);
+    } catch (_) {}
+
+    try {
+      normalized = _preprocess(normalized);
+      _ExpressionParser parser = _ExpressionParser(normalized);
+      dynamic result = parser.parse();
+      if (result is Complex) {
+        if (result.imag.abs() < 1e-10) return result.real;
+        return 0.0;
+      }
+      return (result as num).toDouble();
+    } catch (_) {
       return 0.0;
     }
   }
@@ -494,11 +537,75 @@ class MathSolverNew {
       'ln',
       'sqrt',
       'abs',
+      'arg',
+      're',
+      'im',
+      'sgn',
       'exp',
       'e',
       'pi',
       'i',
     };
+
+    ({Map<String, double> coeffs, double constant})? parseSide(String side) {
+      final coeffs = <String, double>{};
+      double constant = 0.0;
+
+      side = side.replaceAll(' ', '');
+      if (side.isEmpty) {
+        return (coeffs: coeffs, constant: constant);
+      }
+
+      if (!side.startsWith('+') && !side.startsWith('-')) {
+        side = '+$side';
+      }
+
+      List<String> terms = [];
+      String currentTerm = '';
+      for (int i = 0; i < side.length; i++) {
+        String char = side[i];
+        if ((char == '+' || char == '-') && i > 0) {
+          if (currentTerm.isNotEmpty) {
+            terms.add(currentTerm);
+          }
+          currentTerm = char;
+        } else {
+          currentTerm += char;
+        }
+      }
+      if (currentTerm.isNotEmpty) {
+        terms.add(currentTerm);
+      }
+
+      for (String term in terms) {
+        term = term.trim();
+        if (term.isEmpty || term == '+' || term == '-') continue;
+        if (term.contains('^')) return null;
+
+        final matches = RegExp(r'[a-zA-Z]').allMatches(term).toList();
+        if (matches.isEmpty) {
+          constant += _parseCoefficient(term);
+          continue;
+        }
+
+        final variables = matches.map((m) => m.group(0)!).toSet();
+        if (variables.length != 1) return null;
+        if (matches.length != 1) return null;
+
+        final varName = variables.first;
+        if (reserved.contains(varName)) return null;
+
+        String coeffPart = term.replaceAll(varName, '');
+        coeffPart = coeffPart.replaceAll('*', '');
+        if (RegExp(r'^[+-]?/').hasMatch(coeffPart)) {
+          coeffPart = coeffPart.replaceFirst('/', '1/');
+        }
+        double coeff = _parseCoefficient(coeffPart);
+        coeffs[varName] = (coeffs[varName] ?? 0) + coeff;
+      }
+
+      return (coeffs: coeffs, constant: constant);
+    }
 
     RegExp equationRegex = RegExp(r'(.+)=([^=]+)');
 
@@ -509,45 +616,23 @@ class MathSolverNew {
       String leftSide = match.group(1)!;
       String rightSide = match.group(2)!;
 
+      final leftParsed = parseSide(leftSide);
+      final rightParsed = parseSide(rightSide);
+      if (leftParsed == null || rightParsed == null) return null;
+
       Map<String, double> equationMap = {};
-      double constant = 0.0;
-
-      void processSide(String side, int sign) {
-        RegExp termRegex = RegExp(r'([+-]?)(\d*\.?\d*)\*?([a-zA-Z]?)');
-
-        for (Match m in termRegex.allMatches(side)) {
-          String signStr = m.group(1) ?? '';
-          String coeffStr = m.group(2) ?? '';
-          String varName = m.group(3) ?? '';
-
-          if (varName.isEmpty && coeffStr.isEmpty) continue;
-          if (reserved.contains(varName)) continue;
-
-          int termSign = (signStr == '-') ? -1 : 1;
-
-          if (varName.isNotEmpty) {
-            double coeff;
-            if (coeffStr.isEmpty) {
-              coeff = 1.0;
-            } else {
-              coeff = double.tryParse(coeffStr) ?? 1.0;
-            }
-            coeff *= termSign * sign;
-
-            equationMap[varName] = (equationMap[varName] ?? 0) + coeff;
-            variableSet.add(varName);
-          } else if (coeffStr.isNotEmpty) {
-            double val = double.tryParse(coeffStr) ?? 0;
-            constant += termSign * sign * val;
-          }
-        }
+      for (final entry in leftParsed.coeffs.entries) {
+        equationMap[entry.key] = (equationMap[entry.key] ?? 0) + entry.value;
+      }
+      for (final entry in rightParsed.coeffs.entries) {
+        equationMap[entry.key] = (equationMap[entry.key] ?? 0) - entry.value;
       }
 
-      processSide(leftSide, 1);
-      processSide(rightSide, -1);
+      double combinedConstant = leftParsed.constant - rightParsed.constant;
 
-      constants.add(-constant);
+      constants.add(-combinedConstant);
       equationCoefficients.add(equationMap);
+      variableSet.addAll(equationMap.keys);
     }
 
     List<String> variables = variableSet.toList()..sort();
@@ -650,32 +735,217 @@ class MathSolverNew {
     return expr;
   }
 
+  static String _preprocessSummationProduct(String expr) {
+    expr = _processSumProd(expr, 'sum', false);
+    expr = _processSumProd(expr, 'prod', true);
+    return expr;
+  }
+
+  static String _preprocessDerivativeIntegral(String expr) {
+    expr = _processDerivative(expr);
+    expr = _processIntegral(expr);
+    return expr;
+  }
+
+  static String _processDerivative(String expr) {
+    int searchOffset = 0;
+    while (true) {
+      int startIndex = expr.indexOf('diff(', searchOffset);
+      if (startIndex == -1) break;
+
+      int openParen = startIndex + 'diff'.length;
+      int closeParen = _findMatchingParen(expr, openParen);
+      if (closeParen == -1) {
+        searchOffset = startIndex + 1;
+        continue;
+      }
+
+      String content = expr.substring(openParen + 1, closeParen);
+      List<String>? parts = _splitTopLevelArgs(content, 3);
+      if (parts == null) {
+        searchOffset = startIndex + 1;
+        continue;
+      }
+
+      String varStr = parts[0].trim();
+      String atStr = parts[1].trim();
+      String bodyStr = parts[2].trim();
+
+      if (varStr.isEmpty || bodyStr.isEmpty) {
+        throw Exception('Incomplete derivative arguments');
+      }
+
+      // Numerical solver requires 'at' value
+      if (atStr.isEmpty) {
+        searchOffset = startIndex + 1;
+        continue;
+      }
+
+      double? atVal = _evaluateSimpleExpression(atStr);
+      if (atVal == null) {
+        searchOffset = startIndex + 1;
+        continue;
+      }
+
+      double h = 1e-6 * max(1.0, atVal.abs());
+      String plusExpr = _replaceVariable(
+        bodyStr,
+        varStr,
+        (atVal + h).toString(),
+      );
+      String minusExpr = _replaceVariable(
+        bodyStr,
+        varStr,
+        (atVal - h).toString(),
+      );
+
+      double fPlus = _evaluateExpression(_preprocess(plusExpr));
+      double fMinus = _evaluateExpression(_preprocess(minusExpr));
+      double result = (fPlus - fMinus) / (2 * h);
+
+      String resultStr;
+      if ((result - result.roundToDouble()).abs() < 1e-10) {
+        resultStr = result.round().toString();
+      } else {
+        resultStr = result.toString();
+      }
+
+      expr =
+          expr.substring(0, startIndex) +
+          resultStr +
+          expr.substring(closeParen + 1);
+      searchOffset = startIndex + resultStr.length;
+    }
+
+    return expr;
+  }
+
+  static String _processIntegral(String expr) {
+    int searchOffset = 0;
+    while (true) {
+      int startIndex = expr.indexOf('int(', searchOffset);
+      if (startIndex == -1) break;
+
+      int openParen = startIndex + 'int'.length;
+      int closeParen = _findMatchingParen(expr, openParen);
+      if (closeParen == -1) {
+        searchOffset = startIndex + 1;
+        continue;
+      }
+
+      String content = expr.substring(openParen + 1, closeParen);
+      List<String>? parts = _splitTopLevelArgs(content, 4);
+      if (parts == null) {
+        searchOffset = startIndex + 1;
+        continue;
+      }
+
+      String varStr = parts[0].trim();
+      String lowerStr = parts[1].trim();
+      String upperStr = parts[2].trim();
+      String bodyStr = parts[3].trim();
+
+      if (varStr.isEmpty ||
+          lowerStr.isEmpty ||
+          upperStr.isEmpty ||
+          bodyStr.isEmpty) {
+        throw Exception('Incomplete integral arguments');
+      }
+
+      double? lowerVal = _evaluateSimpleExpression(lowerStr);
+      double? upperVal = _evaluateSimpleExpression(upperStr);
+      if (lowerVal == null || upperVal == null) {
+        searchOffset = startIndex + 1;
+        continue;
+      }
+
+      double a = lowerVal;
+      double b = upperVal;
+      double sign = 1.0;
+      if (a > b) {
+        final temp = a;
+        a = b;
+        b = temp;
+        sign = -1.0;
+      }
+
+      const int n = 200; // Simpson's rule requires even n
+      double h = (b - a) / n;
+
+      double sum = 0.0;
+      for (int i = 0; i <= n; i++) {
+        double x = a + h * i;
+        String replaced = _replaceVariable(bodyStr, varStr, x.toString());
+        double fx = _evaluateExpression(_preprocess(replaced));
+
+        if (i == 0 || i == n) {
+          sum += fx;
+        } else if (i % 2 == 0) {
+          sum += 2 * fx;
+        } else {
+          sum += 4 * fx;
+        }
+      }
+
+      double result = sign * (sum * h / 3.0);
+
+      String resultStr;
+      if ((result - result.roundToDouble()).abs() < 1e-10) {
+        resultStr = result.round().toString();
+      } else {
+        resultStr = result.toString();
+      }
+
+      expr =
+          expr.substring(0, startIndex) +
+          resultStr +
+          expr.substring(closeParen + 1);
+      searchOffset = startIndex + resultStr.length;
+    }
+
+    return expr;
+  }
+
   static String _processPermComb(
     String expr,
     String funcName,
     bool isPermutation,
   ) {
-    while (expr.contains('$funcName(')) {
-      int startIndex = expr.indexOf('$funcName(');
+    int searchOffset = 0;
+    while (true) {
+      int startIndex = expr.indexOf('$funcName(', searchOffset);
       if (startIndex == -1) break;
 
       int openParen = startIndex + funcName.length;
 
       int closeParen = _findMatchingParen(expr, openParen);
-      if (closeParen == -1) break;
+      if (closeParen == -1) {
+        searchOffset = startIndex + 1;
+        continue;
+      }
 
       String content = expr.substring(openParen + 1, closeParen);
 
       int commaIndex = _findSeparatingComma(content);
-      if (commaIndex == -1) break;
+      if (commaIndex == -1) {
+        searchOffset = startIndex + 1;
+        continue;
+      }
 
       String nExpr = content.substring(0, commaIndex).trim();
       String rExpr = content.substring(commaIndex + 1).trim();
 
+      if (nExpr.isEmpty || rExpr.isEmpty) {
+        throw Exception('Incomplete $funcName arguments');
+      }
+
       double? nValue = _evaluateSimpleExpression(nExpr);
       double? rValue = _evaluateSimpleExpression(rExpr);
 
-      if (nValue == null || rValue == null) break;
+      if (nValue == null || rValue == null) {
+        searchOffset = startIndex + 1;
+        continue;
+      }
 
       int n = nValue.toInt();
       int r = rValue.toInt();
@@ -694,6 +964,7 @@ class MathSolverNew {
           expr.substring(0, startIndex) +
           resultStr +
           expr.substring(closeParen + 1);
+      searchOffset = startIndex + resultStr.length;
     }
 
     return expr;
@@ -749,13 +1020,120 @@ class MathSolverNew {
     }
   }
 
+  static String _processSumProd(String expr, String funcName, bool isProduct) {
+    int searchOffset = 0;
+    while (true) {
+      int startIndex = expr.indexOf('$funcName(', searchOffset);
+      if (startIndex == -1) break;
+
+      int openParen = startIndex + funcName.length;
+      int closeParen = _findMatchingParen(expr, openParen);
+      if (closeParen == -1) {
+        searchOffset = startIndex + 1;
+        continue;
+      }
+
+      String content = expr.substring(openParen + 1, closeParen);
+      List<String>? parts = _splitTopLevelArgs(content, 4);
+      if (parts == null) {
+        searchOffset = startIndex + 1;
+        continue;
+      }
+
+      String varStr = parts[0].trim();
+      String lowerStr = parts[1].trim();
+      String upperStr = parts[2].trim();
+      String bodyStr = parts[3].trim();
+
+      if (varStr.isEmpty ||
+          lowerStr.isEmpty ||
+          upperStr.isEmpty ||
+          bodyStr.isEmpty) {
+        throw Exception('Incomplete $funcName arguments');
+      }
+
+      double? lowerVal = _evaluateSimpleExpression(lowerStr);
+      double? upperVal = _evaluateSimpleExpression(upperStr);
+      if (lowerVal == null || upperVal == null) {
+        searchOffset = startIndex + 1;
+        continue;
+      }
+
+      int lower = lowerVal.round();
+      int upper = upperVal.round();
+
+      if (lower > upper) {
+        String emptyResult = isProduct ? '1' : '0';
+        expr =
+            expr.substring(0, startIndex) +
+            emptyResult +
+            expr.substring(closeParen + 1);
+        searchOffset = startIndex + emptyResult.length;
+        continue;
+      }
+
+      double result = isProduct ? 1.0 : 0.0;
+      for (int i = lower; i <= upper; i++) {
+        String replaced = _replaceVariable(bodyStr, varStr, i.toString());
+        String preprocessed = _preprocess(replaced);
+        double val = _evaluateExpression(preprocessed);
+        if (isProduct) {
+          result *= val;
+        } else {
+          result += val;
+        }
+      }
+
+      String resultStr;
+      if ((result - result.roundToDouble()).abs() < 1e-10) {
+        resultStr = result.round().toString();
+      } else {
+        resultStr = result.toString();
+      }
+
+      expr =
+          expr.substring(0, startIndex) +
+          resultStr +
+          expr.substring(closeParen + 1);
+      searchOffset = startIndex + resultStr.length;
+    }
+
+    return expr;
+  }
+
+  static List<String>? _splitTopLevelArgs(String content, int expected) {
+    List<String> parts = [];
+    int depth = 0;
+    int lastIndex = 0;
+    for (int i = 0; i < content.length; i++) {
+      final ch = content[i];
+      if (ch == '(') {
+        depth++;
+      } else if (ch == ')') {
+        depth--;
+      } else if (ch == ',' && depth == 0) {
+        parts.add(content.substring(lastIndex, i));
+        lastIndex = i + 1;
+      }
+    }
+    parts.add(content.substring(lastIndex));
+    if (parts.length != expected) return null;
+    return parts;
+  }
+
+  static String _replaceVariable(String body, String variable, String value) {
+    final pattern = RegExp(
+      r'(?<![a-zA-Z0-9_])' + RegExp.escape(variable) + r'(?![a-zA-Z0-9_])',
+    );
+    return body.replaceAll(pattern, value);
+  }
+
   static String _preprocessSimple(String expr) {
     expr = expr.replaceAll(' ', '');
     expr = expr.replaceAll('\u00B7', '*');
     expr = expr.replaceAll('\u00D7', '*');
     expr = expr.replaceAll('\u1D07', 'E');
     expr = expr.replaceAll('\u00B0', '*($pi/180)');
-    expr = expr.replaceAll('rad', '*((1/$pi)*180)');
 
     expr = expr.replaceAllMapped(RegExp(r'([\d\)])?\u03C0'), (match) {
       String? before = match.group(1);
@@ -776,7 +1154,15 @@ class MathSolverNew {
       },
     );
 
+    // Default mode is radians; explicit "rad" unit suffix is a no-op.
+    expr = expr.replaceAll(
+      RegExp(r'(?<=[\d\)])rad\b', caseSensitive: false),
+      '',
+    );
+
     expr = _processFactorials(expr);
+    expr = _preprocessSummationProduct(expr);
+    expr = _preprocessDerivativeIntegral(expr);
 
     return expr;
   }
@@ -836,11 +1222,13 @@ class MathSolverNew {
     });
   }
 
-  static int _factorial(int n) {
-    if (n <= 1) return 1;
-    int result = 1;
+  /// Exact factorial. Uses [BigInt] so values `n >= 21` (which overflow a
+  /// 64-bit `int`, e.g. `21! == 51090942171709440000`) are computed correctly.
+  static BigInt _factorial(int n) {
+    if (n <= 1) return BigInt.one;
+    BigInt result = BigInt.one;
     for (int i = 2; i <= n; i++) {
-      result *= i;
+      result *= BigInt.from(i);
     }
     return result;
   }
@@ -867,15 +1255,17 @@ class MathSolverNew {
 
   /// Automatic format - scientific only for very large/small numbers
   static String _formatAutomatic(double num) {
-    // Use scientific notation for very large or very small numbers
-    // Thresholds: >= 1e12 (to allow c0 as integer) or <= 1e-4 (to preserve precision for small values)
-    if (num.abs() >= 1e12 || (num.abs() <= 1e-4 && num.abs() > 0)) {
+    if (num == 0) return '0';
+
+    // Automatic uses scientific notation if >= 1e6 or <= 1e-6 (absolute value)
+    final abs = num.abs();
+    if (abs >= 1e6 || abs <= 1e-6) {
       return _formatScientific(num);
     }
 
     // Check if it's effectively an integer
     if ((num - num.roundToDouble()).abs() < 1e-10) {
-      return num.round().toString();
+      return num.round().toString(); // No commas
     }
 
     String formatted = num.toStringAsFixed(precision);
@@ -884,14 +1274,14 @@ class MathSolverNew {
       formatted = formatted.replaceAll(RegExp(r'0+$'), '');
       formatted = formatted.replaceAll(RegExp(r'\.$'), '');
     }
-    return formatted;
+    return formatted; // No commas
   }
 
   /// Plain format - with commas, never scientific notation
   static String _formatPlain(double num) {
     // Check if it's effectively an integer
     if ((num - num.roundToDouble()).abs() < 1e-10) {
-      return _addCommas(num.round().toString());
+      return addCommas(num.round().toString());
     }
 
     String formatted = num.toStringAsFixed(precision);
@@ -903,7 +1293,7 @@ class MathSolverNew {
 
     // Split into integer and decimal parts
     List<String> parts = formatted.split('.');
-    String integerPart = _addCommas(parts[0]);
+    String integerPart = addCommas(parts[0]);
 
     if (parts.length > 1 && parts[1].isNotEmpty) {
       return '$integerPart.${parts[1]}';
@@ -912,7 +1302,7 @@ class MathSolverNew {
   }
 
   /// Adds commas to an integer string (handles negative numbers)
-  static String _addCommas(String numStr) {
+  static String addCommas(String numStr) {
     bool isNegative = numStr.startsWith('-');
     if (isNegative) {
       numStr = numStr.substring(1);
@@ -935,6 +1325,8 @@ class MathSolverNew {
 
   /// Formats a number in scientific notation (e.g., 1.23E6)
   static String _formatScientific(double num) {
+    if (num == 0) return '0';
+
     // Use Dart's built-in exponential formatting
     String expStr = num.toStringAsExponential(precision);
 
@@ -952,10 +1344,8 @@ class MathSolverNew {
     if (exponent.startsWith('+')) {
       exponent = exponent.substring(1);
     }
-    // If exponent is 0, just return the mantissa
-    if (exponent == '0') {
-      return mantissa;
-    }
+    // If exponent is 0, still use scientific format as requested, but Dart's toStringAsExponential
+    // handles 0 exponent as 'e0' which we format to 'E0'.
 
     return '$mantissa\u1D07$exponent';
   }
@@ -980,59 +1370,59 @@ class _ExpressionParser {
 
   _ExpressionParser(this.expression);
 
-    dynamic parse() {
-      dynamic result = _parseAddSubtract();
-      if (_pos < expression.length) {
-        throw FormatException(
-          'Unexpected character at position $_pos: ${expression[_pos]}',
-        );
+  dynamic parse() {
+    dynamic result = _parseAddSubtract();
+    if (_pos < expression.length) {
+      throw FormatException(
+        'Unexpected character at position $_pos: ${expression[_pos]}',
+      );
+    }
+    return _finalizeResult(result);
+  }
+
+  dynamic _parseAddSubtract() {
+    dynamic left = _parseMultiplyDivide();
+
+    while (_pos < expression.length) {
+      String op = _currentChar();
+      if (op != '+' && op != '-') break;
+      _pos++;
+      dynamic right = _parseMultiplyDivide();
+
+      left = _unwrapPercent(left);
+
+      // Convert to Complex for operation
+      dynamic rightValue =
+          right is _PercentValue ? _percentOf(left, right.value) : right;
+      rightValue = _unwrapPercent(rightValue);
+
+      Complex l = _toComplex(left);
+      Complex r = _toComplex(rightValue);
+
+      if (op == '+') {
+        left = l + r;
+      } else {
+        left = l - r;
       }
-      return _finalizeResult(result);
     }
 
-    dynamic _parseAddSubtract() {
-      dynamic left = _parseMultiplyDivide();
+    return _simplifyResult(left);
+  }
 
-      while (_pos < expression.length) {
-        String op = _currentChar();
-        if (op != '+' && op != '-') break;
-        _pos++;
-        dynamic right = _parseMultiplyDivide();
+  dynamic _parseMultiplyDivide() {
+    dynamic left = _parseUnary();
 
-        left = _unwrapPercent(left);
+    while (_pos < expression.length) {
+      String op = _currentChar();
+      if (op != '*' && op != '/') break;
+      _pos++;
+      dynamic right = _parseUnary();
 
-        // Convert to Complex for operation
-        dynamic rightValue =
-            right is _PercentValue ? _percentOf(left, right.value) : right;
-        rightValue = _unwrapPercent(rightValue);
+      left = _unwrapPercent(left);
+      right = _unwrapPercent(right);
 
-        Complex l = _toComplex(left);
-        Complex r = _toComplex(rightValue);
-
-        if (op == '+') {
-          left = l + r;
-        } else {
-          left = l - r;
-        }
-      }
-
-      return _simplifyResult(left);
-    }
-
-    dynamic _parseMultiplyDivide() {
-      dynamic left = _parsePower();
-
-      while (_pos < expression.length) {
-        String op = _currentChar();
-        if (op != '*' && op != '/') break;
-        _pos++;
-        dynamic right = _parsePower();
-
-        left = _unwrapPercent(left);
-        right = _unwrapPercent(right);
-
-        if (op == '/' && left is! Complex && right is! Complex) {
-          final l = _toDouble(left);
+      if (op == '/' && left is! Complex && right is! Complex) {
+        final l = _toDouble(left);
         final r = _toDouble(right);
         if (r == 0) {
           if (l == 0) {
@@ -1058,14 +1448,43 @@ class _ExpressionParser {
     return _simplifyResult(left);
   }
 
-    dynamic _parsePower() {
-      dynamic base = _parseUnary();
+  /// Factorial of a value reached by the parser (e.g. `(19+2)!`). Defined for
+  /// non-negative integers only; anything else yields NaN. Uses BigInt for
+  /// precision, then converts to double for the numeric pipeline.
+  dynamic _applyFactorial(dynamic value) {
+    if (value is Complex && value.imag.abs() > 1e-12) return double.nan;
+    final double d = _toDouble(value);
+    if (d.isNaN || d.isInfinite || d < 0) return double.nan;
+    if ((d - d.roundToDouble()).abs() > 1e-9) return double.nan;
+    final int n = d.round();
+    BigInt result = BigInt.one;
+    for (int i = 2; i <= n; i++) {
+      result *= BigInt.from(i);
+    }
+    return result.toDouble();
+  }
 
-      while (_pos < expression.length && _currentChar() == '^') {
-        _pos++;
-        dynamic exponent = _parseUnary();
-        base = _unwrapPercent(base);
-        exponent = _unwrapPercent(exponent);
+  dynamic _parsePower() {
+    dynamic base = _parsePrimary();
+
+    // Postfix factorial. Plain `n!` is handled earlier by _processFactorials,
+    // but factorials of parenthesised/other primaries (e.g. `(19+2)!`) reach
+    // the parser and are applied here. Binds tighter than `^`.
+    while (_pos < expression.length && _currentChar() == '!') {
+      _pos++;
+      base = _applyFactorial(_unwrapPercent(base));
+    }
+
+    // Exponentiation is right-associative and binds tighter than unary minus
+    // on the base but looser on the exponent, so `-2^2 == -4` and
+    // `2^3^2 == 2^(3^2) == 512` and `2^-3 == 0.125`. The exponent is parsed
+    // via `_parseUnary` (which recurses back into `_parsePower`), giving both
+    // right-associativity and support for a signed exponent.
+    if (_pos < expression.length && _currentChar() == '^') {
+      _pos++;
+      dynamic exponent = _parseUnary();
+      base = _unwrapPercent(base);
+      exponent = _unwrapPercent(exponent);
 
       // Check if base is Euler's number e
       bool baseIsE = false;
@@ -1092,37 +1511,60 @@ class _ExpressionParser {
         // Real power
         double b = _toDouble(base);
         double exp = _toDouble(exponent);
-        base = pow(b, exp).toDouble();
+        base = _realPow(b, exp);
       }
     }
 
     return _simplifyResult(base);
   }
 
-    dynamic _parseUnary() {
-      if (_pos < expression.length) {
-        if (_currentChar() == '-') {
-          _pos++;
-          dynamic val = _parseUnary();
-          if (val is _PercentValue) {
-            return _PercentValue(_negate(val.value));
-          }
-          if (val is Complex) {
-            return Complex(-val.real, -val.imag);
-          }
-          return -_toDouble(val);
-        }
-        if (_currentChar() == '+') {
-          _pos++;
-          dynamic val = _parseUnary();
-          if (val is _PercentValue) {
-            return _PercentValue(val.value);
-          }
-          return val;
-        }
-      }
-      return _parsePrimary();
+  /// Real-valued power that also returns the real root of a negative base
+  /// when the exponent is a rational p/q with an odd denominator (e.g. an
+  /// nth root such as `(-8)^(1/3) == -2`). `dart:math`'s `pow` returns `NaN`
+  /// for a negative base with a fractional exponent, so those cases are
+  /// handled explicitly here. Genuinely complex cases (e.g. `(-1)^(1/2)`)
+  /// still return `NaN` and are handled by the complex path elsewhere.
+  double _realPow(double b, double exp) {
+    if (b >= 0 || exp == exp.roundToDouble()) {
+      return pow(b, exp).toDouble();
     }
+    // Look for a small odd denominator q such that exp ≈ p/q.
+    for (int q = 3; q <= 99; q += 2) {
+      final double pDouble = exp * q;
+      final double pRounded = pDouble.roundToDouble();
+      if ((pDouble - pRounded).abs() < 1e-9) {
+        final double magnitude = pow(b.abs(), exp).toDouble();
+        // Sign is (-1)^p: negative only when the numerator is odd.
+        return (pRounded.toInt().abs() % 2 == 1) ? -magnitude : magnitude;
+      }
+    }
+    return pow(b, exp).toDouble();
+  }
+
+  dynamic _parseUnary() {
+    if (_pos < expression.length) {
+      if (_currentChar() == '-') {
+        _pos++;
+        dynamic val = _parseUnary();
+        if (val is _PercentValue) {
+          return _PercentValue(_negate(val.value));
+        }
+        if (val is Complex) {
+          return Complex(-val.real, -val.imag);
+        }
+        return -_toDouble(val);
+      }
+      if (_currentChar() == '+') {
+        _pos++;
+        dynamic val = _parseUnary();
+        if (val is _PercentValue) {
+          return _PercentValue(val.value);
+        }
+        return val;
+      }
+    }
+    return _parsePower();
+  }
 
   dynamic _parsePrimary() {
     // Parentheses
@@ -1218,12 +1660,17 @@ class _ExpressionParser {
       'ln',
       'sqrt',
       'abs',
+      'arg',
+      're',
+      'im',
+      'sgn',
       'exp',
     ];
 
     for (String func in functions) {
       if (_pos + func.length <= expression.length &&
-          expression.substring(_pos, _pos + func.length) == func) {
+          expression.substring(_pos, _pos + func.length).toLowerCase() ==
+              func) {
         // Make sure it's followed by '(' to confirm it's a function
         if (_pos + func.length < expression.length &&
             expression[_pos + func.length] == '(') {
@@ -1277,6 +1724,16 @@ class _ExpressionParser {
         return sqrt(a);
       case 'abs':
         return a.abs();
+      case 'arg':
+        return atan2(0.0, a);
+      case 're':
+        return a;
+      case 'im':
+        return 0.0;
+      case 'sgn':
+        if (a > 0) return 1.0;
+        if (a < 0) return -1.0;
+        return 0.0;
       case 'exp':
         return exp(a);
       default:
@@ -1288,6 +1745,17 @@ class _ExpressionParser {
     switch (func) {
       case 'abs':
         return Complex(z.magnitude, 0);
+      case 'arg':
+        return Complex(atan2(z.imag, z.real), 0);
+      case 're':
+        return Complex(z.real, 0);
+      case 'im':
+        return Complex(z.imag, 0);
+      case 'sgn':
+        if (z.real == 0 && z.imag == 0) {
+          return Complex(0, 0);
+        }
+        return z / Complex(z.magnitude, 0);
       case 'exp':
         return _complexExp(z);
       case 'ln':
@@ -1440,23 +1908,23 @@ class _ExpressionParser {
   }
 
   /// Simplify result - convert Complex with zero imaginary to double
-    dynamic _simplifyResult(dynamic val) {
-      if (val is Complex && val.imag.abs() < 1e-10) {
-        return val.real;
-      }
-      return val;
+  dynamic _simplifyResult(dynamic val) {
+    if (val is Complex && val.imag.abs() < 1e-10) {
+      return val.real;
     }
+    return val;
+  }
 
-    dynamic _unwrapPercent(dynamic val) {
-      if (val is _PercentValue) {
-        return _percentToValue(val.value);
-      }
-      return val;
+  dynamic _unwrapPercent(dynamic val) {
+    if (val is _PercentValue) {
+      return _percentToValue(val.value);
     }
+    return val;
+  }
 
-    dynamic _finalizeResult(dynamic val) {
-      return _simplifyResult(_unwrapPercent(val));
-    }
+  dynamic _finalizeResult(dynamic val) {
+    return _simplifyResult(_unwrapPercent(val));
+  }
 
   dynamic _percentToValue(dynamic val) {
     if (val is Complex) {

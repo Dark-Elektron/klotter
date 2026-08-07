@@ -34,25 +34,11 @@ const List<WalkthroughStep> walkthroughSteps = [
     position: TooltipPosition.below,
   ),
   WalkthroughStep(
-    id: 'result_area',
-    title: 'Live Results',
+    id: 'plot_area',
+    title: 'Live Graph',
     description:
-        'See your calculation results update in real-time as you type.',
+        'Any expression using x, y or z is graphed here as you type. Drag to pan, pinch to zoom, and use the buttons on the right to switch between 2D and 3D.',
     position: TooltipPosition.below,
-  ),
-  WalkthroughStep(
-    id: 'ans_index',
-    title: 'Cell Index & ANS',
-    description:
-        'Each cell has an index number. Use "ans" followed by an index to reference previous results. For example, "ans0" uses the result from cell 0.',
-    position: TooltipPosition.below,
-  ),
-  WalkthroughStep(
-    id: 'basic_keypad',
-    title: 'Quick Access Keypad',
-    description:
-        'Tap the handle above to expand/collapse quick access numbers and operations.',
-    position: TooltipPosition.above,
   ),
   WalkthroughStep(
     id: 'command_button',
@@ -66,39 +52,23 @@ const List<WalkthroughStep> walkthroughSteps = [
   WalkthroughStep(
     id: 'number_keypad',
     title: 'Number Pad',
-    description: 'This is your main number pad with basic operations.',
+    description:
+        'Digits and operators stay here permanently — swiping the rows above never takes them away.',
     position: TooltipPosition.above,
-    mobileOnly: true,
-  ),
-  WalkthroughStep(
-    id: 'swipe_right_scientific',
-    title: 'Swipe for Scientific Functions',
-    description: 'Swipe RIGHT to access trigonometry, logarithms, and more!',
-    position: TooltipPosition.above,
-    requiresAction: true,
-    requiredAction: WalkthroughAction.swipeRight,
     mobileOnly: true,
   ),
   WalkthroughStep(
     id: 'scientific_keypad',
     title: 'Scientific Functions',
-    description: 'Access sin, cos, tan, logarithms, roots, and exponents here.',
+    description:
+        'The top two rows hold sin, cos, tan, logarithms, roots, exponents — and the x, y and z variables you plot with.',
     position: TooltipPosition.above,
-    mobileOnly: true,
-  ),
-  WalkthroughStep(
-    id: 'swipe_left_number',
-    title: 'Go Back',
-    description: 'Swipe LEFT to return to the number pad.',
-    position: TooltipPosition.above,
-    requiresAction: true,
-    requiredAction: WalkthroughAction.swipeLeft,
     mobileOnly: true,
   ),
   WalkthroughStep(
     id: 'swipe_left_extras',
     title: 'More Functions',
-    description: 'Swipe LEFT again for additional functions!',
+    description: 'Swipe the top rows LEFT for additional functions.',
     position: TooltipPosition.above,
     requiresAction: true,
     requiredAction: WalkthroughAction.swipeLeft,
@@ -117,14 +87,14 @@ const List<WalkthroughStep> walkthroughSteps = [
     id: 'settings_button',
     title: 'Settings',
     description:
-        'Tap the gear icon \u2699 anytime to access settings. You can always restart this tutorial from there!',
+        'Tap the gear icon \u2630 anytime to access settings. You can always restart this tutorial from there!',
     position: TooltipPosition.above,
     mobileOnly: true,
   ),
   WalkthroughStep(
     id: 'swipe_right_back',
     title: 'Navigate Back',
-    description: 'Swipe RIGHT to return to previous keypads anytime.',
+    description: 'Swipe the top rows RIGHT to return to the scientific keys.',
     position: TooltipPosition.above,
     requiresAction: true,
     requiredAction: WalkthroughAction.swipeRight,
@@ -162,15 +132,14 @@ const List<WalkthroughStep> walkthroughSteps = [
     id: 'tablet_settings_button',
     title: 'Settings',
     description:
-        'Tap the gear icon \u2699 anytime to access settings. You can always restart this tutorial from there!',
+        'Tap the gear icon \u2630 anytime to access settings. You can always restart this tutorial from there!',
     position: TooltipPosition.above,
     tabletOnly: true,
   ),
   WalkthroughStep(
     id: 'tablet_swipe_right_back',
     title: 'Navigate Back',
-    description:
-        'Swipe RIGHT to return to Scientific and Number pads anytime.',
+    description: 'Swipe RIGHT to return to Scientific and Number pads anytime.',
     position: TooltipPosition.above,
     requiresAction: true,
     requiredAction: WalkthroughAction.swipeRight,
