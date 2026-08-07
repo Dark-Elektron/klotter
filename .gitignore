@@ -50,4 +50,4 @@ app.*.map.json
 .vscode/
 test_out*
 PLOTT*
-analysis_out*
+analysis_outp*
