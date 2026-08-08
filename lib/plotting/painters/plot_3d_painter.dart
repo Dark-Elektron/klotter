@@ -261,13 +261,27 @@ class Plot3DPainter extends CustomPainter {
   // double get rangeZ => (rangeX + rangeY) / 2;
 
   // double get rangeZ => (rangeX + rangeY) / 2;
-  double get scaleX => 200.0 / rangeX;
-  double get scaleY => 200.0 / rangeY;
-  double get scaleZ => 200.0 / rangeZ;
+  /// Half-extent of the world box, in logical pixels, fitted to the viewport
+  /// at the start of each paint.
+  ///
+  /// This was a fixed 200 whatever the canvas size. On a phone-sized panel the
+  /// box then projected wider than the canvas, so the surface filled the frame
+  /// edge to edge and there was no visible scene for the floor plane to sit
+  /// in — which reads as the plane not overlaying in 3D, though the depth
+  /// order was fine.
+  double _viewExtent = 200.0;
+
+  double get scaleX => _viewExtent / rangeX;
+  double get scaleY => _viewExtent / rangeY;
+  double get scaleZ => _viewExtent / rangeZ;
   PlotThemeData get _theme => plotTheme;
 
   @override
   void paint(Canvas canvas, Size size) {
+    // A rotated box shows its diagonal, and perspective enlarges the near
+    // corner, so the box is fitted to well under half the viewport.
+    _viewExtent = min(size.width, size.height) * 0.30;
+
     const focalLength = 500.0;
     final bool showSurface = surfaceMode != SurfaceMode.none;
     canvas.save();
@@ -287,9 +301,9 @@ class Plot3DPainter extends CustomPainter {
 
     if (!floorDrawnBySurface) {
       _drawFloorGrid(canvas, size, focalLength);
+      _drawAxes(canvas, size, focalLength);
+      _drawFloorBoundary(canvas, size, focalLength);
     }
-    _drawAxes(canvas, size, focalLength);
-    _drawFloorBoundary(canvas, size, focalLength);
 
     // Handle different visualization modes
     if (fieldType == FieldType.vector && vectorParser != null) {
@@ -596,6 +610,7 @@ class Plot3DPainter extends CustomPainter {
     // occlude each other instead of the surface always winning.
     final _DepthScene scene = _DepthScene();
     _addFloorGridTo(scene, size, focalLength);
+    _addAxisChromeTo(scene, size, focalLength);
 
     int shade(double v) =>
         plotColormap(
@@ -1366,6 +1381,102 @@ class Plot3DPainter extends CustomPainter {
     return magnitude;
   }
 
+  /// Add a world-space line to [scene], cut into depth-varying pieces.
+  ///
+  /// A line crossing the scene has very different depths at its two ends, so a
+  /// single depth cannot say whether a surface passes in front of part of it.
+  void _addWorldLineTo(
+    _DepthScene scene,
+    Size size,
+    double focalLength,
+    Point3D a,
+    Point3D b,
+    Paint paint, {
+    int pieces = 16,
+  }) {
+    final Rect bounds = Rect.fromLTWH(0, 0, size.width, size.height);
+    for (int k = 0; k < pieces; k++) {
+      final double t0 = k / pieces;
+      final double t1 = (k + 1) / pieces;
+      Point3D at(double t) => Point3D(
+        a.x + (b.x - a.x) * t,
+        a.y + (b.y - a.y) * t,
+        a.z + (b.z - a.z) * t,
+      ).rotateZ(rotationZ).rotateX(rotationX);
+
+      final Point3D p0 = at(t0);
+      final Point3D p1 = at(t1);
+      final clipped = _clipLineToRect(
+        p0.project(focalLength, size, panX, panY),
+        p1.project(focalLength, size, panX, panY),
+        bounds,
+      );
+      if (clipped == null) continue;
+      scene.addLine(clipped.$1, clipped.$2, paint, (p0.y + p1.y) / 2);
+    }
+  }
+
+  /// Add the axis lines and the floor outline to [scene].
+  ///
+  /// These were drawn before the surface and so were always behind it: the
+  /// near half of an axis, and the near edge of the floor, could never appear
+  /// in front of a surface they pass through. Labels and arrowheads are not
+  /// included — they are annotations and belong on top.
+  void _addAxisChromeTo(_DepthScene scene, Size size, double focalLength) {
+    final theme = plotTheme;
+
+    final List<(Color, Point3D, double, double)> axes =
+        <(Color, Point3D, double, double)>[
+          (theme.axisX, const Point3D(1, 0, 0), rangeX, scaleX),
+          (theme.axisY, const Point3D(0, 1, 0), rangeY, scaleY),
+          (theme.axisZ, const Point3D(0, 0, 1), rangeZ, scaleZ),
+        ];
+
+    for (final (color, dir, range, scale) in axes) {
+      final Paint axisPaint =
+          Paint()
+            ..color = color
+            ..strokeWidth = 2;
+      _addWorldLineTo(
+        scene,
+        size,
+        focalLength,
+        Point3D(
+          -dir.x * range * 2 * scale,
+          -dir.y * range * 2 * scale,
+          -dir.z * range * 2 * scale,
+        ),
+        Point3D(
+          dir.x * range * 2 * scale,
+          dir.y * range * 2 * scale,
+          dir.z * range * 2 * scale,
+        ),
+        axisPaint,
+      );
+    }
+
+    final Paint boundaryPaint =
+        Paint()
+          ..color = theme.boundary
+          ..strokeWidth = 2;
+    final corners = <Point3D>[
+      Point3D(-rangeX * scaleX, -rangeY * scaleY, 0),
+      Point3D(rangeX * scaleX, -rangeY * scaleY, 0),
+      Point3D(rangeX * scaleX, rangeY * scaleY, 0),
+      Point3D(-rangeX * scaleX, rangeY * scaleY, 0),
+    ];
+    for (int i = 0; i < 4; i++) {
+      _addWorldLineTo(
+        scene,
+        size,
+        focalLength,
+        corners[i],
+        corners[(i + 1) % 4],
+        boundaryPaint,
+      );
+    }
+  }
+
   /// Add the floor grid to [scene] as depth-sorted segments.
   ///
   /// Each grid line is cut into pieces because a single line spans the whole
@@ -1373,49 +1484,46 @@ class Plot3DPainter extends CustomPainter {
   /// per line cannot say whether the surface crosses in front of it.
   void _addFloorGridTo(_DepthScene scene, Size size, double focalLength) {
     final theme = plotTheme;
-    final Paint gridPaint =
+
+    // The plane has to read as a plane even where it passes in front of a
+    // bright surface. At the 8-10% alpha used for a grid on empty background,
+    // a hairline over a saturated surface is invisible — the depth order was
+    // right and nothing appeared to change. Major lines carry the structure,
+    // minor ones the texture.
+    final Paint majorPaint =
         Paint()
-          ..color = theme.subGrid
-          ..strokeWidth = 0.8;
+          ..color = theme.grid.withValues(alpha: 0.55)
+          ..strokeWidth = 1.4;
+    final Paint minorPaint =
+        Paint()
+          ..color = theme.subGrid.withValues(alpha: 0.28)
+          ..strokeWidth = 0.9;
 
     final double gridSpacingX = _calculateGridSpacing(rangeX);
     final double gridSpacingY = _calculateGridSpacing(rangeY);
 
-    // Enough pieces that the depth varies smoothly along a line, few enough
-    // that the sort stays cheap.
-    const int pieces = 16;
-    final Rect bounds = Rect.fromLTWH(0, 0, size.width, size.height);
+    bool isMajor(double v, double spacing) =>
+        (v / spacing - (v / spacing).roundToDouble()).abs() < 1e-6;
 
-    void addRun(double ax, double ay, double bx, double by) {
-      for (int k = 0; k < pieces; k++) {
-        final double t0 = k / pieces;
-        final double t1 = (k + 1) / pieces;
-        final Point3D p0 = Point3D(
-          (ax + (bx - ax) * t0) * scaleX,
-          (ay + (by - ay) * t0) * scaleY,
-          0,
-        ).rotateZ(rotationZ).rotateX(rotationX);
-        final Point3D p1 = Point3D(
-          (ax + (bx - ax) * t1) * scaleX,
-          (ay + (by - ay) * t1) * scaleY,
-          0,
-        ).rotateZ(rotationZ).rotateX(rotationX);
-
-        final clipped = _clipLineToRect(
-          p0.project(focalLength, size, panX, panY),
-          p1.project(focalLength, size, panX, panY),
-          bounds,
-        );
-        if (clipped == null) continue;
-        scene.addLine(clipped.$1, clipped.$2, gridPaint, (p0.y + p1.y) / 2);
-      }
+    for (double i = -rangeX; i <= rangeX + 1e-9; i += gridSpacingX / 5) {
+      _addWorldLineTo(
+        scene,
+        size,
+        focalLength,
+        Point3D(i * scaleX, -rangeY * scaleY, 0),
+        Point3D(i * scaleX, rangeY * scaleY, 0),
+        isMajor(i, gridSpacingX) ? majorPaint : minorPaint,
+      );
     }
-
-    for (double i = -rangeX; i <= rangeX; i += gridSpacingX / 5) {
-      addRun(i, -rangeY, i, rangeY);
-    }
-    for (double i = -rangeY; i <= rangeY; i += gridSpacingY / 5) {
-      addRun(-rangeX, i, rangeX, i);
+    for (double i = -rangeY; i <= rangeY + 1e-9; i += gridSpacingY / 5) {
+      _addWorldLineTo(
+        scene,
+        size,
+        focalLength,
+        Point3D(-rangeX * scaleX, i * scaleY, 0),
+        Point3D(rangeX * scaleX, i * scaleY, 0),
+        isMajor(i, gridSpacingY) ? majorPaint : minorPaint,
+      );
     }
   }
 
@@ -1526,7 +1634,12 @@ class Plot3DPainter extends CustomPainter {
     if (clipped != null) canvas.drawLine(clipped.$1, clipped.$2, paint);
   }
 
-  void _drawAxes(Canvas canvas, Size size, double focalLength) {
+  void _drawAxes(
+    Canvas canvas,
+    Size size,
+    double focalLength, {
+    bool skipLines = false,
+  }) {
     final theme = plotTheme;
     final gridSpacingX = _calculateGridSpacing(rangeX);
     final gridSpacingY = _calculateGridSpacing(rangeY);
@@ -1569,6 +1682,9 @@ class Plot3DPainter extends CustomPainter {
         dir.z * range * 2 * scale,
       ).rotateZ(rotationZ).rotateX(rotationX);
 
+      // The scene draws the axis line when it is interleaving with a surface,
+      // so it can be occluded where the surface is nearer.
+      if (!skipLines) {
         _drawClippedLine(
           canvas,
           size,
@@ -1585,6 +1701,7 @@ class Plot3DPainter extends CustomPainter {
           posPoint,
           axisPaint,
         );
+      }
 
       final arrowPos = Point3D(
         dir.x * range * 0.9 * scale,
@@ -1939,6 +2056,7 @@ class Plot3DPainter extends CustomPainter {
     // each other rather than the surface always winning.
     final _DepthScene scene = _DepthScene();
     _addFloorGridTo(scene, size, focalLength);
+    _addAxisChromeTo(scene, size, focalLength);
 
     int shade(double v) => plotColormap(
       surfaceSpan > 0 ? ((v - surfaceMin) / surfaceSpan).clamp(0.0, 1.0) : 0.5,
