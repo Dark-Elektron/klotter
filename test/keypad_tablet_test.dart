@@ -28,32 +28,32 @@ void main() {
     return ChangeNotifierProvider<SettingsProvider>.value(
       value: settings,
       child: MaterialApp(
-      home: Scaffold(
-        body: Builder(
-          builder:
-              (context) => CalculatorKeypad(
-                screenWidth: width,
-                isLandscape: landscape,
-                colors: AppColors.of(context),
-                activeIndex: 0,
-                mathEditorControllers: {0: controller},
-                textDisplayControllers: const {},
-                settingsProvider: settings,
-                onUpdateMathEditor: () {},
-                onAddDisplay: () {},
-                onRemoveDisplay: (_) {},
-                onClearAllDisplays: () {},
-                onSetState: () {},
-                walkthroughService: WalkthroughService(),
-                scientificKeypadKey: GlobalKey(),
-                numberKeypadKey: GlobalKey(),
-                extrasKeypadKey: GlobalKey(),
-                commandButtonKey: GlobalKey(),
-                mainKeypadAreaKey: GlobalKey(),
-                settingsButtonKey: GlobalKey(),
-              ),
+        home: Scaffold(
+          body: Builder(
+            builder:
+                (context) => CalculatorKeypad(
+                  screenWidth: width,
+                  isLandscape: landscape,
+                  colors: AppColors.of(context),
+                  activeIndex: 0,
+                  mathEditorControllers: {0: controller},
+                  textDisplayControllers: const {},
+                  settingsProvider: settings,
+                  onUpdateMathEditor: () {},
+                  onAddDisplay: () {},
+                  onRemoveDisplay: (_) {},
+                  onClearAllDisplays: () {},
+                  onSetState: () {},
+                  walkthroughService: WalkthroughService(),
+                  scientificKeypadKey: GlobalKey(),
+                  numberKeypadKey: GlobalKey(),
+                  extrasKeypadKey: GlobalKey(),
+                  commandButtonKey: GlobalKey(),
+                  mainKeypadAreaKey: GlobalKey(),
+                  settingsButtonKey: GlobalKey(),
+                ),
+          ),
         ),
-      ),
       ),
     );
   }
@@ -108,7 +108,9 @@ void main() {
       await pumpTablet(tester, landscape: false);
       Size sizeOf(String label) =>
           tester.getSize(find.widgetWithText(MyButton, label).first);
-      expect(sizeOf('7'), equals(sizeOf('x̂')));
+      // Not a unit vector: those carry the coordinate-system menu now, so
+      // they are PopupMenuCalcButtons rather than plain MyButtons.
+      expect(sizeOf('7'), equals(sizeOf('°')));
       expect(sizeOf('7'), equals(sizeOf('=')));
     });
   });
@@ -141,8 +143,10 @@ void main() {
       await pumpTablet(tester, landscape: true);
       Size sizeOf(String label) =>
           tester.getSize(find.widgetWithText(MyButton, label).first);
-      expect(sizeOf('⌧').width, closeTo(sizeOf('x̂').width, 0.5));
-      expect(sizeOf('7').width, closeTo(sizeOf('x̂').width, 0.5));
+      // ° rather than a unit vector: those carry the coordinate-system menu
+      // now, so they are PopupMenuCalcButtons rather than plain MyButtons.
+      expect(sizeOf('⌧').width, closeTo(sizeOf('°').width, 0.5));
+      expect(sizeOf('7').width, closeTo(sizeOf('°').width, 0.5));
     });
 
     testWidgets('the dropped extras key is still reachable elsewhere', (
@@ -168,11 +172,7 @@ void main() {
     });
 
     testWidgets('left-handed carries them to the far right', (tester) async {
-      await pumpTablet(
-        tester,
-        landscape: true,
-        hand: Handedness.leftHanded,
-      );
+      await pumpTablet(tester, landscape: true, hand: Handedness.leftHanded);
       final double settingsX = tester.getTopLeft(find.text('☰').first).dx;
       final double sciX = tester.getTopLeft(find.text('x̂').first).dx;
       expect(settingsX, greaterThan(sciX));
@@ -190,9 +190,7 @@ void main() {
       return out;
     }
 
-    testWidgets('all 59 keys are present in both orientations', (
-      tester,
-    ) async {
+    testWidgets('all 59 keys are present in both orientations', (tester) async {
       // extras 19 + scientific 20 + numbers 20.
       for (final landscape in <bool>[true, false]) {
         await pumpTablet(tester, landscape: landscape);
@@ -203,8 +201,7 @@ void main() {
         ]) {
           for (final e in finder.evaluate()) {
             final w = e.widget;
-            final bool blank =
-                w is MyButton && w.buttonText.isEmpty;
+            final bool blank = w is MyButton && w.buttonText.isEmpty;
             if (!blank) keys++;
           }
         }
@@ -228,15 +225,34 @@ void main() {
     ///
     /// Measuring the button rather than the glyph matters: text is centred, so
     /// a narrow glyph starts further right than a wide one in the same cell.
-    Offset at(WidgetTester tester, String label) {
-      final text = find.text(label).last;
-      for (final type in <Finder>[
-        find.ancestor(of: text, matching: find.byType(MyButton)),
-        find.ancestor(of: text, matching: find.byType(PopupMenuCalcButton)),
-      ]) {
-        if (type.evaluate().isNotEmpty) return tester.getTopLeft(type.last);
+    /// Where a key sits, choosing the one nearest [near] when the label
+    /// appears more than once.
+    ///
+    /// sin, asin, x, √, π and x² are on the extras block as well as the
+    /// scientific one, and on a tablet both are on screen at once. Taking the
+    /// last match just picked whichever the current ordering happened to put
+    /// second, so this test passed or failed on the order rather than on the
+    /// grouping it means to check.
+    Offset at(WidgetTester tester, String label, {Offset? near}) {
+      Offset originOf(Element e) {
+        final Finder text = find.byElementPredicate((c) => c == e);
+        for (final Finder type in <Finder>[
+          find.ancestor(of: text, matching: find.byType(MyButton)),
+          find.ancestor(of: text, matching: find.byType(PopupMenuCalcButton)),
+        ]) {
+          if (type.evaluate().isNotEmpty) return tester.getTopLeft(type.first);
+        }
+        return tester.getTopLeft(text);
       }
-      return tester.getTopLeft(text);
+
+      final List<Element> matches = find.text(label).evaluate().toList();
+      expect(matches, isNotEmpty, reason: 'no key labelled "$label"');
+      final List<Offset> origins = matches.map(originOf).toList();
+      if (near == null || origins.length == 1) return origins.first;
+      origins.sort(
+        (a, b) => (a - near).distance.compareTo((b - near).distance),
+      );
+      return origins.first;
     }
 
     for (final landscape in <bool>[true, false]) {
@@ -249,12 +265,13 @@ void main() {
         // they used to scatter across the reflow.
         await pumpTablet(tester, landscape: landscape);
 
-        final sin = at(tester, 'sin');
-        final cos = at(tester, 'cos');
+        // tan and atan appear once each; the rest are anchored to them.
         final tan = at(tester, 'tan');
-        final asin = at(tester, 'asin');
-        final acos = at(tester, 'acos');
         final atan = at(tester, 'atan');
+        final cos = at(tester, 'cos', near: tan);
+        final sin = at(tester, 'sin', near: tan);
+        final acos = at(tester, 'acos', near: atan);
+        final asin = at(tester, 'asin', near: atan);
 
         // Each triple shares a row.
         expect(cos.dy, closeTo(sin.dy, 0.5));
@@ -413,7 +430,8 @@ void main() {
         // Anchors unique to one block: settings is extras-only, x̂ is
         // scientific-only, 7 is numbers-only. ('sin' appears in both extras
         // and scientific, so it cannot anchor anything.)
-        double xOf(String label) => tester.getTopLeft(find.text(label).first).dx;
+        double xOf(String label) =>
+            tester.getTopLeft(find.text(label).first).dx;
         expect(xOf('x̂'), greaterThan(xOf('☰')));
         expect(xOf('7'), greaterThan(xOf('x̂')));
       });
@@ -426,7 +444,8 @@ void main() {
           landscape: landscape,
           hand: Handedness.leftHanded,
         );
-        double xOf(String label) => tester.getTopLeft(find.text(label).first).dx;
+        double xOf(String label) =>
+            tester.getTopLeft(find.text(label).first).dx;
         expect(xOf('7'), lessThan(xOf('x̂')));
         expect(xOf('x̂'), lessThan(xOf('☰')));
       });

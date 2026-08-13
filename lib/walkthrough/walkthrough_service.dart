@@ -11,7 +11,7 @@ class WalkthroughService extends ChangeNotifier {
   bool _isTabletMode = false;
 
   VoidCallback? onResetKeypad;
-  void Function(int page)? onNavigateToKeypadPage;  // NEW
+  void Function(int page)? onNavigateToKeypadPage; // NEW
 
   bool get isActive => _isActive;
   int get currentStep => _currentStep;
@@ -30,7 +30,7 @@ class WalkthroughService extends ChangeNotifier {
   // Expected keypad page when ENTERING each swipe step (for tablet, pagesPerView=2)
   static const Map<String, int> _tabletSwipeStepPages = {
     'tablet_swipe_left_extras': 0, // On page 0, will swipe to page 1
-    'tablet_swipe_right_back': 1,  // On page 1, will swipe to page 0
+    'tablet_swipe_right_back': 1, // On page 1, will swipe to page 0
   };
 
   List<WalkthroughStep> get steps {
@@ -124,10 +124,10 @@ class WalkthroughService extends ChangeNotifier {
       if (step.requiresAction &&
           (step.requiredAction == WalkthroughAction.swipeLeft ||
               step.requiredAction == WalkthroughAction.swipeRight)) {
-        
-        final expectedPage = _isTabletMode
-            ? _tabletSwipeStepPages[step.id]
-            : _mobileSwipeStepPages[step.id];
+        final expectedPage =
+            _isTabletMode
+                ? _tabletSwipeStepPages[step.id]
+                : _mobileSwipeStepPages[step.id];
 
         if (expectedPage != null && onNavigateToKeypadPage != null) {
           // debugPrint('Navigating keypad to page $expectedPage for step ${step.id}');

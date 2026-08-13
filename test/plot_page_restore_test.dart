@@ -91,11 +91,12 @@ void main() {
 
     // A PageView builds more than the current page, so search rather than
     // taking the first.
-    final views = find
-        .byType(InlinePlotPanel)
-        .evaluate()
-        .map((e) => (e.widget as InlinePlotPanel).initialView)
-        .toList();
+    final views =
+        find
+            .byType(InlinePlotPanel)
+            .evaluate()
+            .map((e) => (e.widget as InlinePlotPanel).initialView)
+            .toList();
     expect(
       views.any((v) => v.show3D && (v.rotationX - 1.2).abs() < 1e-9),
       isTrue,
@@ -117,11 +118,12 @@ void main() {
     addTearDown(settings.dispose);
     await pump(tester, settings);
 
-    final views = find
-        .byType(InlinePlotPanel)
-        .evaluate()
-        .map((e) => (e.widget as InlinePlotPanel).initialView)
-        .toList();
+    final views =
+        find
+            .byType(InlinePlotPanel)
+            .evaluate()
+            .map((e) => (e.widget as InlinePlotPanel).initialView)
+            .toList();
     expect(
       views.any((v) => v.xMin == 0 && (v.xMax - 6.28).abs() < 1e-9),
       isTrue,

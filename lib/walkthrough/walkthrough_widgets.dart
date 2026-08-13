@@ -122,7 +122,9 @@ class SwipeGesturePainter extends CustomPainter {
     // Draw finger icon
     final iconPaint =
         Paint()
-          ..color = Colors.white.withValues(alpha: handOpacity.clamp(0.0, 1.0) * 0.9)
+          ..color = Colors.white.withValues(
+            alpha: handOpacity.clamp(0.0, 1.0) * 0.9,
+          )
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.5
           ..strokeCap = StrokeCap.round;

@@ -1,9 +1,13 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import '../models/enums.dart';
 import '../models/plot_view_state.dart';
 import 'package:provider/provider.dart';
 import '../../settings/settings_provider.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/coordinate_system.dart';
 import '../utils/plot_theme.dart';
 import '../parsers/plot_expression.dart';
 import '../parsers/vector_field_parser.dart';
@@ -25,6 +29,11 @@ class InlinePlotPanel extends StatefulWidget {
   /// reopened cell shows the window the user framed, not the origin.
   final PlotViewState initialView;
 
+  /// Which symbols the expression is written in. The plot samples Cartesian
+  /// space and converts each point into these before evaluating, so a
+  /// spherical cell needs no separate renderer.
+  final CoordinateSystem coordinateSystem;
+
   /// Fired when the view changes in a discrete way — switching 2D/3D, typing a
   /// range, resetting. Not fired per drag frame: the owner reads the live view
   /// when it saves, and a rotation gesture would otherwise notify continuously.
@@ -38,6 +47,7 @@ class InlinePlotPanel extends StatefulWidget {
     required this.expression,
     required this.nodes,
     this.initialView = PlotViewState.initial,
+    this.coordinateSystem = CoordinateSystem.cartesian,
     this.onViewChanged,
   });
 
@@ -50,6 +60,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   List<PlotExpression> _functions = const <PlotExpression>[];
   String? _errorMessage;
   bool _is3DFunction = false;
+
   /// Whether the user has switched this plot to 3D.
   ///
   /// Re-parsing never clears this. It used to: any expression without a free
@@ -145,7 +156,10 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   @override
   void didUpdateWidget(covariant InlinePlotPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.expression != widget.expression) {
+    // A change of system re-reads the same text as different symbols, so it
+    // has to recompile even when the expression itself has not moved.
+    if (oldWidget.expression != widget.expression ||
+        oldWidget.coordinateSystem != widget.coordinateSystem) {
       _parseFunction(widget.expression);
     }
   }
@@ -192,7 +206,10 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     // Every line of the cell is its own curve on the shared plot, so one bad
     // line does not blank the others — the plot draws what it can and names
     // the first problem.
-    final compiled = PlotExpression.compileAll(widget.nodes);
+    final compiled = PlotExpression.compileAll(
+      widget.nodes,
+      system: widget.coordinateSystem,
+    );
     final valid = compiled.where((e) => e.isValid).toList();
     if (valid.isEmpty) {
       setState(() {
@@ -216,7 +233,13 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
       // A level set in z is a surface even though it has no height to sample,
       // so 3D has to be offered for it explicitly rather than inferred from
       // "depends on y".
-      _is3DFunction = valid.first.usesY || valid.first.isImplicitSurface;
+      //
+      // Any line making the cell 3D is enough. Reading only the first meant
+      // that adding a surface under a plain f(x) left the whole cell in 1D,
+      // and the surface was drawn as a flat standing curve.
+      _is3DFunction = valid.any(
+        (PlotExpression e) => e.usesY || e.isImplicitSurface,
+      );
       if (valid.first.isLevelSet) {
         // Nothing to shade: F only locates the curve or surface, so a heatmap
         // of it would colour the plot by distance from the answer.
@@ -278,29 +301,61 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   /// enough to hit, small enough not to cover the plot they control.
   static const double _overlayButtonSize = 40;
   static const double _overlayIconSize = 18;
-  bool _switchingDimension = false;
-
   void _setShow3D(bool value) {
     if (value == _show3D) return;
-    setState(() {
-      _show3D = value;
-      _switchingDimension = true;
-    });
+    setState(() => _show3D = value);
     _publishView();
-    Future.delayed(_dimensionFade, () {
-      if (mounted) setState(() => _switchingDimension = false);
-    });
   }
 
+  /// Switch dimension without hunting for the toolbar button.
+  @visibleForTesting
+  void setShow3DForTest(bool value) => _setShow3D(value);
+
+  /// Wraps the plot layers only, so exports exclude the overlay controls.
+  final GlobalKey _captureKey = GlobalKey();
+
+  /// Rasterise the plot exactly as it is on screen.
+  ///
+  /// [pixelRatio] is a multiple of the logical size: 3 gives a file that still
+  /// looks clean pasted into a document, where the on-screen size would look
+  /// soft. Returns null when the panel is not laid out, which is the case for
+  /// a cell that has never been shown.
+  Future<ui.Image?> capturePlot({double pixelRatio = 3.0}) async {
+    final BuildContext? ctx = _captureKey.currentContext;
+    if (ctx == null) return null;
+    final RenderObject? object = ctx.findRenderObject();
+    if (object is! RenderRepaintBoundary) return null;
+    if (object.debugNeedsPaint) {
+      // Capturing a boundary that has not painted yet yields the previous
+      // frame, or nothing at all.
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    return object.toImage(pixelRatio: pixelRatio);
+  }
+
+  /// The hidden plot stays in the tree, and stays laid out.
+  ///
+  /// Deliberately not `Visibility`/`Offstage`. An offstage subtree is kept
+  /// alive but never laid out, and both plot screens have a `LayoutBuilder` at
+  /// their root. A `LayoutBuilder` that is retained but not laid out is the
+  /// exact situation `RenderObjectWithLayoutCallbackMixin
+  /// .scheduleLayoutCallback` asserts against — "'debugNeedsLayout': is not
+  /// true" — which crashed the app to a red screen, usually after minimising
+  /// and restoring.
+  ///
+  /// Nothing is lost by dropping it. The reason the subtree was hidden was to
+  /// stop an expensive 3D surface repainting behind a 2D plot, and opacity
+  /// already does that: `RenderAnimatedOpacity` skips painting its child
+  /// entirely at alpha 0. Only layout still runs, which for a `CustomPaint` is
+  /// a size calculation and no sampling at all.
   Widget _plotLayer({required bool visible, required Widget child}) {
-    return Visibility(
-      visible: visible || _switchingDimension,
-      maintainState: true,
+    return IgnorePointer(
+      ignoring: !visible,
       child: AnimatedOpacity(
         opacity: visible ? 1.0 : 0.0,
         duration: _dimensionFade,
         curve: Curves.easeInOut,
-        child: IgnorePointer(ignoring: !visible, child: child),
+        child: child,
       ),
     );
   }
@@ -419,161 +474,173 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
         final bool showOverlays = constraints.maxHeight > 140;
         return Stack(
           children: [
-        _plotLayer(
-          visible: _show3D,
-          child: Plot3DScreen(
-                key: _plot3DKey,
-                plotTheme: _plotTheme(context),
-                function: _currentFunction,
-                is3DFunction: _is3DFunction,
-                toolMode: _tool3DMode,
-                plotMode: _plotMode,
-                fieldType: _fieldType,
-                vectorParser: _vectorParser,
-                showContour: _showContour,
-                  surfaceMode: _surfaceMode,
-                  zoomAxis: _zoomAxis,
-                  colors: _colorsNoListen(context),
-                ),
-              ),
-        _plotLayer(
-          visible: !_show3D,
-          child: Plot2DScreen(
-                  key: _plot2DKey,
-                  plotTheme: _plotTheme(context),
-                  functions: _functions,
-                  function: _currentFunction,
-                  is3DFunction: _is3DFunction,
-                  plotMode: _plotMode,
-                  fieldType: _fieldType,
-                  vectorParser: _vectorParser,
-                  showContour: _showContour,
-                  surfaceMode: _surfaceMode,
-                  colors: _colorsNoListen(context),
-                ),
-              ),
-
-        if (showOverlays)
-          Positioned(
-            right: 0,
-            bottom: 8,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                  if (_canShowSurface())
-                    _buildSurfaceMenuButton(),
-                  if (_fieldType == FieldType.scalar ||
-                      (_fieldType == FieldType.vector &&
-                          _surfaceMode != SurfaceMode.none))
-                    _buildModeButton(
-                      icon: Icons.show_chart,
-                      isSelected: _showContour,
-                    selectedColor: Colors.purpleAccent,
-                    onTap: _toggleContour,
-                    tooltip: 'Contour',
-                  ),
-                _buildModeButton(
-                  icon: Icons.grain,
-                  isSelected: _plotMode == PlotMode.field,
-                  selectedColor: Colors.orangeAccent,
-                  onTap: _togglePlotMode,
-                  tooltip: 'Field',
-                ),
-                _buildModeButton(
-                  label: '3D',
-                  isSelected: _show3D,
-                  selectedColor: Colors.tealAccent,
-                  onTap: () => _setShow3D(true),
-                ),
-                _buildModeButton(
-                  label: '2D',
-                  isSelected: !_show3D,
-                  selectedColor: Colors.tealAccent,
-                  onTap: () => _setShow3D(false),
-                ),
-              ],
-            ),
-          ),
-
-        // Navigation floats over the plot, centred at the bottom: view
-        // controls (reset, pan, zoom) are separated from the mode switches on
-        // the right, which change *what* is drawn rather than how you move
-        // around it.
-        if (showOverlays)
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 8,
-            child: Center(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
+            // Only the plot layers are inside the capture boundary. The
+            // overlay controls are siblings, so an exported file is the plot
+            // and not a screenshot with buttons sitting on it.
+            RepaintBoundary(
+              key: _captureKey,
+              child: Stack(
                 children: [
-                  _buildModeButton(
-                    icon: Icons.home,
-                    isSelected: false,
-                    selectedColor: Colors.tealAccent,
-                    onTap: _resetView,
-                    tooltip: 'Reset view',
+                  _plotLayer(
+                    visible: _show3D,
+                    child: Plot3DScreen(
+                      key: _plot3DKey,
+                      plotTheme: _plotTheme(context),
+                      functions: _functions,
+                      function: _currentFunction,
+                      is3DFunction: _is3DFunction,
+                      toolMode: _tool3DMode,
+                      plotMode: _plotMode,
+                      fieldType: _fieldType,
+                      vectorParser: _vectorParser,
+                      showContour: _showContour,
+                      surfaceMode: _surfaceMode,
+                      zoomAxis: _zoomAxis,
+                      colors: _colorsNoListen(context),
+                    ),
                   ),
-                  if (!_show3D)
-                    _buildModeButton(
-                      icon: Icons.crop_free,
-                      isSelected: false,
-                      selectedColor: Colors.tealAccent,
-                      onTap: _editRanges,
-                      tooltip: 'Set range',
+                  _plotLayer(
+                    visible: !_show3D,
+                    child: Plot2DScreen(
+                      key: _plot2DKey,
+                      plotTheme: _plotTheme(context),
+                      functions: _functions,
+                      function: _currentFunction,
+                      is3DFunction: _is3DFunction,
+                      plotMode: _plotMode,
+                      fieldType: _fieldType,
+                      vectorParser: _vectorParser,
+                      showContour: _showContour,
+                      surfaceMode: _surfaceMode,
+                      colors: _colorsNoListen(context),
                     ),
-                  if (_show3D) ...[
-                    _build3DZoomButton(),
-                    _buildModeButton(
-                      icon: Icons.pan_tool,
-                      isSelected: _tool3DMode == Tool3DMode.pan,
-                      selectedColor: Colors.tealAccent,
-                      onTap: _togglePan,
-                      tooltip: 'Pan',
-                    ),
-                  ],
+                  ),
                 ],
               ),
             ),
-          ),
 
-        if (showOverlays)
-          Positioned(
-            bottom: _overlayButtonSize + 14,
-            left: 8,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.6),
-                borderRadius: BorderRadius.circular(4),
+            if (showOverlays)
+              Positioned(
+                right: 0,
+                bottom: 8,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_canShowSurface()) _buildSurfaceMenuButton(),
+                    if (_fieldType == FieldType.scalar ||
+                        (_fieldType == FieldType.vector &&
+                            _surfaceMode != SurfaceMode.none))
+                      _buildModeButton(
+                        icon: Icons.show_chart,
+                        isSelected: _showContour,
+                        selectedColor: Colors.purpleAccent,
+                        onTap: _toggleContour,
+                        tooltip: 'Contour',
+                      ),
+                    _buildModeButton(
+                      icon: Icons.grain,
+                      isSelected: _plotMode == PlotMode.field,
+                      selectedColor: Colors.orangeAccent,
+                      onTap: _togglePlotMode,
+                      tooltip: 'Field',
+                    ),
+                    _buildModeButton(
+                      label: '3D',
+                      isSelected: _show3D,
+                      selectedColor: Colors.tealAccent,
+                      onTap: () => _setShow3D(true),
+                    ),
+                    _buildModeButton(
+                      label: '2D',
+                      isSelected: !_show3D,
+                      selectedColor: Colors.tealAccent,
+                      onTap: () => _setShow3D(false),
+                    ),
+                  ],
+                ),
               ),
-              child: Text(
-                _getModeDescription(),
-                style: const TextStyle(color: Colors.white70, fontSize: 11),
+
+            // Navigation floats over the plot, centred at the bottom: view
+            // controls (reset, pan, zoom) are separated from the mode switches on
+            // the right, which change *what* is drawn rather than how you move
+            // around it.
+            if (showOverlays)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 8,
+                child: Center(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildModeButton(
+                        icon: Icons.home,
+                        isSelected: false,
+                        selectedColor: Colors.tealAccent,
+                        onTap: _resetView,
+                        tooltip: 'Reset view',
+                      ),
+                      if (!_show3D)
+                        _buildModeButton(
+                          icon: Icons.crop_free,
+                          isSelected: false,
+                          selectedColor: Colors.tealAccent,
+                          onTap: _editRanges,
+                          tooltip: 'Set range',
+                        ),
+                      if (_show3D) ...[
+                        _build3DZoomButton(),
+                        _buildModeButton(
+                          icon: Icons.pan_tool,
+                          isSelected: _tool3DMode == Tool3DMode.pan,
+                          selectedColor: Colors.tealAccent,
+                          onTap: _togglePan,
+                          tooltip: 'Pan',
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
-            ),
-          ),
 
-        if (_errorMessage != null)
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: Container(
-              color: Colors.red.withValues(alpha: 0.8),
-              padding: const EdgeInsets.all(4),
-              child: Text(
-                _errorMessage!,
-                style: const TextStyle(color: Colors.white, fontSize: 12),
-                textAlign: TextAlign.center,
+            if (showOverlays)
+              Positioned(
+                bottom: _overlayButtonSize + 14,
+                left: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    _getModeDescription(),
+                    style: const TextStyle(color: Colors.white70, fontSize: 11),
+                  ),
+                ),
               ),
-            ),
-          ),
 
-        // Vector indicator removed per UI request
+            if (_errorMessage != null)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: Container(
+                  color: Colors.red.withValues(alpha: 0.8),
+                  padding: const EdgeInsets.all(4),
+                  child: Text(
+                    _errorMessage!,
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
 
-      ],
+            // Vector indicator removed per UI request
+          ],
         );
       },
     );
@@ -734,37 +801,22 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     final menuItems = <PopupMenuEntry<SurfaceMode>>[];
 
     menuItems.add(
-      const PopupMenuItem(
-        value: SurfaceMode.none,
-        child: Text('Off'),
-      ),
+      const PopupMenuItem(value: SurfaceMode.none, child: Text('Off')),
     );
 
     if (_fieldType == FieldType.vector) {
       menuItems.add(
-        const PopupMenuItem(
-          value: SurfaceMode.magnitude,
-          child: Text('|F|'),
-        ),
+        const PopupMenuItem(value: SurfaceMode.magnitude, child: Text('|F|')),
       );
       menuItems.add(
-        const PopupMenuItem(
-          value: SurfaceMode.x,
-          child: Text('Fx'),
-        ),
+        const PopupMenuItem(value: SurfaceMode.x, child: Text('Fx')),
       );
       menuItems.add(
-        const PopupMenuItem(
-          value: SurfaceMode.y,
-          child: Text('Fy'),
-        ),
+        const PopupMenuItem(value: SurfaceMode.y, child: Text('Fy')),
       );
       if (_vectorParser?.zComponent != null) {
         menuItems.add(
-          const PopupMenuItem(
-            value: SurfaceMode.z,
-            child: Text('Fz'),
-          ),
+          const PopupMenuItem(value: SurfaceMode.z, child: Text('Fz')),
         );
       }
     } else {

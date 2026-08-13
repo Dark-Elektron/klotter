@@ -86,4 +86,3 @@ class _SumProdPainter extends CustomPainter {
         oldDelegate.strokeWidth != strokeWidth;
   }
 }
-

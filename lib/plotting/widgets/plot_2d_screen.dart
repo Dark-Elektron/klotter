@@ -5,6 +5,7 @@ import '../parsers/vector_field_parser.dart';
 import '../parsers/plot_expression.dart';
 import '../painters/plot_2d_painter.dart';
 import '../utils/curve_features.dart';
+import '../utils/pinch_tracker.dart';
 import '../utils/plot_theme.dart';
 
 class Plot2DScreen extends StatefulWidget {
@@ -59,26 +60,36 @@ class Plot2DScreenState extends State<Plot2DScreen> {
   }
 
   double yMin = -5, yMax = 5;
-  // Pinch is decomposed per axis, so a vertical pinch stretches y and a
-  // horizontal one stretches x. Flutter reports these separately alongside the
-  // uniform scale; the axis no longer has to be guessed from where on the plot
-  // the fingers happened to land.
-  double _lastHorizontalScale = 1.0;
-  double _lastVerticalScale = 1.0;
 
-  /// Per-axis change below this is treated as none.
-  ///
-  /// A pinch is never perfectly axis-aligned: a vertical one still reports a
-  /// little horizontal movement, and without a deadzone the other axis creeps
-  /// while you are trying to scale just one.
-  static const double _axisScaleDeadzone = 0.012;
+  /// Pinch is decomposed per axis, so a vertical pinch stretches y and a
+  /// horizontal one stretches x, measured from where the fingers actually are.
+  /// The axis is not guessed from where on the plot they happened to land.
+  final PinchTracker _pinch = PinchTracker();
+
+  /// True from the moment a finger lands until it leaves. Implicit curves
+  /// sample coarsely while it is set, then sharpen when the gesture ends: a
+  /// moving window misses the geometry cache on every frame, so the fine grid
+  /// is only affordable once the plot is still.
+  bool _interacting = false;
+
+  /// The window has to stay finite, ordered, and wide enough to derive a grid
+  /// spacing from. A span reaching zero divides the axis bounds by zero in the
+  /// painter, and the resulting NaN throws on every frame after that.
+  static const double _minSpan = 1e-9;
+  static const double _maxSpan = 1e12;
+
+  static bool _isUsableSpan(double lo, double hi) {
+    if (!lo.isFinite || !hi.isFinite) return false;
+    final double span = hi - lo;
+    return span >= _minSpan && span <= _maxSpan;
+  }
 
   /// x of the trace crosshair in data space, or null when not tracing.
   ///
   /// Long-press starts it rather than tap, so it never competes with the
   /// single-finger pan that already owns dragging on this surface.
   double? _traceX;
-  
+
   // For detecting axis-specific zoom based on gesture location
 
   @override
@@ -234,106 +245,125 @@ class Plot2DScreenState extends State<Plot2DScreen> {
           return const SizedBox.shrink();
         }
 
-        return GestureDetector(
-          onScaleStart: (details) {
-            _lastHorizontalScale = 1.0;
-            _lastVerticalScale = 1.0;
+        return Listener(
+          // The scale callbacks report ratios against the separation at the
+          // start of the gesture, which is useless when that separation is a
+          // couple of pixels. Raw positions give the separation itself.
+          onPointerDown: (e) {
+            _pinch.down(e.pointer, e.localPosition);
+            if (!_interacting) setState(() => _interacting = true);
           },
-          onScaleUpdate: (details) {
-            setState(() {
-              if (details.pointerCount > 1) {
-                _features = null;
-
-                final focalX =
-                    xMin +
-                    (details.localFocalPoint.dx / constraints.maxWidth) *
-                        (xMax - xMin);
-                final focalY =
-                    yMax -
-                    (details.localFocalPoint.dy / constraints.maxHeight) *
-                        (yMax - yMin);
-
-                void zoomX(double factor) {
-                  xMin = focalX - (focalX - xMin) / factor;
-                  xMax = focalX + (xMax - focalX) / factor;
-                }
-
-                void zoomY(double factor) {
-                  yMin = focalY - (focalY - yMin) / factor;
-                  yMax = focalY + (yMax - focalY) / factor;
-                }
-
-                // The gesture's shape is the control. Pinching top and bottom
-                // toward the centre scales y; left and right scales x; a
-                // diagonal pinch scales both, which is what it looks like it
-                // should do.
-                //
-                // There is deliberately no axis lock here. The 3D view has one,
-                // and sharing that setting meant locking 3D to the y axis
-                // silently locked the 2D plot too.
-                final hDelta = details.horizontalScale / _lastHorizontalScale;
-                final vDelta = details.verticalScale / _lastVerticalScale;
-                _lastHorizontalScale = details.horizontalScale;
-                _lastVerticalScale = details.verticalScale;
-
-                if ((hDelta - 1.0).abs() > _axisScaleDeadzone) zoomX(hDelta);
-                if ((vDelta - 1.0).abs() > _axisScaleDeadzone) zoomY(vDelta);
-              } else if (details.pointerCount == 1) {
-                // Pan — the visible window moved, so features must be refound.
-                _features = null;
-                final xShift = -details.focalPointDelta.dx *
-                    (xMax - xMin) /
-                    constraints.maxWidth;
-                final yShift = details.focalPointDelta.dy *
-                    (yMax - yMin) /
-                    constraints.maxHeight;
-                xMin += xShift;
-                xMax += xShift;
-                yMin += yShift;
-                yMax += yShift;
-              }
-            });
+          onPointerMove: (e) => _pinch.move(e.pointer, e.localPosition),
+          onPointerUp: (e) {
+            _pinch.up(e.pointer);
+            if (_interacting) setState(() => _interacting = false);
           },
-          onLongPressStart:
-              (details) => _setTrace(
-                details.localPosition.dx,
-                constraints.maxWidth,
-              ),
-          onLongPressMoveUpdate:
-              (details) => _setTrace(
-                details.localPosition.dx,
-                constraints.maxWidth,
-              ),
-          onTap: () {
-            if (_traceX != null) {
+          onPointerCancel: (e) {
+            _pinch.up(e.pointer);
+            if (_interacting) setState(() => _interacting = false);
+          },
+          child: GestureDetector(
+            onScaleUpdate: (details) {
               setState(() {
-                _traceX = null;
-                _snappedFeature = null;
+                if (details.pointerCount > 1) {
+                  _features = null;
+
+                  final focalX =
+                      xMin +
+                      (details.localFocalPoint.dx / constraints.maxWidth) *
+                          (xMax - xMin);
+                  final focalY =
+                      yMax -
+                      (details.localFocalPoint.dy / constraints.maxHeight) *
+                          (yMax - yMin);
+
+                  // A zoom that would leave the window unpaintable is dropped
+                  // rather than applied and repaired, so the gesture simply stops
+                  // having an effect at the limit.
+                  void zoomX(double factor) {
+                    final double lo = focalX - (focalX - xMin) / factor;
+                    final double hi = focalX + (xMax - focalX) / factor;
+                    if (!_isUsableSpan(lo, hi)) return;
+                    xMin = lo;
+                    xMax = hi;
+                  }
+
+                  void zoomY(double factor) {
+                    final double lo = focalY - (focalY - yMin) / factor;
+                    final double hi = focalY + (yMax - focalY) / factor;
+                    if (!_isUsableSpan(lo, hi)) return;
+                    yMin = lo;
+                    yMax = hi;
+                  }
+
+                  // The gesture's shape is the control. Pinching top and bottom
+                  // toward the centre scales y; left and right scales x; a
+                  // diagonal pinch scales both, which is what it looks like it
+                  // should do. An axis the fingers are level along reads back as
+                  // exactly 1.0, so it cannot creep.
+                  //
+                  // There is deliberately no axis lock here. The 3D view has one,
+                  // and sharing that setting meant locking 3D to the y axis
+                  // silently locked the 2D plot too.
+                  final pinch = _pinch.read();
+                  if (pinch.x != 1.0) zoomX(pinch.x);
+                  if (pinch.y != 1.0) zoomY(pinch.y);
+                } else if (details.pointerCount == 1) {
+                  // Pan — the visible window moved, so features must be refound.
+                  _features = null;
+                  final xShift =
+                      -details.focalPointDelta.dx *
+                      (xMax - xMin) /
+                      constraints.maxWidth;
+                  final yShift =
+                      details.focalPointDelta.dy *
+                      (yMax - yMin) /
+                      constraints.maxHeight;
+                  xMin += xShift;
+                  xMax += xShift;
+                  yMin += yShift;
+                  yMax += yShift;
+                }
               });
-            }
-          },
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: widget.plotTheme.background2D,
-            ),
-            child: CustomPaint(
-              size: Size(constraints.maxWidth, constraints.maxHeight),
-              painter: Plot2DPainter(
-                functions: widget.functions,
-                traceX: _traceX,
-                traceFeature: _snappedFeature,
-                plotTheme: widget.plotTheme,
-                function: widget.function,
-                xMin: xMin,
-                xMax: xMax,
-                yMin: yMin,
-                yMax: yMax,
-                plotMode: widget.plotMode,
-                fieldType: widget.fieldType,
-                vectorParser: widget.vectorParser,
-                showContour: widget.showContour,
-                surfaceMode: widget.surfaceMode,
-                colors: widget.colors,
+            },
+            onLongPressStart:
+                (details) =>
+                    _setTrace(details.localPosition.dx, constraints.maxWidth),
+            onLongPressMoveUpdate:
+                (details) =>
+                    _setTrace(details.localPosition.dx, constraints.maxWidth),
+            onTap: () {
+              if (_traceX != null) {
+                setState(() {
+                  _traceX = null;
+                  _snappedFeature = null;
+                });
+              }
+            },
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: widget.plotTheme.background2D,
+              ),
+              child: CustomPaint(
+                size: Size(constraints.maxWidth, constraints.maxHeight),
+                painter: Plot2DPainter(
+                  functions: widget.functions,
+                  traceX: _traceX,
+                  traceFeature: _snappedFeature,
+                  plotTheme: widget.plotTheme,
+                  function: widget.function,
+                  xMin: xMin,
+                  xMax: xMax,
+                  yMin: yMin,
+                  yMax: yMax,
+                  plotMode: widget.plotMode,
+                  fieldType: widget.fieldType,
+                  vectorParser: widget.vectorParser,
+                  showContour: widget.showContour,
+                  surfaceMode: widget.surfaceMode,
+                  colors: widget.colors,
+                  interacting: _interacting,
+                ),
               ),
             ),
           ),

@@ -84,8 +84,8 @@ class CombinationNode extends MathNode {
   List<MathNode> n; // Top number
   List<MathNode> r; // Bottom number
   CombinationNode({List<MathNode>? n, List<MathNode>? r})
-      : n = n ?? [LiteralNode()],
-        r = r ?? [LiteralNode()];
+    : n = n ?? [LiteralNode()],
+      r = r ?? [LiteralNode()];
 }
 
 /// A summation node (sigma) with variable, bounds, and body.

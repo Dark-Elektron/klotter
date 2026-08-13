@@ -95,15 +95,12 @@ void main() {
       expect(find.byType(Column), findsWidgets);
     });
 
-
-
     testWidgets('should have SizedBox for main keypad area', (tester) async {
       await tester.pumpWidget(buildTestWidget());
       await tester.pumpAndSettle();
 
       expect(find.byType(SizedBox), findsWidgets);
     });
-
 
     group('Walkthrough Integration', () {
       testWidgets('should register callbacks with walkthrough service', (

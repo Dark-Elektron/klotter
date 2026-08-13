@@ -7,11 +7,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'dart:typed_data';
 
-enum TextureType {
-  smoothNoise,
-  paperFiber,
-  none,
-}
+enum TextureType { smoothNoise, paperFiber, none }
 
 class TextureGenerator {
   static const int textureWidth = 256;
@@ -163,8 +159,14 @@ class TextureGenerator {
 
     // Gradient vectors
     final gradients = [
-      [1.0, 1.0], [1.0, -1.0], [-1.0, 1.0], [-1.0, -1.0],
-      [1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0],
+      [1.0, 1.0],
+      [1.0, -1.0],
+      [-1.0, 1.0],
+      [-1.0, -1.0],
+      [1.0, 0.0],
+      [-1.0, 0.0],
+      [0.0, 1.0],
+      [0.0, -1.0],
     ];
 
     double fade(double t) => t * t * t * (t * (t * 6 - 15) + 10);

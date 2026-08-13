@@ -9,15 +9,21 @@ import 'utils/app_colors.dart';
 import 'math_renderer/cell_persistence_service.dart';
 import 'math_engine/math_expression_serializer.dart';
 import 'dart:async';
+import 'dart:io';
+import 'dart:ui' as ui;
 import 'keypad/keypad.dart';
 import 'walkthrough/walkthrough_service.dart';
 import 'walkthrough/walkthrough_overlay.dart';
 import 'utils/app_state.dart';
+import 'utils/coordinate_system.dart';
 import 'math_renderer/expression_selection.dart';
 import 'math_renderer/math_editor_controller.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'math_engine/math_engine_exact.dart';
 import 'plotting/models/plot_view_state.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'plotting/export/plot_exporter.dart';
 import 'plotting/widgets/inline_plot_panel.dart';
 import 'widgets/textured_container.dart';
 
@@ -110,10 +116,12 @@ class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
   @override
-  State<HomePage> createState() => _HomePageState();
+  State<HomePage> createState() => HomePageState();
 }
 
-class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
+/// Public so widget tests can reach the cell controllers and the undo
+/// history, as Plot2DScreenState and InlinePlotPanelState already are.
+class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   /// Phones stay portrait: klotter is a plot above an expression above a
   /// keypad, and a phone in landscape fits maybe two of the three, which
   /// breaks the live edit loop the app is built around. Tablets keep both.
@@ -126,7 +134,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void _applyOrientationLock(BuildContext context) {
     if (_orientationApplied) return;
     final Size size = MediaQuery.of(context).size;
-    if (size.shortestSide <= 0) return; // not laid out yet; try again next build
+    // Not laid out yet; try again next build.
+    if (size.shortestSide <= 0) return;
     _orientationApplied = true;
     SystemChrome.setPreferredOrientations(
       size.shortestSide < 600
@@ -199,6 +208,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final GlobalKey _expressionKey = GlobalKey();
   final GlobalKey _plotAreaKey = GlobalKey();
   final GlobalKey _commandButtonKey = GlobalKey();
+
+  /// The strip between the expression and the keypad, which the walkthrough
+  /// points at when it explains moving between plots.
+  final GlobalKey _plotStripKey = GlobalKey();
+
+  /// Which coordinate system the variable keys are offering, and so which
+  /// symbols an expression is written in. The plot converts its Cartesian
+  /// sample points into these before evaluating, which is how ρ = 1 draws a
+  /// sphere without the renderers knowing anything about spherical geometry.
+  CoordinateSystem _variableSystem = CoordinateSystem.cartesian;
+
+  /// The unit-vector keys switch on their own. Writing r̂ while still using x
+  /// and y is ordinary, so tying the two together would be wrong.
+  CoordinateSystem _unitVectorSystem = CoordinateSystem.cartesian;
   final GlobalKey _scientificKeypadKey = GlobalKey();
   final GlobalKey _numberKeypadKey = GlobalKey();
   final GlobalKey _extrasKeypadKey = GlobalKey();
@@ -216,6 +239,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     'expression_area': _expressionKey,
     'plot_area': _plotAreaKey,
     'command_button': _commandButtonKey,
+    'plot_pages': _plotStripKey,
     // Mobile keypad steps
     'number_keypad': _mainKeypadAreaKey,
     'scientific_keypad': _mainKeypadAreaKey,
@@ -385,8 +409,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   List<int> get _pageKeys => mathEditorControllers.keys.toList()..sort();
 
+  /// Whether a cell has anything on it.
+  ///
+  /// Measured from the serialized expression, not the node list. An empty cell
+  /// still holds one placeholder node, so `expression.isNotEmpty` is true even
+  /// for a blank cell — which let a flick forward keep stacking up empty
+  /// plots. This is the same test backspace uses to decide a cell is empty
+  /// enough to delete, so the two agree on what "empty" means.
   bool _pageHasContent(int index) =>
-      (mathEditorControllers[index]?.expression.isNotEmpty ?? false);
+      (mathEditorControllers[index]?.getExpression().trim().isNotEmpty ??
+          false);
 
   /// Move one page left or right.
   ///
@@ -425,7 +457,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   /// is captured on the way out — otherwise returning to a cell showed the 2D
   /// view again however it was left.
   void _captureView(int index) {
-    final PlotViewState? live = _plotPanelKeys[index]?.currentState?.currentView();
+    final PlotViewState? live =
+        _plotPanelKeys[index]?.currentState?.currentView();
     if (live != null) _restoredViews[index] = live;
   }
 
@@ -559,6 +592,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           expression: plotExpression,
           nodes: _getPlotNodes(index),
           initialView: _restoredViews[index] ?? PlotViewState.initial,
+          coordinateSystem: _variableSystem,
           onViewChanged: (view) => _restoredViews[index] = view,
         ),
       ),
@@ -578,74 +612,73 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         Expanded(
           child: _buildPlotArea(index, colors, shouldAddKeys: shouldAddKeys),
         ),
-            TexturedContainer(
-              baseColor: colors.containerBackground,
-              decoration: BoxDecoration(
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.2),
-                    spreadRadius: 2,
-                    blurRadius: 7,
-                    offset: const Offset(0, 0),
-                  ),
-                ],
+        TexturedContainer(
+          baseColor: colors.containerBackground,
+          decoration: BoxDecoration(
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.2),
+                spreadRadius: 2,
+                blurRadius: 7,
+                offset: const Offset(0, 0),
               ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: <Widget>[
-                  // Expression input area - transparent background
-                  Container(
-                    key: shouldAddKeys ? _expressionKey : null,
-                    width: double.infinity,
-                    // No color - let texture show through
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                      child: AnimatedOpacity(
-                        curve: Curves.easeIn,
-                        duration: const Duration(milliseconds: 500),
-                        opacity: isVisible ? 1.0 : 0.0,
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            return Center(
-                              child: SingleChildScrollView(
-                                controller: scrollController,
-                                scrollDirection: Axis.horizontal,
-                                reverse: true,
-                                child: MathEditorInline(
-                                  key: mathEditorKey,
-                                  controller: mathEditorController!,
-                                  showCursor: isFocused,
-                                  minWidth: constraints.maxWidth,
-                                  // Drag-to-tune edits the node tree directly,
-                                  // so the plot needs a rebuild to resample.
-                                  onExpressionChanged: () {
-                                    updateMathEditor();
-                                    setState(() {});
-                                  },
-                                  onFocus: () {
-                                    if (activeIndex != index) {
-                                      setState(() {
-                                        activeIndex = index;
-                                      });
-                                    }
-                                  },
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
+            ],
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: <Widget>[
+              // Expression input area - transparent background
+              Container(
+                key: shouldAddKeys ? _expressionKey : null,
+                width: double.infinity,
+                // No color - let texture show through
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
+                  child: AnimatedOpacity(
+                    curve: Curves.easeIn,
+                    duration: const Duration(milliseconds: 500),
+                    opacity: isVisible ? 1.0 : 0.0,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        return Center(
+                          child: SingleChildScrollView(
+                            controller: scrollController,
+                            scrollDirection: Axis.horizontal,
+                            reverse: true,
+                            child: MathEditorInline(
+                              key: mathEditorKey,
+                              controller: mathEditorController!,
+                              showCursor: isFocused,
+                              minWidth: constraints.maxWidth,
+                              // Drag-to-tune edits the node tree directly,
+                              // so the plot needs a rebuild to resample.
+                              onExpressionChanged: () {
+                                updateMathEditor();
+                                setState(() {});
+                              },
+                              onFocus: () {
+                                if (activeIndex != index) {
+                                  setState(() {
+                                    activeIndex = index;
+                                  });
+                                }
+                              },
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
-
-                ],
+                ),
               ),
-            ),
-          ],
-        );
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   int _estimateNodesHeight(List<MathNode> nodes) {
@@ -770,7 +803,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         if (savedView != null) {
           _restoredViews[i] = PlotViewState.fromJson(savedView);
         }
-
       }
 
       count = savedCells.length;
@@ -786,6 +818,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
 
     setState(() => _isLoading = false);
+
+    // Baseline the undo history at the state the app opened with. Without
+    // this the first edit is what establishes the baseline, so the very first
+    // thing a user types has nothing to undo back to.
+    _syncHistoryMark();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       for (int i = 0; i < count; i++) {
@@ -820,7 +857,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     await CellPersistence.saveActiveIndex(activeIndex);
   }
 
-  // In _HomePageState
+  // In HomePageState
   void _onSettingsChanged() {
     // Clear texture cache when theme changes
     TextureGenerator.clearCache();
@@ -1024,6 +1061,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     exactResultVersionNotifiers[indexToRemove]?.dispose(); // ADD THIS
     exactResultVersionNotifiers.remove(indexToRemove); // ADD THIS
 
+    // The cell's plot goes with it: its panel key, the view it was left at,
+    // and whether it was expanded.
+    _plotPanelKeys.remove(indexToRemove);
+    _restoredViews.remove(indexToRemove);
+    _plotExpanded.remove(indexToRemove);
+
     int newActiveIndex;
     if (activeIndex == indexToRemove) {
       newActiveIndex = indexToRemove > 0 ? indexToRemove - 1 : 0;
@@ -1039,6 +1082,98 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       count -= 1;
       activeIndex = newActiveIndex;
     });
+  }
+
+  /// Save the active cell's plot to a file and hand it to the share sheet.
+  ///
+  /// The plot is rasterised, so the formats offered are the ones a raster can
+  /// honestly be: PNG, JPEG, and a PDF page holding the image. SVG is not
+  /// offered — a Flutter Picture does not expose the operations that drew it,
+  /// so an .svg could only wrap the same bitmap and would not scale, which is
+  /// the one thing the format is chosen for.
+  Future<void> _exportPlot() async {
+    final InlinePlotPanelState? panel =
+        _plotPanelKeys[activeIndex]?.currentState;
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+
+    if (panel == null) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Open a plot before exporting')),
+      );
+      return;
+    }
+
+    final PlotExportFormat? format = await _askExportFormat();
+    if (format == null) return;
+
+    try {
+      final ui.Image? image = await panel.capturePlot();
+      if (image == null) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('The plot is not on screen to export')),
+        );
+        return;
+      }
+
+      final Uint8List bytes = await PlotExporter.encode(image, format);
+      image.dispose();
+
+      final Directory dir = await getTemporaryDirectory();
+      final File file = File('${dir.path}/${PlotExporter.fileName(format)}');
+      await file.writeAsBytes(bytes, flush: true);
+
+      await SharePlus.instance.share(
+        ShareParams(
+          files: <XFile>[XFile(file.path, mimeType: format.mimeType)],
+          fileNameOverrides: <String>[file.uri.pathSegments.last],
+        ),
+      );
+    } catch (e) {
+      // Cancelling the share sheet, no room on disk, a plot that cannot be
+      // rasterised — none of these should take the app down mid-export.
+      messenger.showSnackBar(SnackBar(content: Text('Export failed: $e')));
+    }
+  }
+
+  /// Which file format, or null if the sheet was dismissed.
+  Future<PlotExportFormat?> _askExportFormat() {
+    final AppColors colors = AppColors.of(context, listen: false);
+    return showModalBottomSheet<PlotExportFormat>(
+      context: context,
+      backgroundColor: colors.containerBackground,
+      builder:
+          (context) => SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Text(
+                    'Export plot',
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                for (final PlotExportFormat f in PlotExportFormat.values)
+                  ListTile(
+                    title: Text(
+                      f.label,
+                      style: TextStyle(color: colors.textPrimary),
+                    ),
+                    subtitle: Text(
+                      '.${f.extension}',
+                      style: TextStyle(color: colors.textSecondary),
+                    ),
+                    onTap: () => Navigator.pop(context, f),
+                  ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+    );
   }
 
   void _clearAllDisplays() {
@@ -1082,7 +1217,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     resultPageProgressNotifiers.clear();
     exactResultVersionNotifiers.clear();
 
-
     _createControllers(0);
 
     setState(() {
@@ -1108,24 +1242,69 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     Map<int, ValueNotifier<int>> newExactResultVersionNotifiers =
         {}; // ADD THIS
 
+    // Not every map has an entry for every cell. resultPageControllers in
+    // particular is filled in by the result widgets when a cell actually has
+    // more than one result page, so for most cells it holds nothing at all.
+    // Dereferencing it with `!` threw part-way through renumbering, which
+    // aborted the removal and left the cell on screen — the reason backspace
+    // on an empty cell appeared to do nothing.
+    void carry<T>(Map<int, T> from, Map<int, T> to, int oldKey, int newIndex) {
+      final T? value = from[oldKey];
+      if (value != null) to[newIndex] = value;
+    }
+
+    final Map<int, GlobalKey<InlinePlotPanelState>> newPlotPanelKeys = {};
+    final Map<int, PlotViewState> newRestoredViews = {};
+    final Map<int, bool> newPlotExpanded = {};
+
     for (int newIndex = 0; newIndex < oldKeys.length; newIndex++) {
       int oldKey = oldKeys[newIndex];
+      // Guaranteed: oldKeys is this map's own key list.
       newMathControllers[newIndex] = mathEditorControllers[oldKey]!;
-      newDisplayControllers[newIndex] = textDisplayControllers[oldKey]!;
-      newFocusNodes[newIndex] = focusNodes[oldKey]!;
-      newScrollControllers[newIndex] = scrollControllers[oldKey]!;
-      newMathEditorKeys[newIndex] = mathEditorKeys[oldKey]!;
-      newResultPageControllers[newIndex] = resultPageControllers[oldKey]!;
+      carry(textDisplayControllers, newDisplayControllers, oldKey, newIndex);
+      carry(focusNodes, newFocusNodes, oldKey, newIndex);
+      carry(scrollControllers, newScrollControllers, oldKey, newIndex);
+      carry(mathEditorKeys, newMathEditorKeys, oldKey, newIndex);
+      carry(resultPageControllers, newResultPageControllers, oldKey, newIndex);
       newExactResultNodes[newIndex] = exactResultNodes[oldKey];
       newExactResultExprs[newIndex] = exactResultExprs[oldKey];
       newCurrentResultPage[newIndex] = currentResultPage[oldKey] ?? 0;
-      newCurrentResultPageNotifiers[newIndex] =
-          currentResultPageNotifiers[oldKey]!;
-      newResultPageProgressNotifiers[newIndex] =
-          resultPageProgressNotifiers[oldKey]!;
-      newExactResultVersionNotifiers[newIndex] =
-          exactResultVersionNotifiers[oldKey]!; // ADD THIS
+      carry(
+        currentResultPageNotifiers,
+        newCurrentResultPageNotifiers,
+        oldKey,
+        newIndex,
+      );
+      carry(
+        resultPageProgressNotifiers,
+        newResultPageProgressNotifiers,
+        oldKey,
+        newIndex,
+      );
+      carry(
+        exactResultVersionNotifiers,
+        newExactResultVersionNotifiers,
+        oldKey,
+        newIndex,
+      );
+
+      // The plot side has to move with the cell too. Left behind, a surviving
+      // cell inherits the panel key and saved view of a different one — and
+      // for a GlobalKey that means two panels claiming the same key.
+      carry(_plotPanelKeys, newPlotPanelKeys, oldKey, newIndex);
+      carry(_restoredViews, newRestoredViews, oldKey, newIndex);
+      carry(_plotExpanded, newPlotExpanded, oldKey, newIndex);
     }
+
+    _plotPanelKeys
+      ..clear()
+      ..addAll(newPlotPanelKeys);
+    _restoredViews
+      ..clear()
+      ..addAll(newRestoredViews);
+    _plotExpanded
+      ..clear()
+      ..addAll(newPlotExpanded);
 
     mathEditorControllers = newMathControllers;
     textDisplayControllers = newDisplayControllers;
@@ -1142,6 +1321,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   void _restoreAppState(AppState state) {
+    // Rebuilding the cells runs updateMathEditor at the end, which would
+    // otherwise see the restored state as a fresh edit — recording an undo
+    // step for the undo itself and wiping the redo stack it had just filled.
+    _restoringHistory = true;
+    try {
+      _applyAppState(state);
+    } finally {
+      _restoringHistory = false;
+    }
+  }
+
+  void _applyAppState(AppState state) {
     for (var controller in mathEditorControllers.values) {
       controller.dispose();
     }
@@ -1179,7 +1370,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     resultPageProgressNotifiers.clear();
     exactResultVersionNotifiers.clear();
 
-
     for (int i = 0; i < state.expressions.length; i++) {
       _createControllers(i);
       mathEditorControllers[i]?.setExpression(
@@ -1200,6 +1390,61 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     updateMathEditor();
   }
 
+  /// The state as of the last recorded history point, and its signature.
+  ///
+  /// Undo has to restore the state *before* an edit, but the only hook every
+  /// edit passes through — [updateMathEditor] — runs after the change has
+  /// already been made. So the previous state is held here and pushed when the
+  /// next change is noticed, rather than trying to intercept every mutation
+  /// site: keypad buttons, selection wraps, paste, cell add and remove.
+  AppState? _historyMark;
+  String? _historySignature;
+
+  /// True while an undo or redo is being applied, so restoring does not record
+  /// itself as a fresh edit.
+  bool _restoringHistory = false;
+
+  /// Note the current state as the baseline, without recording an undo step.
+  void _syncHistoryMark() {
+    _historyMark = AppState.capture(
+      mathEditorControllers,
+      textDisplayControllers,
+      activeIndex,
+    );
+    _historySignature = _historyMark!.signature;
+  }
+
+  /// Record an undo point if the expressions changed since the last one.
+  ///
+  /// Called at the end of [updateMathEditor], once answers have been
+  /// recalculated, so a restored state carries its own results.
+  void _recordHistoryPoint() {
+    if (_restoringHistory) return;
+
+    final AppState current = AppState.capture(
+      mathEditorControllers,
+      textDisplayControllers,
+      activeIndex,
+    );
+    final String signature = current.signature;
+
+    if (_historyMark == null) {
+      _historyMark = current;
+      _historySignature = signature;
+      return;
+    }
+    if (signature == _historySignature) return;
+
+    _appUndoStack.add(_historyMark!);
+    if (_appUndoStack.length > _maxAppHistorySize) {
+      _appUndoStack.removeAt(0);
+    }
+    _appRedoStack.clear();
+
+    _historyMark = current;
+    _historySignature = signature;
+  }
+
   /// Save current app state before destructive operations
   void _saveAppStateForUndo() {
     _appUndoStack.add(
@@ -1217,6 +1462,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     // Clear redo stack when new action is performed
     _appRedoStack.clear();
+
+    // The step is already recorded, so drop the baseline: the next
+    // [_recordHistoryPoint] re-establishes it rather than pushing the same
+    // state a second time for one action.
+    _historyMark = null;
+    _historySignature = null;
   }
 
   /// Check if app-level undo is available
@@ -1226,7 +1477,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool get canRedoAppState => _appRedoStack.isNotEmpty;
 
   /// Undo app-level action (like Clear All)
-  void _undoAppState() {
+  void undoAppState() {
     if (!canUndoAppState) return;
 
     // Save current state to redo stack
@@ -1243,10 +1494,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     // Restore the state
     _restoreAppState(previousState);
+    // The baseline is now the state we just moved to, so the next edit records
+    // a step from here rather than from the one we undid.
+    _syncHistoryMark();
   }
 
   /// Redo app-level action
-  void _redoAppState() {
+  void redoAppState() {
     if (!canRedoAppState) return;
 
     // Save current state to undo stack
@@ -1263,6 +1517,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     // Restore the state
     _restoreAppState(redoState);
+    _syncHistoryMark();
   }
 
   @override
@@ -1326,49 +1581,71 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       },
                     ),
                   ),
-                  _buildPageSwipeStrip(colors),
+                  KeyedSubtree(
+                    key: _plotStripKey,
+                    child: _buildPageSwipeStrip(colors),
+                  ),
                   AnimatedSize(
                     duration: const Duration(milliseconds: 250),
                     curve: Curves.easeInOut,
                     child: Builder(
-                              builder: (context) {
-                                final mediaQuery = MediaQuery.of(context);
-                                double screenWidth = mediaQuery.size.width;
-                                bool isLandscape =
-                                    mediaQuery.orientation ==
-                                    Orientation.landscape;
+                      builder: (context) {
+                        final mediaQuery = MediaQuery.of(context);
+                        double screenWidth = mediaQuery.size.width;
+                        bool isLandscape =
+                            mediaQuery.orientation == Orientation.landscape;
 
-                                return CalculatorKeypad(
-                                  screenWidth: screenWidth,
-                                  isLandscape: isLandscape,
-                                  colors: colors,
-                                  activeIndex: activeIndex,
-                                  mathEditorControllers: mathEditorControllers,
-                                  textDisplayControllers:
-                                      textDisplayControllers,
-                                  settingsProvider: _settingsProvider!,
-                                  onUpdateMathEditor: updateMathEditor,
-                                  onAddDisplay: _addDisplay,
-                                  onRemoveDisplay: _removeDisplay,
-                                  onClearAllDisplays: _clearAllDisplays,
-                                  onSetState: () => setState(() {}),
-                                  onClearSelectionOverlay:
-                                      _clearAllSelectionOverlays,
-                                  canUndoAppState: canUndoAppState,
-                                  canRedoAppState: canRedoAppState,
-                                  onUndoAppState: _undoAppState,
-                                  onRedoAppState: _redoAppState,
-                                  // Walkthrough
-                                  walkthroughService: _walkthroughService,
-                                  scientificKeypadKey: _scientificKeypadKey,
-                                  numberKeypadKey: _numberKeypadKey,
-                                  extrasKeypadKey: _extrasKeypadKey,
-                                  commandButtonKey: _commandButtonKey,
-                                  mainKeypadAreaKey: _mainKeypadAreaKey,
-                                  settingsButtonKey: _settingsButtonKey,
-                                );
-                              },
-                            ),
+                        return CalculatorKeypad(
+                          screenWidth: screenWidth,
+                          isLandscape: isLandscape,
+                          colors: colors,
+                          activeIndex: activeIndex,
+                          mathEditorControllers: mathEditorControllers,
+                          textDisplayControllers: textDisplayControllers,
+                          settingsProvider: _settingsProvider!,
+                          onUpdateMathEditor: updateMathEditor,
+                          onAddDisplay: _addDisplay,
+                          onRemoveDisplay: _removeDisplay,
+                          onExportPlot: _exportPlot,
+                          variableSystem: _variableSystem,
+                          unitVectorSystem: _unitVectorSystem,
+                          onVariableSystemChanged: (system) {
+                            // The two groups move together. A row of x, y, z
+                            // beside r̂, θ̂, ẑ describes a point in one system
+                            // and its directions in another, which is not a
+                            // thing anyone means to write.
+                            setState(() {
+                              _variableSystem = system;
+                              _unitVectorSystem = system;
+                            });
+                            // The symbols an expression is read in changed, so
+                            // every cell has to be recompiled and redrawn.
+                            updateMathEditor();
+                          },
+                          onUnitVectorSystemChanged: (system) {
+                            setState(() {
+                              _unitVectorSystem = system;
+                              _variableSystem = system;
+                            });
+                          },
+                          onClearAllDisplays: _clearAllDisplays,
+                          onSetState: () => setState(() {}),
+                          onClearSelectionOverlay: _clearAllSelectionOverlays,
+                          canUndoAppState: canUndoAppState,
+                          canRedoAppState: canRedoAppState,
+                          onUndoAppState: undoAppState,
+                          onRedoAppState: redoAppState,
+                          // Walkthrough
+                          walkthroughService: _walkthroughService,
+                          scientificKeypadKey: _scientificKeypadKey,
+                          numberKeypadKey: _numberKeypadKey,
+                          extrasKeypadKey: _extrasKeypadKey,
+                          commandButtonKey: _commandButtonKey,
+                          mainKeypadAreaKey: _mainKeypadAreaKey,
+                          settingsButtonKey: _settingsButtonKey,
+                        );
+                      },
+                    ),
                   ),
                 ],
               ),
@@ -1426,6 +1703,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _isUpdating = false;
     }
 
+    // Every edit reaches here, so this is where an undo point is taken.
+    _recordHistoryPoint();
+
     setState(() {});
     _saveCells();
   }
@@ -1436,9 +1716,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
     return false;
   }
-
 }
-
 
 String _describeMathNodes(List<MathNode> nodes) {
   if (nodes.isEmpty) return '[]';

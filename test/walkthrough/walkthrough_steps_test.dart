@@ -152,16 +152,18 @@ void main() {
       });
 
       test('tablet flow has no more swipe steps than mobile', () {
-      // The permanent number pad removed two mobile swipes, so the two flows
-      // now carry the same number.
-      final mobileSwipes = walkthroughSteps
-          .where((s) => !s.tabletOnly && s.requiresAction)
-          .length;
-      final tabletSwipes = walkthroughSteps
-          .where((s) => !s.mobileOnly && s.requiresAction)
-          .length;
-      expect(tabletSwipes, lessThanOrEqualTo(mobileSwipes));
-    });
+        // The permanent number pad removed two mobile swipes, so the two flows
+        // now carry the same number.
+        final mobileSwipes =
+            walkthroughSteps
+                .where((s) => !s.tabletOnly && s.requiresAction)
+                .length;
+        final tabletSwipes =
+            walkthroughSteps
+                .where((s) => !s.mobileOnly && s.requiresAction)
+                .length;
+        expect(tabletSwipes, lessThanOrEqualTo(mobileSwipes));
+      });
     });
   });
 

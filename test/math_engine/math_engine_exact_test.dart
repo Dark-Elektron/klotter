@@ -360,10 +360,6 @@ void main() {
       expect(ConstExpr.e.toDouble(), closeTo(2.71828, 0.00001));
     });
 
-    test('phi value', () {
-      expect(ConstExpr.phi.toDouble(), closeTo(1.61803, 0.00001));
-    });
-
     test('isRational', () {
       expect(ConstExpr.pi.isRational, false);
       expect(ConstExpr.e.isRational, false);
@@ -398,12 +394,6 @@ void main() {
       expect((nodes[0] as LiteralNode).text, 'e');
     });
 
-    test('toMathNode for phi', () {
-      final nodes = ConstExpr.phi.toMathNode();
-      expect(nodes.length, 1);
-      expect((nodes[0] as LiteralNode).text, 'φ');
-    });
-
     test('structurallyEquals', () {
       expect(ConstExpr.pi.structurallyEquals(ConstExpr.pi), true);
       expect(ConstExpr.pi.structurallyEquals(ConstExpr.e), false);
@@ -433,7 +423,6 @@ void main() {
     test('toString', () {
       expect(ConstExpr.pi.toString(), 'π');
       expect(ConstExpr.e.toString(), 'e');
-      expect(ConstExpr.phi.toString(), 'φ');
     });
 
     test('epsilon0 value', () {
@@ -2155,11 +2144,26 @@ void main() {
       expect((expr as ConstExpr).type, ConstType.e);
     });
 
-    test('convert phi', () {
+    test('φ converts to a variable, not the golden ratio', () {
+      // φ is the spherical polar angle now. It used to parse as the golden
+      // ratio, but no key inserts that constant and the character cannot be
+      // typed, so nothing in the app could reach it; the symbol was free.
       final nodes = [LiteralNode(text: 'φ')];
       final expr = MathNodeToExpr.convert(nodes);
-      expect(expr, isA<ConstExpr>());
-      expect((expr as ConstExpr).type, ConstType.phi);
+      expect(expr, isA<VarExpr>());
+      expect((expr as VarExpr).name, 'φ');
+    });
+
+    test('the golden ratio is gone entirely', () {
+      // It was unreachable: no key inserted it, and neither the character nor
+      // the word could be typed. φ is the spherical polar angle now, and
+      // "phi" is just letters — the engine reads it as p·h·i, the same as any
+      // other run of single-letter variables.
+      expect(
+        MathNodeToExpr.convert([LiteralNode(text: 'phi')]),
+        isNot(isA<ConstExpr>()),
+      );
+      expect(MathNodeToExpr.convert([LiteralNode(text: 'φ')]), isA<VarExpr>());
     });
 
     test('convert permutation node', () {

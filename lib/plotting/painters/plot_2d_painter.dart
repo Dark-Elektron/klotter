@@ -9,6 +9,7 @@ import '../utils/colormap.dart';
 import '../utils/curve_features.dart';
 import '../utils/level_set.dart';
 import '../utils/plot_theme.dart';
+import '../utils/readout_box.dart';
 
 class Plot2DPainter extends CustomPainter {
   final PlotExpression function;
@@ -31,6 +32,10 @@ class Plot2DPainter extends CustomPainter {
   final SurfaceMode surfaceMode;
   final AppColors colors;
 
+  /// True while a finger is on the plot. Sampling drops to a coarser grid for
+  /// the duration, because a moving window misses the cache on every frame.
+  final bool interacting;
+
   /// Built once per panel rather than per paint, and carries the plot's
   /// colour mode and the theme's series palette.
   final PlotThemeData plotTheme;
@@ -50,6 +55,7 @@ class Plot2DPainter extends CustomPainter {
     required this.showContour,
     required this.surfaceMode,
     required this.colors,
+    this.interacting = false,
     required this.plotTheme,
   });
 
@@ -660,11 +666,66 @@ class Plot2DPainter extends CustomPainter {
       if (!parser.isValid) continue;
       final Color color = plotTheme.seriesColor(series);
       if (parser.isLevelSet) {
+        // An inequality is an area, so it is shaded first and the boundary
+        // drawn over it.
+        if (parser.relation.isRegion) {
+          _drawRegion(canvas, size, toScreenX, toScreenY, parser, color);
+        }
         _drawImplicitCurve(canvas, toScreenX, toScreenY, parser, color);
       } else {
         _drawOneCurve(canvas, toScreenX, toScreenY, parser, color);
       }
     }
+  }
+
+  /// Shade every point that satisfies an inequality.
+  ///
+  /// Sampled on its own lattice rather than reusing the heatmap grid: this is
+  /// a yes/no test, so the only thing that matters is how closely the edge is
+  /// followed, and the boundary curve is drawn over the top anyway.
+  void _drawRegion(
+    Canvas canvas,
+    Size size,
+    double Function(double) toScreenX,
+    double Function(double) toScreenY,
+    PlotExpression parser,
+    Color color,
+  ) {
+    const int cells = 110;
+    final double dx = (xMax - xMin) / cells;
+    final double dy = (yMax - yMin) / cells;
+    final double cellW = size.width / cells + 1;
+    final double cellH = size.height / cells + 1;
+
+    // One path of many small rectangles, filled once. A fill per cell would
+    // be 22,500 draw calls a frame.
+    final Path region = Path();
+    for (int i = 0; i < cells; i++) {
+      final double x = xMin + (i + 0.5) * dx;
+      for (int j = 0; j < cells; j++) {
+        final double y = yMin + (j + 0.5) * dy;
+        if (!parser.relation.holds(parser.evaluate(x, y))) continue;
+        region.addRect(
+          Rect.fromLTWH(
+            toScreenX(xMin + i * dx),
+            toScreenY(yMin + (j + 1) * dy),
+            cellW,
+            cellH,
+          ),
+        );
+      }
+    }
+
+    // Strong enough to read as a shaded region rather than a change of
+    // background. An unbounded region like x² + y² ≥ 1 covers nearly the whole
+    // plot, and at a light tint that is indistinguishable from no shading at
+    // all — there is no unshaded area left to compare it against.
+    canvas.drawPath(
+      region,
+      Paint()
+        ..color = color.withValues(alpha: 0.38)
+        ..style = PaintingStyle.fill,
+    );
   }
 
   /// Trace an equation's solution set.
@@ -685,6 +746,10 @@ class Plot2DPainter extends CustomPainter {
       xMax,
       yMin,
       yMax,
+      resolution:
+          interacting
+              ? marchingSquaresDraggingResolution
+              : marchingSquaresDefaultResolution,
     );
     if (segments.isEmpty) return;
 
@@ -697,12 +762,29 @@ class Plot2DPainter extends CustomPainter {
 
     // Loose segments, not one path: the curve may be several disjoint loops,
     // and joining them would draw lines across the gaps between.
+    //
+    // A strict inequality excludes its own boundary, which is drawn dashed to
+    // say so — the convention every textbook uses for an open edge.
+    //
+    // Measured along the curve in screen pixels, not counted in segments:
+    // marching squares emits sub-pixel pieces, so dropping every other one
+    // left a line that was still solid to the eye.
+    final bool dashed = !parser.relation.includesBoundary;
+    // Long enough to read as a broken line at a glance. At 11 the gaps were
+    // there but easy to miss, which defeats the point: the dashes are the only
+    // thing saying the boundary is excluded.
+    const double dashPeriod = 20.0;
+    const double dashOn = 0.5;
+    double travelled = 0;
+
     for (final LevelSegment s in segments) {
-      canvas.drawLine(
-        Offset(toScreenX(s.x1), toScreenY(s.y1)),
-        Offset(toScreenX(s.x2), toScreenY(s.y2)),
-        paint,
-      );
+      final Offset a = Offset(toScreenX(s.x1), toScreenY(s.y1));
+      final Offset b = Offset(toScreenX(s.x2), toScreenY(s.y2));
+      if (dashed) {
+        travelled += (b - a).distance;
+        if (travelled % dashPeriod > dashPeriod * dashOn) continue;
+      }
+      canvas.drawLine(a, b, paint);
     }
   }
 
@@ -786,23 +868,37 @@ class Plot2DPainter extends CustomPainter {
     for (int i = 0; i < curves.length; i++) {
       final PlotExpression c = curves[i];
       if (!c.isValid) continue;
-      final double y = c.evaluate(tx, 0);
-      if (!y.isFinite) continue;
       final Color color = plotTheme.seriesColor(i);
-      hits.add((color: color, y: y));
 
-      final double sy = toScreenY(y);
-      if (sy < -20 || sy > size.height + 20) continue;
-      // A ring rather than a dot so the curve stays visible underneath.
-      canvas.drawCircle(Offset(sx, sy), 5, Paint()..color = color);
-      canvas.drawCircle(
-        Offset(sx, sy),
-        5,
-        Paint()
-          ..color = plotTheme.label
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5,
-      );
+      // An equation has to be solved for y, not evaluated. Evaluating it gives
+      // F(x, 0) — how far (x, 0) is from satisfying the equation — which is
+      // neither a point on the curve nor the y the reader is asking for, and
+      // it produced a marker floating off the circle entirely.
+      //
+      // Solving can also return nothing, which is the right answer: the unit
+      // circle simply has no y at x = 1.33.
+      final List<double> ys =
+          c.isLevelSet
+              ? levelSetYAt(c, tx, yMin, yMax)
+              : <double>[c.evaluate(tx, 0)];
+
+      for (final double y in ys) {
+        if (!y.isFinite) continue;
+        hits.add((color: color, y: y));
+
+        final double sy = toScreenY(y);
+        if (sy < -20 || sy > size.height + 20) continue;
+        // A ring rather than a dot so the curve stays visible underneath.
+        canvas.drawCircle(Offset(sx, sy), 5, Paint()..color = color);
+        canvas.drawCircle(
+          Offset(sx, sy),
+          5,
+          Paint()
+            ..color = plotTheme.label
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.5,
+        );
+      }
     }
 
     final CurveFeature? feature = traceFeature;
@@ -832,77 +928,20 @@ class Plot2DPainter extends CustomPainter {
     List<({Color color, double y})> hits,
     CurveFeature? feature,
   ) {
-    String fmt(double v) {
-      if (v.abs() >= 1e5 || (v != 0 && v.abs() < 1e-3)) {
-        return v.toStringAsExponential(3);
-      }
-      return v.toStringAsFixed(3);
-    }
-
-    final List<TextPainter> lines = <TextPainter>[
-      TextPainter(
-        text: TextSpan(
-          // Naming what was snapped to is the point: "root" answers the
-          // question, where a bare coordinate only reports a position.
-          text:
-              feature == null
-                  ? 'x = ${fmt(tx)}'
-                  : '${feature.label}  x = ${fmt(tx)}',
-          style: TextStyle(
-            color: feature == null ? plotTheme.label : plotTheme.axis,
-            fontSize: 11,
-            fontWeight: feature == null ? FontWeight.normal : FontWeight.w700,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout(),
+    drawReadoutBox(canvas, size, plotTheme, <ReadoutLine>[
+      (
+        // Naming what was snapped to is the point: "root" answers the
+        // question, where a bare coordinate only reports a position.
+        color: feature == null ? plotTheme.label : plotTheme.axis,
+        text:
+            feature == null
+                ? 'x = ${formatReadout(tx)}'
+                : '${feature.label}  x = ${formatReadout(tx)}',
+        bold: feature != null,
+      ),
       for (final h in hits)
-        TextPainter(
-          text: TextSpan(
-            text: fmt(h.y),
-            style: TextStyle(
-              color: h.color,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-        )..layout(),
-    ];
-
-    const double pad = 6;
-    final double w =
-        lines.map((t) => t.width).reduce((a, b) => a > b ? a : b) + pad * 2;
-    final double h =
-        lines.map((t) => t.height).reduce((a, b) => a + b) + pad * 2;
-
-    // Flip to the other side of the crosshair near the right edge.
-    double left = sx + 10;
-    if (left + w > size.width - 4) left = sx - 10 - w;
-    left = left.clamp(4.0, size.width - w - 4);
-    const double top = 8;
-
-    final RRect box = RRect.fromRectAndRadius(
-      Rect.fromLTWH(left, top, w, h),
-      const Radius.circular(4),
-    );
-    canvas.drawRRect(
-      box,
-      Paint()..color = plotTheme.colorbarBorder.withValues(alpha: 0.12),
-    );
-    canvas.drawRRect(
-      box,
-      Paint()
-        ..color = plotTheme.colorbarBorder
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1,
-    );
-
-    double y = top + pad;
-    for (final TextPainter t in lines) {
-      t.paint(canvas, Offset(left + pad, y));
-      y += t.height;
-    }
+        (color: h.color, text: formatReadout(h.y), bold: false),
+    ], anchorX: sx);
   }
 
   void _drawScalarField(
@@ -1120,38 +1159,38 @@ class Plot2DPainter extends CustomPainter {
         final x = xMin + (xMax - xMin) * i / gridCount;
         final y = yMin + (yMax - yMin) * j / gridCount;
 
-          final (fx, fy, fz) = vectorParser!.evaluate(x, y);
-          double vx = fx;
-          double vy = fy;
-          double mag = vectorParser!.magnitude(x, y);
+        final (fx, fy, fz) = vectorParser!.evaluate(x, y);
+        double vx = fx;
+        double vy = fy;
+        double mag = vectorParser!.magnitude(x, y);
 
-          if (surfaceMode == SurfaceMode.x) {
-            vx = fx;
-            vy = 0;
-            mag = fx.abs();
-          } else if (surfaceMode == SurfaceMode.y) {
-            vx = 0;
-            vy = fy;
-            mag = fy.abs();
-          } else if (surfaceMode == SurfaceMode.z) {
-            vx = 0;
-            vy = 0;
-            mag = fz.abs();
-          }
+        if (surfaceMode == SurfaceMode.x) {
+          vx = fx;
+          vy = 0;
+          mag = fx.abs();
+        } else if (surfaceMode == SurfaceMode.y) {
+          vx = 0;
+          vy = fy;
+          mag = fy.abs();
+        } else if (surfaceMode == SurfaceMode.z) {
+          vx = 0;
+          vy = 0;
+          mag = fz.abs();
+        }
 
-          if (!mag.isFinite || mag < 1e-10) continue;
+        if (!mag.isFinite || mag < 1e-10) continue;
 
-          final normalized = mag / maxMag;
-          final color = plotColormap(normalized);
+        final normalized = mag / maxMag;
+        final color = plotColormap(normalized);
 
-          final scale = mag == 0 ? 0 : 1 / mag;
-          final nx = vx * scale;
-          final ny = vy * scale;
+        final scale = mag == 0 ? 0 : 1 / mag;
+        final nx = vx * scale;
+        final ny = vy * scale;
 
-          final startX = toScreenX(x);
-          final startY = toScreenY(y);
-          final endX = startX + nx * arrowLength;
-          final endY = startY - ny * arrowLength;
+        final startX = toScreenX(x);
+        final startY = toScreenY(y);
+        final endX = startX + nx * arrowLength;
+        final endY = startY - ny * arrowLength;
 
         final paint =
             Paint()
@@ -1250,15 +1289,17 @@ class Plot2DPainter extends CustomPainter {
       barHeight,
     );
 
-    for (int i = 0; i < barHeight; i++) {
-      final t = 1.0 - i / barHeight;
-      final color = plotColormap(t);
-      canvas.drawLine(
-        Offset(barRect.left, barRect.top + i),
-        Offset(barRect.right, barRect.top + i),
-        Paint()..color = color,
-      );
-    }
+    // One gradient, not a line per pixel: sampling the ramp per row quantises
+    // it to the bar's height in steps, which reads as banding.
+    canvas.drawRect(
+      barRect,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: plotColormapStops,
+        ).createShader(barRect),
+    );
 
     canvas.drawRect(
       barRect,
@@ -1337,9 +1378,17 @@ class Plot2DPainter extends CustomPainter {
   }
 
   double _calculateGridSpacing(double range, int maxLines) {
-    if (range <= 0) return 1;
+    // `range <= 0` is false for NaN, so this guard used to let a NaN window
+    // through to floor(), which throws rather than returning a garbage double.
+    // A window that bad is a bug upstream, but the painter should not take the
+    // whole frame down over it.
+    if (!range.isFinite || range <= 0 || maxLines <= 0) return 1;
     final roughStep = range / maxLines;
-    final magnitude = pow(10, (log(roughStep) / ln10).floor()).toDouble();
+    if (!roughStep.isFinite || roughStep <= 0) return 1;
+    final exponent = log(roughStep) / ln10;
+    if (!exponent.isFinite) return 1;
+    final magnitude = pow(10, exponent.floor()).toDouble();
+    if (!magnitude.isFinite || magnitude <= 0) return 1;
     final normalized = roughStep / magnitude;
     double nice;
     if (normalized <= 1) {

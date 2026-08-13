@@ -87,11 +87,11 @@ class VectorFieldParser {
     final y = compile(yNodes);
     final z = compile(zNodes);
 
-    final String? firstError = <PlotExpression?>[
-      x,
-      y,
-      z,
-    ].where((e) => e != null && !e.isValid).map((e) => e!.error).firstOrNull;
+    final String? firstError =
+        <PlotExpression?>[x, y, z]
+            .where((e) => e != null && !e.isValid)
+            .map((e) => e!.error)
+            .firstOrNull;
 
     return VectorFieldParser(
       xComponent: x,
@@ -106,10 +106,7 @@ class VectorFieldParser {
     final List<MathNode> body =
         coefficient.isEmpty ? <MathNode>[LiteralNode(text: '1')] : coefficient;
     if (!negative) return body;
-    return <MathNode>[
-      LiteralNode(text: '-'),
-      ParenthesisNode(content: body),
-    ];
+    return <MathNode>[LiteralNode(text: '-'), ParenthesisNode(content: body)];
   }
 
   /// Break a flat node list into additive terms.

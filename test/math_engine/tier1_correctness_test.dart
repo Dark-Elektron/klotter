@@ -30,8 +30,11 @@ void main() {
   }
 
   void _expectExprEquals(Expr actual, Expr expected) {
-    expect(actual.simplify().structurallyEquals(expected.simplify()), isTrue,
-        reason: 'expected $expected but got $actual');
+    expect(
+      actual.simplify().structurallyEquals(expected.simplify()),
+      isTrue,
+      reason: 'expected $expected but got $actual',
+    );
   }
 
   group('1.2/1.3 unary minus and power precedence (decimal engine)', () {

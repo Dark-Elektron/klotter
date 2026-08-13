@@ -18,8 +18,15 @@ void main() {
   group('2.1 arrow navigation across all node types', () {
     test('moveRight enters a TrigNode argument', () {
       final controller = MathEditorController();
-      final trig = TrigNode(function: 'sin', argument: [LiteralNode(text: 'x')]);
-      controller.expression = [LiteralNode(text: ''), trig, LiteralNode(text: '')];
+      final trig = TrigNode(
+        function: 'sin',
+        argument: [LiteralNode(text: 'x')],
+      );
+      controller.expression = [
+        LiteralNode(text: ''),
+        trig,
+        LiteralNode(text: ''),
+      ];
       controller.cursor = const EditorCursor(index: 0, subIndex: 0);
 
       controller.moveRight();
@@ -54,7 +61,10 @@ void main() {
       controller.moveRight();
 
       expect(controller.cursor.parentId, isNull);
-      expect(controller.cursor.index, equals(2)); // landed on the trailing literal
+      expect(
+        controller.cursor.index,
+        equals(2),
+      ); // landed on the trailing literal
     });
 
     test('moveLeft crosses a ConstantNode', () {
@@ -94,41 +104,48 @@ void main() {
 
       // Root kept, and the surviving "cd" tail is re-attached.
       expect(controller.expression.whereType<RootNode>().length, equals(1));
-      final literals = controller.expression
-          .whereType<LiteralNode>()
-          .map((n) => n.text)
-          .join();
+      final literals =
+          controller.expression
+              .whereType<LiteralNode>()
+              .map((n) => n.text)
+              .join();
       expect(literals, contains('cd'));
     });
   });
 
   group('2.4 deleting a single composite merges surrounding literals', () {
-    test('literals around the deleted node are merged with caret at the join', () {
-      final controller = MathEditorController();
-      final fraction = FractionNode(
-        num: [LiteralNode(text: '1')],
-        den: [LiteralNode(text: '2')],
-      );
-      controller.expression = [
-        LiteralNode(text: 'ab'),
-        fraction,
-        LiteralNode(text: 'cd'),
-      ];
-      controller.setSelection(
-        SelectionRange(
-          start: SelectionAnchor(nodeIndex: 1, charIndex: 0),
-          end: SelectionAnchor(nodeIndex: 1, charIndex: 1),
-        ),
-      );
+    test(
+      'literals around the deleted node are merged with caret at the join',
+      () {
+        final controller = MathEditorController();
+        final fraction = FractionNode(
+          num: [LiteralNode(text: '1')],
+          den: [LiteralNode(text: '2')],
+        );
+        controller.expression = [
+          LiteralNode(text: 'ab'),
+          fraction,
+          LiteralNode(text: 'cd'),
+        ];
+        controller.setSelection(
+          SelectionRange(
+            start: SelectionAnchor(nodeIndex: 1, charIndex: 0),
+            end: SelectionAnchor(nodeIndex: 1, charIndex: 1),
+          ),
+        );
 
-      controller.deleteSelection();
+        controller.deleteSelection();
 
-      expect(controller.expression, hasLength(1));
-      expect(controller.expression.first, isA<LiteralNode>());
-      expect((controller.expression.first as LiteralNode).text, equals('abcd'));
-      expect(controller.cursor.index, equals(0));
-      expect(controller.cursor.subIndex, equals(2)); // between "ab" and "cd"
-    });
+        expect(controller.expression, hasLength(1));
+        expect(controller.expression.first, isA<LiteralNode>());
+        expect(
+          (controller.expression.first as LiteralNode).text,
+          equals('abcd'),
+        );
+        expect(controller.cursor.index, equals(0));
+        expect(controller.cursor.subIndex, equals(2)); // between "ab" and "cd"
+      },
+    );
   });
 
   group('2.6 undo granularity', () {
@@ -139,10 +156,7 @@ void main() {
       expect(controller.canUndo, isFalse);
 
       controller.insertCharacter('ans');
-      expect(
-        controller.expression.whereType<AnsNode>().length,
-        greaterThan(0),
-      );
+      expect(controller.expression.whereType<AnsNode>().length, greaterThan(0));
 
       controller.undo();
       // A single keystroke must be a single undo; the stack is now empty.
@@ -186,10 +200,11 @@ void main() {
 
       controller.pasteClipboard();
 
-      final literals = controller.expression
-          .whereType<LiteralNode>()
-          .map((n) => n.text)
-          .join();
+      final literals =
+          controller.expression
+              .whereType<LiteralNode>()
+              .map((n) => n.text)
+              .join();
       expect(literals, contains('9')); // previously pasted nothing
     });
   });
@@ -215,10 +230,9 @@ void main() {
         num: [LiteralNode(text: '1')],
         den: [LiteralNode(text: '2')],
       );
-      final state = EditorState.capture(
-        [frac],
-        EditorCursor(parentId: frac.id, path: 'num', index: 0, subIndex: 0),
-      );
+      final state = EditorState.capture([
+        frac,
+      ], EditorCursor(parentId: frac.id, path: 'num', index: 0, subIndex: 0));
 
       // Remapped to the *copied* fraction, not the original id.
       expect(state.cursor.parentId, isNotNull);

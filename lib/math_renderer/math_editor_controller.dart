@@ -4329,7 +4329,10 @@ class MathEditorController extends ChangeNotifier {
     } else if (node is TrigNode) {
       return [MapEntry('arg', node.argument)];
     } else if (node is RootNode) {
-      return [MapEntry('index', node.index), MapEntry('radicand', node.radicand)];
+      return [
+        MapEntry('index', node.index),
+        MapEntry('radicand', node.radicand),
+      ];
     } else if (node is LogNode) {
       return [MapEntry('base', node.base), MapEntry('arg', node.argument)];
     } else if (node is PermutationNode) {

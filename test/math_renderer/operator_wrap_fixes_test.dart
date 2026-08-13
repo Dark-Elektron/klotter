@@ -32,10 +32,11 @@ void main() {
       // Numerator is empty (the operand was NOT absorbed).
       expect(listIsEmpty(frac!.numerator), isTrue);
       // The "18" and the multiply sign are preserved outside the fraction.
-      final joined = controller.expression
-          .whereType<LiteralNode>()
-          .map((n) => n.text)
-          .join();
+      final joined =
+          controller.expression
+              .whereType<LiteralNode>()
+              .map((n) => n.text)
+              .join();
       expect(joined.contains('18$mult'), isTrue);
     });
 
@@ -75,10 +76,8 @@ void main() {
       expect(frac, isNotNull);
       expect(frac!.numerator.whereType<ParenthesisNode>().length, 1);
       // The '!' is glued in the numerator, without a spurious multiply sign.
-      final numText = frac.numerator
-          .whereType<LiteralNode>()
-          .map((n) => n.text)
-          .join();
+      final numText =
+          frac.numerator.whereType<LiteralNode>().map((n) => n.text).join();
       expect(numText.contains('!'), isTrue);
       expect(numText.contains(MathTextStyle.multiplySign), isFalse);
     });

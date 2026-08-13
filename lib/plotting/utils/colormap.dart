@@ -91,6 +91,90 @@ Color plotColormapBanded(double t, {int bands = plotColorBands}) {
 /// Default magnitude ramp for surfaces, contours and colorbars.
 Color plotColormap(double t) => _rampLerp(_jet, t);
 
+/// The stops behind [plotColormap], in order from low to high.
+///
+/// A colorbar drawn as a gradient over these is continuous, and identical to
+/// what [plotColormap] returns because both space the stops evenly. Sampling
+/// the ramp into one row of pixels per bar height instead quantises it to as
+/// many steps as the bar is tall, which on a high-density screen shows as
+/// bands with hard edges.
+const List<Color> plotColormapStops = _jet;
+
+// ============================================================
+// PER-SURFACE RAMPS
+// ============================================================
+
+/// Ramps for telling several surfaces apart on one set of axes.
+///
+/// Each stays inside one hue family and runs dark at the bottom to bright at
+/// the top, so height still reads within a surface while the hue says which
+/// surface it is. [plotColormap] cannot do this job: give two surfaces the
+/// same rainbow and every height appears in both, so the blue of one sits
+/// right beside the blue of the other and neither can be followed.
+const List<List<Color>> _surfaceRamps = <List<Color>>[
+  // Blue
+  <Color>[
+    Color(0xFF0B1D51),
+    Color(0xFF14357E),
+    Color(0xFF1E63B8),
+    Color(0xFF4E9BE0),
+    Color(0xFF9FD0F5),
+  ],
+  // Amber
+  <Color>[
+    Color(0xFF4A1D03),
+    Color(0xFF8A3B06),
+    Color(0xFFCC6A10),
+    Color(0xFFF0A030),
+    Color(0xFFFFD98A),
+  ],
+  // Green
+  <Color>[
+    Color(0xFF0A2E17),
+    Color(0xFF14572B),
+    Color(0xFF2C8C46),
+    Color(0xFF5DBE6E),
+    Color(0xFFA9E6A0),
+  ],
+  // Magenta
+  <Color>[
+    Color(0xFF3B0A38),
+    Color(0xFF6E1466),
+    Color(0xFFA82A96),
+    Color(0xFFD861BE),
+    Color(0xFFF4AEE0),
+  ],
+  // Teal
+  <Color>[
+    Color(0xFF042E33),
+    Color(0xFF0B565E),
+    Color(0xFF11868C),
+    Color(0xFF3FB8B4),
+    Color(0xFF9BE7DF),
+  ],
+  // Crimson
+  <Color>[
+    Color(0xFF470A16),
+    Color(0xFF80122A),
+    Color(0xFFBC2740),
+    Color(0xFFE4636F),
+    Color(0xFFF7AFAF),
+  ],
+];
+
+/// How many distinct surface ramps exist before they repeat.
+int get surfaceRampCount => _surfaceRamps.length;
+
+/// The ramp for surface [index] of [of] on the same axes.
+///
+/// A lone surface keeps [plotColormap], the full rainbow, because there is
+/// nothing to confuse it with and the extra hue range shows its shape better.
+Color Function(double) surfaceColormap(int index, {required int of}) {
+  if (of <= 1) return plotColormap;
+  final List<Color> ramp = _surfaceRamps[index % _surfaceRamps.length];
+  return (double t) => _rampLerp(ramp, t);
+}
+
 /// Quieter single-hue alternative for the plain "gradient" surface mode.
 Color surfaceGradientColor(double t) => _rampLerp(_tealRamp, t);
 

@@ -11,6 +11,8 @@ import '../utils/colormap.dart';
 import '../utils/level_set.dart';
 import '../utils/plot_cache.dart';
 import '../utils/plot_theme.dart';
+import '../utils/readout_box.dart';
+import '../utils/surface_pick.dart';
 
 // Helper classes for 3D rendering
 class Quad {
@@ -76,14 +78,7 @@ class _VertexBatch {
 
   bool get isEmpty => _positions.isEmpty;
 
-  void addTriangle(
-    Offset a,
-    Offset b,
-    Offset c,
-    Color ca,
-    Color cb,
-    Color cc,
-  ) {
+  void addTriangle(Offset a, Offset b, Offset c, Color ca, Color cb, Color cc) {
     _positions.addAll(<Offset>[a, b, c]);
     _colors.addAll(<Color>[ca, cb, cc]);
   }
@@ -117,7 +112,6 @@ class _VertexBatch {
   }
 }
 
-
 /// A back-to-front drawing list holding both triangles and line segments.
 ///
 /// The floor grid used to be painted before the surface, unconditionally, so
@@ -130,7 +124,40 @@ class _VertexBatch {
 /// is only flushed when a line has to be drawn between them, so a scene with a
 /// few hundred grid segments costs a few hundred draw calls rather than one per
 /// triangle.
-class _DepthScene {
+/// Somewhere depth-tagged line segments can be sent.
+///
+/// The floor grid and axis chrome are built the same way whoever is drawing
+/// them; only what happens next differs. [_DepthScene] interleaves them with
+/// batched triangles, while a level surface keeps its own packed vertex
+/// buffers and merges the lines against those instead.
+abstract class _LineSink {
+  void addLine(Offset a, Offset b, Paint paint, double depth);
+}
+
+/// Just keeps the lines, for a caller that does its own merging.
+class _LineCollector implements _LineSink {
+  final List<Offset> a = <Offset>[];
+  final List<Offset> b = <Offset>[];
+  final List<Paint> paints = <Paint>[];
+  final List<double> depths = <double>[];
+
+  @override
+  void addLine(Offset from, Offset to, Paint paint, double depth) {
+    a.add(from);
+    b.add(to);
+    paints.add(paint);
+    depths.add(depth);
+  }
+
+  int get length => depths.length;
+
+  /// Indices ordered far to near, matching how triangles are sorted.
+  List<int> get farToNear =>
+      List<int>.generate(length, (i) => i)
+        ..sort((x, y) => depths[y].compareTo(depths[x]));
+}
+
+class _DepthScene implements _LineSink {
   final List<double> _depths = <double>[];
   final List<bool> _isLine = <bool>[];
 
@@ -157,6 +184,7 @@ class _DepthScene {
     _triColor.addAll(<int>[ca, cb, cc]);
   }
 
+  @override
   void addLine(Offset a, Offset b, Paint paint, double depth) {
     _depths.add(depth);
     _isLine.add(true);
@@ -223,6 +251,12 @@ class _DepthScene {
 
 class Plot3DPainter extends CustomPainter {
   final PlotExpression function;
+
+  /// One surface per line of the cell, exactly as 2D draws one curve per line.
+  /// [function] stays the primary entry and still drives the single-function
+  /// views — vector fields, scalar fields and contours.
+  final List<PlotExpression> functions;
+
   final bool is3DFunction;
   final double rotationX, rotationZ;
   final double rangeX, rangeY, rangeZ; // Changed: rangeZ is now a parameter
@@ -238,8 +272,13 @@ class Plot3DPainter extends CustomPainter {
   /// colour mode and the theme's series palette.
   final PlotThemeData plotTheme;
 
+  /// Where the trace marker sits, in data coordinates, or null when the plot
+  /// is not being traced.
+  final SurfaceHit? tracePoint;
+
   Plot3DPainter({
     required this.function,
+    this.functions = const <PlotExpression>[],
     required this.is3DFunction,
     required this.rotationX,
     required this.rotationZ,
@@ -255,6 +294,7 @@ class Plot3DPainter extends CustomPainter {
     required this.surfaceMode,
     required this.colors,
     required this.plotTheme,
+    this.tracePoint,
   });
 
   // Remove the getter since rangeZ is now a parameter
@@ -271,18 +311,49 @@ class Plot3DPainter extends CustomPainter {
   /// order was fine.
   double _viewExtent = 200.0;
 
+  /// Distance from the eye to the projection plane.
+  ///
+  /// Public because picking a point out of the scene has to invert exactly the
+  /// projection that drew it. Two copies of this number would drift apart and
+  /// put the marker somewhere the surface is not.
+  static const double focalLength = 500.0;
+
+  /// Half-extent of the world box for a viewport of [size].
+  ///
+  /// A rotated box shows its diagonal, and perspective enlarges the near
+  /// corner, so it is fitted to well under half the viewport.
+  static double viewExtentFor(Size size) => min(size.width, size.height) * 0.30;
+
   double get scaleX => _viewExtent / rangeX;
   double get scaleY => _viewExtent / rangeY;
   double get scaleZ => _viewExtent / rangeZ;
   PlotThemeData get _theme => plotTheme;
 
+  /// Every function to draw, falling back to the single [function] so callers
+  /// that predate multi-surface support keep working unchanged.
+  List<PlotExpression> get _curves =>
+      functions.isEmpty ? <PlotExpression>[function] : functions;
+
+  /// Lines that are a height, z = f(x, y), rather than an equation to solve.
+  List<PlotExpression> get _heightCurves =>
+      _curves.where((PlotExpression e) => !e.isLevelSet).toList();
+
+  bool get _hasHeightSurface =>
+      _curves.any((PlotExpression e) => !e.isLevelSet);
+
+  /// Lines drawn as a sheet, because they vary in both x and y.
+  List<PlotExpression> get _sheetCurves =>
+      _heightCurves.where((PlotExpression e) => e.isSurface).toList();
+
+  /// Lines drawn as a single curve standing in the box, because they vary in
+  /// only one direction. A cell can hold both kinds at once.
+  List<PlotExpression> get _lineCurves =>
+      _heightCurves.where((PlotExpression e) => !e.isSurface).toList();
+
   @override
   void paint(Canvas canvas, Size size) {
-    // A rotated box shows its diagonal, and perspective enlarges the near
-    // corner, so the box is fitted to well under half the viewport.
-    _viewExtent = min(size.width, size.height) * 0.30;
+    _viewExtent = viewExtentFor(size);
 
-    const focalLength = 500.0;
     final bool showSurface = surfaceMode != SurfaceMode.none;
     canvas.save();
     canvas.clipRect(Rect.fromLTWH(0, 0, size.width, size.height));
@@ -293,11 +364,13 @@ class Plot3DPainter extends CustomPainter {
     // are two: _drawSurfaceWithJetColormap runs when a surface mode is
     // selected, _drawSurface when it is not — and surfaceMode defaults to
     // none, so the plain one is what an ordinary z = f(x, y) actually uses.
+    // _drawHeightSurfaces builds the floor into its own depth scene, for
+    // curves as well as sheets, so drawing it here too would put an
+    // un-occluded copy underneath.
     final bool floorDrawnBySurface =
         fieldType == FieldType.scalar &&
-        !function.isLevelSet &&
-        is3DFunction &&
-        plotMode != PlotMode.field;
+        plotMode != PlotMode.field &&
+        (_hasHeightSurface || _curves.any((PlotExpression e) => e.isLevelSet));
 
     if (!floorDrawnBySurface) {
       _drawFloorGrid(canvas, size, focalLength);
@@ -343,42 +416,41 @@ class Plot3DPainter extends CustomPainter {
         }
       }
     } else {
-      // Scalar field visualization
-      if (function.isLevelSet) {
+      // Scalar field visualization.
+      //
+      // A cell can hold both kinds at once — z = x²+y² on one line and
+      // x²+y²+z²=4 on the next — so the two are not exclusive. Each renderer
+      // takes the lines that belong to it.
+      if (_curves.any((PlotExpression e) => e.isLevelSet)) {
         // An equation defines a surface, not a height: there is no z = f(x,y)
         // to sample, so it is contoured rather than sampled.
-        _drawLevelSurface(canvas, size, focalLength);
-      } else if (is3DFunction) {
-        if (showSurface) {
-          // Show surface with jet colormap (magnitude coloring)
-          _drawSurfaceWithJetColormap(canvas, size, focalLength);
+        // The height renderer owns the floor when there is one; otherwise
+        // this is the only thing that can draw it in the right order.
+        _drawLevelSurface(
+          canvas,
+          size,
+          focalLength,
+          withFloor: !_hasHeightSurface,
+        );
+      }
+      if (_hasHeightSurface) {
+        if (is3DFunction && plotMode == PlotMode.field) {
+          _drawScalarField3D(canvas, size, focalLength);
+          if (showContour) _drawContourLines3D(canvas, size, focalLength);
+        } else {
+          // Sheets and curves are not exclusive either. sin(x) on one line and
+          // x²+y² on the next is a curve standing beside a surface; both go
+          // into the one depth-ordered scene this builds.
+          _drawHeightSurfaces(canvas, size, focalLength);
 
-          // Draw contours on the surface if enabled
-          if (showContour) {
+          if (showContour && _sheetCurves.isNotEmpty) {
             _drawSurfaceContours(canvas, size, focalLength);
           }
-        } else {
-          // Default visualization
-          if (plotMode == PlotMode.field) {
-            _drawScalarField3D(canvas, size, focalLength);
-          } else {
-            _drawSurface(canvas, size, focalLength);
-          }
-
-          // Draw contours if enabled
-          if (showContour) {
-            if (plotMode == PlotMode.field) {
-              _drawContourLines3D(canvas, size, focalLength);
-            } else {
-              _drawSurfaceContours(canvas, size, focalLength);
-            }
-          }
         }
-      } else {
-        // 1D function (f(x) only)
-        _drawStandingCurve(canvas, size, focalLength);
       }
     }
+
+    _drawTrace3D(canvas, size);
 
     canvas.restore();
   }
@@ -389,59 +461,47 @@ class Plot3DPainter extends CustomPainter {
   /// Contoured with marching tetrahedra: a level set has no height to sample,
   /// and may close on itself or come in several pieces, so it has to be found
   /// by looking for sign changes through the volume.
-  void _drawLevelSurface(Canvas canvas, Size size, double focalLength) {
-    // Geometry and colour are cached: neither depends on the camera, and a
-    // hyperboloid marches to ~33,000 triangles, so rebuilding per frame was
-    // the whole cost of a drag.
-    final LevelMesh mesh = cachedLevelMesh(
-      function,
-      <double>[-rangeX, rangeX, -rangeY, rangeY, -rangeZ, rangeZ],
-      40,
-      () => <({
-        double ax,
-        double ay,
-        double az,
-        double bx,
-        double by,
-        double bz,
-        double cx,
-        double cy,
-        double cz,
-      })>[
-        for (final LevelTriangle t in marchingTetrahedra(
-          function,
-          -rangeX,
-          rangeX,
-          -rangeY,
-          rangeY,
-          -rangeZ,
-          rangeZ,
-        ))
-          (
-            ax: t.a.x,
-            ay: t.a.y,
-            az: t.a.z,
-            bx: t.b.x,
-            by: t.b.y,
-            bz: t.b.z,
-            cx: t.c.x,
-            cy: t.c.y,
-            cz: t.c.z,
-          ),
-      ],
-      scaleX,
-      scaleY,
-      scaleZ,
-      // Colour by height, so the surface carries a readable quantity even
-      // though every point on it satisfies the same equation.
-      (double z) =>
-          plotColormap(
-            ((z + rangeZ) / (2 * rangeZ)).clamp(0.0, 1.0),
-          ).toARGB32(),
-    );
+  void _drawLevelSurface(
+    Canvas canvas,
+    Size size,
+    double focalLength, {
+    required bool withFloor,
+  }) {
+    final List<PlotExpression> equations =
+        _curves.where((PlotExpression e) => e.isLevelSet).toList();
+    if (equations.isEmpty) return;
 
-    final int count = mesh.triangleCount;
+    final List<LevelMesh> meshes = <LevelMesh>[
+      for (int i = 0; i < equations.length; i++)
+        _levelMeshFor(equations[i], i, equations.length),
+    ];
+
+    // Every equation's triangles go into one buffer and are sorted together,
+    // so two surfaces that pass through each other interleave instead of one
+    // being drawn wholly in front of the other.
+    final int count = meshes.fold<int>(
+      0,
+      (int sum, LevelMesh m) => sum + m.triangleCount,
+    );
     if (count == 0) return;
+
+    final Float32List world;
+    final Int32List meshColors;
+    if (meshes.length == 1) {
+      world = meshes.first.world;
+      meshColors = meshes.first.colors;
+    } else {
+      world = Float32List(count * 9);
+      meshColors = Int32List(count * 3);
+      int wAt = 0;
+      int cAt = 0;
+      for (final LevelMesh m in meshes) {
+        world.setRange(wAt, wAt + m.triangleCount * 9, m.world);
+        meshColors.setRange(cAt, cAt + m.triangleCount * 3, m.colors);
+        wAt += m.triangleCount * 9;
+        cAt += m.triangleCount * 3;
+      }
+    }
 
     // Rotation is four scalars per frame, not a cos/sin pair per vertex.
     // Point3D.rotateX and rotateZ each recompute both, which for 100,000
@@ -457,7 +517,6 @@ class Plot3DPainter extends CustomPainter {
     // depth for the painter's algorithm.
     final Float32List screen = Float32List(count * 6);
     final Float64List depth = Float64List(count);
-    final Float32List world = mesh.world;
 
     for (int t = 0; t < count; t++) {
       final int w = t * 9;
@@ -494,34 +553,155 @@ class Plot3DPainter extends CustomPainter {
     for (int i = 0; i < count; i++) {
       final int src = order[i];
       positions.setRange(i * 6, i * 6 + 6, screen, src * 6);
-      colors.setRange(i * 3, i * 3 + 3, mesh.colors, src * 3);
+      colors.setRange(i * 3, i * 3 + 3, meshColors, src * 3);
     }
 
-    final Vertices vertices = Vertices.raw(
-      VertexMode.triangles,
-      positions,
-      colors: colors,
-    );
-    canvas.drawVertices(vertices, BlendMode.dst, Paint());
-    vertices.dispose();
+    // The floor and axes are merged into the same back-to-front order as the
+    // triangles, so the plane cuts through the surface where it should instead
+    // of the whole surface being painted over a finished floor. That is what
+    // made a sphere sit on top of its own axes.
+    //
+    // Deliberately not _DepthScene: it holds a few doubles and an Offset per
+    // vertex, which is fine for the 5,000 triangles a height surface makes and
+    // not for the 33,000 a hyperboloid marches to. The packed buffers stay,
+    // and runs of consecutive triangles are drawn as views into them.
+    final _LineCollector chrome = _LineCollector();
+    if (withFloor) {
+      _addFloorGridTo(chrome, size, focalLength);
+      _addAxisChromeTo(chrome, size, focalLength);
+    }
 
-    _drawColorbar3D(canvas, size, -rangeZ, rangeZ);
+    void drawRun(int startTriangle, int endTriangle) {
+      if (endTriangle <= startTriangle) return;
+      final Vertices vertices = Vertices.raw(
+        VertexMode.triangles,
+        positions.sublist(startTriangle * 6, endTriangle * 6),
+        colors: colors.sublist(startTriangle * 3, endTriangle * 3),
+      );
+      canvas.drawVertices(vertices, BlendMode.dst, Paint());
+      vertices.dispose();
+    }
+
+    // Lines go out in batches, not one at a time. Splitting the surface at
+    // every single grid segment costs a drawVertices per segment — about 940
+    // of them — and that, not the vertex data, is what dominates: a 1,700
+    // triangle sphere cost the same as a 33,000 triangle hyperboloid. A
+    // height surface never showed this because it sits above the floor, so
+    // its grid lines fall into a handful of runs; a level surface straddles
+    // the floor and interleaves with almost every line.
+    //
+    // The error this trades for is confined to one batch: lines inside a
+    // batch are drawn at the depth of the first of them, so a line can sit in
+    // front of triangles within that narrow depth band. At this batch count
+    // the band is a fraction of the box, and the lines are one pixel wide.
+    const int maxRuns = 24;
+    final List<int> lineOrder = chrome.farToNear;
+    final int batch =
+        lineOrder.isEmpty ? 1 : (lineOrder.length / maxRuns).ceil();
+
+    int runStart = 0;
+    int drawn = 0;
+    for (int b = 0; b < lineOrder.length; b += batch) {
+      final double cut = chrome.depths[lineOrder[b]];
+      // Everything further away than this batch is already behind it.
+      while (drawn < count && depth[order[drawn]] > cut) {
+        drawn++;
+      }
+      drawRun(runStart, drawn);
+      runStart = drawn;
+
+      final int end = min(b + batch, lineOrder.length);
+      for (int k = b; k < end; k++) {
+        final int l = lineOrder[k];
+        canvas.drawLine(chrome.a[l], chrome.b[l], chrome.paints[l]);
+      }
+    }
+    drawRun(runStart, count);
+
+    _drawAxes(canvas, size, focalLength, skipLines: true);
+
+    if (equations.length == 1) {
+      _drawColorbar3D(canvas, size, -rangeZ, rangeZ);
+    } else {
+      _drawSurfaceLegend(canvas, size, equations.length);
+    }
   }
 
-  void _drawSurfaceWithJetColormap(
-    Canvas canvas,
-    Size size,
-    double focalLength,
-  ) {
-    const gridSize = 50;
-    final parser = function;
+  /// March one equation into a coloured mesh.
+  ///
+  /// Geometry and colour are cached: neither depends on the camera, and a
+  /// hyperboloid marches to ~33,000 triangles, so rebuilding per frame was the
+  /// whole cost of a drag.
+  LevelMesh _levelMeshFor(PlotExpression equation, int index, int of) {
+    final Color Function(double) ramp = surfaceColormap(index, of: of);
+    return cachedLevelMesh(
+      equation,
+      <double>[-rangeX, rangeX, -rangeY, rangeY, -rangeZ, rangeZ],
+      40,
+      () => <
+        ({
+          double ax,
+          double ay,
+          double az,
+          double bx,
+          double by,
+          double bz,
+          double cx,
+          double cy,
+          double cz,
+        })
+      >[
+        for (final LevelTriangle t in marchingTetrahedra(
+          equation,
+          -rangeX,
+          rangeX,
+          -rangeY,
+          rangeY,
+          -rangeZ,
+          rangeZ,
+        ))
+          (
+            ax: t.a.x,
+            ay: t.a.y,
+            az: t.a.z,
+            bx: t.b.x,
+            by: t.b.y,
+            bz: t.b.z,
+            cx: t.c.x,
+            cy: t.c.y,
+            cz: t.c.z,
+          ),
+      ],
+      scaleX,
+      scaleY,
+      scaleZ,
+      // Colour by height, so the surface carries a readable quantity even
+      // though every point on it satisfies the same equation.
+      //
+      // An inequality bounds a solid rather than tracing a shell, so its
+      // surface is drawn see-through: the triangles are already sorted back
+      // to front, which is exactly the order alpha blending needs, so the far
+      // wall shows through the near one and the shape reads as a body with an
+      // inside. A strict inequality, whose own boundary is excluded, is
+      // fainter still — the 3D counterpart of the dashed edge in 2D.
+      (double z) {
+        final Color base = ramp(((z + rangeZ) / (2 * rangeZ)).clamp(0.0, 1.0));
+        if (!equation.relation.isRegion) return base.toARGB32();
+        return base
+            .withValues(alpha: equation.relation.includesBoundary ? 0.55 : 0.34)
+            .toARGB32();
+      },
+    );
+  }
 
-    List<List<Point3D?>> points = [];
-    List<List<double>> zValues = [];
-
-    double minZ = double.infinity;
-    double maxZ = double.negativeInfinity;
-
+  /// Sample one z = f(x, y) over the floor grid and build its cells.
+  ///
+  /// [minV] and [maxV] cover only the corners actually drawn, so colour maps
+  /// across what is on screen rather than across values clipped away.
+  ({List<Quad> quads, double minV, double maxV}) _surfaceQuads(
+    PlotExpression parser, {
+    int gridSize = 50,
+  }) {
     // Heights are cached: rotating changes where the camera sees the surface
     // from, not the surface, so re-walking the expression tree every frame was
     // wasted work.
@@ -532,9 +712,14 @@ class Plot3DPainter extends CustomPainter {
       gridSize,
     );
 
+    final List<List<Point3D?>> points = <List<Point3D?>>[];
+    final List<List<double>> zValues = <List<double>>[];
+    double minZ = double.infinity;
+    double maxZ = double.negativeInfinity;
+
     for (int i = 0; i <= gridSize; i++) {
-      List<Point3D?> row = [];
-      List<double> zRow = [];
+      final List<Point3D?> row = <Point3D?>[];
+      final List<double> zRow = <double>[];
       for (int j = 0; j <= gridSize; j++) {
         final x = -rangeX + (2 * rangeX * i / gridSize);
         final y = -rangeY + (2 * rangeY * j / gridSize);
@@ -568,10 +753,13 @@ class Plot3DPainter extends CustomPainter {
       zValues.add(zRow);
     }
 
+    if (!minZ.isFinite || !maxZ.isFinite) {
+      minZ = 0;
+      maxZ = 1;
+    }
     if (minZ == maxZ) maxZ = minZ + 1;
 
-    // Build quads
-    List<Quad> quads = [];
+    final List<Quad> quads = <Quad>[];
     for (int i = 0; i < gridSize; i++) {
       for (int j = 0; j < gridSize; j++) {
         final p1 = points[i][j];
@@ -605,44 +793,149 @@ class Plot3DPainter extends CustomPainter {
       }
     }
 
-    // Sort by depth (painter's algorithm)
-    // The floor joins the same ordered list as the surface, so the two
-    // occlude each other instead of the surface always winning.
+    return (quads: quads, minV: minZ, maxV: maxZ);
+  }
+
+  /// Draw every z = f(x, y) in the cell on one set of axes.
+  ///
+  /// All surfaces and the floor go into a single depth-ordered scene, so they
+  /// occlude one another properly: where one surface passes under another the
+  /// nearer one covers it, instead of whichever was drawn last winning.
+  ///
+  /// This is the only height-surface renderer. There used to be two —
+  /// `_drawSurfaceWithJetColormap` for when a surface mode is selected and
+  /// `_drawSurface` for when it is not — which were near-identical copies, and
+  /// since `surfaceMode` defaults to none it was the second that ran for an
+  /// ordinary z = f(x, y). Three separate fixes were made to the first one and
+  /// none of them ever appeared on screen.
+  void _drawHeightSurfaces(Canvas canvas, Size size, double focalLength) {
+    final List<PlotExpression> curves = _sheetCurves;
+    if (curves.isEmpty && _lineCurves.isEmpty) return;
+
+    // The floor joins the same ordered list as the surfaces, so the two
+    // occlude each other instead of the surfaces always winning.
     final _DepthScene scene = _DepthScene();
     _addFloorGridTo(scene, size, focalLength);
     _addAxisChromeTo(scene, size, focalLength);
 
-    int shade(double v) =>
-        plotColormap(
-          ((v - minZ) / (maxZ - minZ)).clamp(0.0, 1.0),
-        ).toARGB32();
+    double? soleMin;
+    double? soleMax;
 
-    for (final quad in quads) {
-      final o1 = quad.p1.project(focalLength, size, panX, panY);
-      final o2 = quad.p2.project(focalLength, size, panX, panY);
-      final o3 = quad.p3.project(focalLength, size, panX, panY);
-      final o4 = quad.p4.project(focalLength, size, panX, panY);
+    for (int c = 0; c < curves.length; c++) {
+      final built = _surfaceQuads(curves[c]);
+      if (built.quads.isEmpty) continue;
 
-      // Colour per corner, interpolated across the cell. A single colour from
-      // the cell average makes each cell a flat block, which reads as banding
-      // however fine the grid.
-      final int c1 = shade(quad.v1);
-      final int c2 = shade(quad.v2);
-      final int c3 = shade(quad.v3);
-      final int c4 = shade(quad.v4);
+      // Each surface is coloured against its own range. Sharing one range
+      // across all of them would flatten a shallow surface to a single colour
+      // whenever a steeper one is on the same axes.
+      final Color Function(double) ramp = surfaceColormap(c, of: curves.length);
+      final double span = built.maxV - built.minV;
+      int shade(double v) =>
+          ramp(((v - built.minV) / span).clamp(0.0, 1.0)).toARGB32();
 
-      // Two triangles sharing the p1-p3 diagonal, each carrying its own depth
-      // so a cell can be sorted against a grid segment passing under it.
-      final double d1 = (quad.p1.y + quad.p2.y + quad.p3.y) / 3;
-      final double d2 = (quad.p1.y + quad.p3.y + quad.p4.y) / 3;
-      scene.addTriangle(o1, o2, o3, c1, c2, c3, d1);
-      scene.addTriangle(o1, o3, o4, c1, c3, c4, d2);
+      if (curves.length == 1) {
+        soleMin = built.minV;
+        soleMax = built.maxV;
+      }
+
+      for (final quad in built.quads) {
+        final o1 = quad.p1.project(focalLength, size, panX, panY);
+        final o2 = quad.p2.project(focalLength, size, panX, panY);
+        final o3 = quad.p3.project(focalLength, size, panX, panY);
+        final o4 = quad.p4.project(focalLength, size, panX, panY);
+
+        // Colour per corner, interpolated across the cell. A single colour
+        // from the cell average makes each cell a flat block, which reads as
+        // banding however fine the grid.
+        final int c1 = shade(quad.v1);
+        final int c2 = shade(quad.v2);
+        final int c3 = shade(quad.v3);
+        final int c4 = shade(quad.v4);
+
+        // Two triangles sharing the p1-p3 diagonal, each carrying its own
+        // depth so a cell can be sorted against a grid segment passing under
+        // it — or against another surface threading between them.
+        final double d1 = (quad.p1.y + quad.p2.y + quad.p3.y) / 3;
+        final double d2 = (quad.p1.y + quad.p3.y + quad.p4.y) / 3;
+        scene.addTriangle(o1, o2, o3, c1, c2, c3, d1);
+        scene.addTriangle(o1, o3, o4, c1, c3, c4, d2);
+      }
     }
+
+    // Single-variable curves join the same list, so one passing behind a
+    // surface is hidden by it. Drawn afterwards on top of a finished scene, a
+    // curve floats in front of geometry it runs through — the same fault the
+    // floor grid had against the surface.
+    _addStandingCurvesTo(scene, size, focalLength);
 
     scene.paint(canvas);
 
-    // Draw colorbar
-    _drawColorbar3D(canvas, size, minZ, maxZ);
+    // Tick labels and arrowheads go on last, unoccluded — the lines are
+    // already in the scene, hence skipLines.
+    //
+    // Drawn over a surface as well as beside one. They were suppressed
+    // whenever a sheet was present, on the grounds that numerals scattered
+    // over a bright surface read as dirt — but that left every surface plot
+    // with unlabelled axes and no way to tell what the box spans, which is
+    // the worse of the two.
+    _drawAxes(canvas, size, focalLength, skipLines: true);
+
+    // A colorbar keys one ramp to one set of values, so it can only speak for
+    // a lone surface. With several, each has its own ramp and its own range,
+    // and a single bar would attach the wrong numbers to all but one of them.
+    if (curves.length == 1) {
+      if (soleMin != null && soleMax != null) {
+        _drawColorbar3D(canvas, size, soleMin, soleMax);
+      }
+    } else if (curves.length > 1) {
+      _drawSurfaceLegend(canvas, size, curves.length);
+    }
+  }
+
+  /// Swatches naming which ramp belongs to which line of the cell.
+  ///
+  /// Without it the ramps are just decoration — you can see there are three
+  /// surfaces but not which is which, and the cell lists them in order.
+  void _drawSurfaceLegend(Canvas canvas, Size size, int count) {
+    const double swatchW = 26.0;
+    const double swatchH = 9.0;
+    const double gap = 6.0;
+    const double margin = 10.0;
+
+    final double totalH = count * swatchH + (count - 1) * gap;
+    double top = margin;
+    if (totalH < size.height) top = (size.height - totalH) / 2;
+
+    for (int i = 0; i < count; i++) {
+      final Color Function(double) ramp = surfaceColormap(i, of: count);
+      final Rect r = Rect.fromLTWH(
+        size.width - margin - swatchW,
+        top + i * (swatchH + gap),
+        swatchW,
+        swatchH,
+      );
+      // The swatch is the ramp itself, not one colour from it, so it matches
+      // what the surface actually looks like at every height.
+      canvas.drawRect(
+        r,
+        Paint()
+          ..shader = LinearGradient(
+            colors: <Color>[ramp(0.0), ramp(0.5), ramp(1.0)],
+          ).createShader(r),
+      );
+
+      final TextPainter label = TextPainter(
+        text: TextSpan(
+          text: '${i + 1}',
+          style: TextStyle(color: _theme.label, fontSize: 9),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      label.paint(
+        canvas,
+        Offset(r.left - label.width - 4, r.center.dy - label.height / 2),
+      );
+    }
   }
 
   void _drawVectorMagnitudeSurface3D(
@@ -1374,8 +1667,16 @@ class Plot3DPainter extends CustomPainter {
   }
 
   double _calculateGridSpacing(double range) {
-    final magnitude = pow(10, (log(range * 2) / ln10).floor()).toDouble();
-    final normalized = (range * 2) / magnitude;
+    // floor() throws on Infinity and NaN instead of returning a garbage
+    // double, so an unusable range took the whole frame down — every frame,
+    // since the range persists in the widget's state.
+    final span = range * 2;
+    if (!span.isFinite || span <= 0) return 1;
+    final exponent = log(span) / ln10;
+    if (!exponent.isFinite) return 1;
+    final magnitude = pow(10, exponent.floor()).toDouble();
+    if (!magnitude.isFinite || magnitude <= 0) return 1;
+    final normalized = span / magnitude;
     if (normalized < 2) return magnitude / 5;
     if (normalized < 5) return magnitude / 2;
     return magnitude;
@@ -1386,7 +1687,7 @@ class Plot3DPainter extends CustomPainter {
   /// A line crossing the scene has very different depths at its two ends, so a
   /// single depth cannot say whether a surface passes in front of part of it.
   void _addWorldLineTo(
-    _DepthScene scene,
+    _LineSink scene,
     Size size,
     double focalLength,
     Point3D a,
@@ -1422,7 +1723,7 @@ class Plot3DPainter extends CustomPainter {
   /// near half of an axis, and the near edge of the floor, could never appear
   /// in front of a surface they pass through. Labels and arrowheads are not
   /// included — they are annotations and belong on top.
-  void _addAxisChromeTo(_DepthScene scene, Size size, double focalLength) {
+  void _addAxisChromeTo(_LineSink scene, Size size, double focalLength) {
     final theme = plotTheme;
 
     final List<(Color, Point3D, double, double)> axes =
@@ -1482,7 +1783,7 @@ class Plot3DPainter extends CustomPainter {
   /// Each grid line is cut into pieces because a single line spans the whole
   /// floor: its near end and far end have very different depths, so one depth
   /// per line cannot say whether the surface crosses in front of it.
-  void _addFloorGridTo(_DepthScene scene, Size size, double focalLength) {
+  void _addFloorGridTo(_LineSink scene, Size size, double focalLength) {
     final theme = plotTheme;
 
     // The plane has to read as a plane even where it passes in front of a
@@ -1767,10 +2068,10 @@ class Plot3DPainter extends CustomPainter {
         tp.paint(canvas, Offset(arrowProj.dx + 8, arrowProj.dy - 8));
       }
 
-        final tickPaint =
-            Paint()
-              ..color = theme.tick
-              ..strokeWidth = 1;
+      final tickPaint =
+          Paint()
+            ..color = theme.tick
+            ..strokeWidth = 1;
 
       for (double t = -range; t <= range; t += gridSpacing) {
         if (t.abs() < gridSpacing * 0.1) continue;
@@ -1864,16 +2165,13 @@ class Plot3DPainter extends CustomPainter {
           labelProj,
           Rect.fromLTWH(0, 0, size.width, size.height),
         )) {
-            final ltp = TextPainter(
-              text: TextSpan(
-                text: _formatNumber(t),
-                style: TextStyle(
-                  color: theme.label,
-                  fontSize: 10,
-                ),
-              ),
-              textDirection: TextDirection.ltr,
-            )..layout();
+          final ltp = TextPainter(
+            text: TextSpan(
+              text: _formatNumber(t),
+              style: TextStyle(color: theme.label, fontSize: 10),
+            ),
+            textDirection: TextDirection.ltr,
+          )..layout();
           ltp.paint(
             canvas,
             Offset(labelProj.dx - ltp.width / 2, labelProj.dy - ltp.height / 2),
@@ -1884,6 +2182,8 @@ class Plot3DPainter extends CustomPainter {
   }
 
   String _formatNumber(double n) {
+    // toInt() throws on a non-finite label rather than producing one.
+    if (!n.isFinite) return '';
     if (n.abs() < 0.001) return '0';
     if (n == n.roundToDouble() && n.abs() < 1000) return n.toInt().toString();
     if (n.abs() >= 100) return n.toInt().toString();
@@ -1951,241 +2251,132 @@ class Plot3DPainter extends CustomPainter {
       point.dy >= rect.top &&
       point.dy <= rect.bottom;
 
-  void _drawSurface(Canvas canvas, Size size, double focalLength) {
-    const gridSize = 50;
-    final parser = function;
-
-    List<List<Point3D?>> points = [];
-    List<List<double>> zValues = [];
-
-    for (int i = 0; i <= gridSize; i++) {
-      List<Point3D?> row = [];
-      List<double> zRow = [];
-      for (int j = 0; j <= gridSize; j++) {
-        final x = -rangeX + (2 * rangeX * i / gridSize);
-        final y = -rangeY + (2 * rangeY * j / gridSize);
-        double z;
-        try {
-          z = parser.evaluate(x, y);
-          if (!z.isFinite) {
-            row.add(null);
-            zRow.add(0);
-            continue;
-          }
-          if (z < -rangeZ || z > rangeZ) {
-            row.add(null);
-            zRow.add(z);
-            continue;
-          }
-        } catch (e) {
-          row.add(null);
-          zRow.add(0);
-          continue;
-        }
-
-        row.add(
-          Point3D(
-            x * scaleX,
-            y * scaleY,
-            z * scaleZ,
-          ).rotateZ(rotationZ).rotateX(rotationX),
-        );
-        zRow.add(z);
-      }
-      points.add(row);
-      zValues.add(zRow);
-    }
-
-    // Colour against the surface's own range, not the axis range. Normalising
-    // by rangeZ assumes the data is symmetric about zero and fills the axis:
-    // x²+y² is neither, so its values landed in the upper half of the ramp and
-    // the surface came out nearly one colour regardless of magnitude.
-    double surfaceMin = double.infinity;
-    double surfaceMax = double.negativeInfinity;
-    for (final List<double> zRow in zValues) {
-      for (final double z in zRow) {
-        if (!z.isFinite) continue;
-        if (z < surfaceMin) surfaceMin = z;
-        if (z > surfaceMax) surfaceMax = z;
-      }
-    }
-    // A flat surface has no range to map; keep it mid-ramp rather than
-    // dividing by zero.
-    final double surfaceSpan =
-        (surfaceMax - surfaceMin).isFinite && surfaceMax > surfaceMin
-            ? surfaceMax - surfaceMin
-            : 0.0;
-
-    List<Quad> quads = [];
-    for (int i = 0; i < gridSize; i++) {
-      for (int j = 0; j < gridSize; j++) {
-        final p1 = points[i][j];
-        final p2 = points[i + 1][j];
-        final p3 = points[i + 1][j + 1];
-        final p4 = points[i][j + 1];
-
-        if (p1 == null || p2 == null || p3 == null || p4 == null) continue;
-
-        final avgY = (p1.y + p2.y + p3.y + p4.y) / 4;
-        final avgValue =
-            (zValues[i][j] +
-                zValues[i + 1][j] +
-                zValues[i + 1][j + 1] +
-                zValues[i][j + 1]) /
-            4;
-        quads.add(
-          Quad(
-            p1,
-            p2,
-            p3,
-            p4,
-            avgY,
-            avgValue,
-            v1: zValues[i][j],
-            v2: zValues[i + 1][j],
-            v3: zValues[i + 1][j + 1],
-            v4: zValues[i][j + 1],
-          ),
-        );
-      }
-    }
-
-    quads.sort((a, b) => b.avgDepth.compareTo(a.avgDepth));
-
-    // The floor joins the same ordered list as the surface, so the two occlude
-    // each other rather than the surface always winning.
-    final _DepthScene scene = _DepthScene();
-    _addFloorGridTo(scene, size, focalLength);
-    _addAxisChromeTo(scene, size, focalLength);
-
-    int shade(double v) => plotColormap(
-      surfaceSpan > 0 ? ((v - surfaceMin) / surfaceSpan).clamp(0.0, 1.0) : 0.5,
-    ).toARGB32();
-
-    for (final quad in quads) {
-      final o1 = quad.p1.project(focalLength, size, panX, panY);
-      final o2 = quad.p2.project(focalLength, size, panX, panY);
-      final o3 = quad.p3.project(focalLength, size, panX, panY);
-      final o4 = quad.p4.project(focalLength, size, panX, panY);
-
-      final int c1 = shade(quad.v1);
-      final int c2 = shade(quad.v2);
-      final int c3 = shade(quad.v3);
-      final int c4 = shade(quad.v4);
-
-      // Each half carries its own depth, so a cell can be sorted against a
-      // grid segment passing beneath it rather than as one unit.
-      scene.addTriangle(
-        o1,
-        o2,
-        o3,
-        c1,
-        c2,
-        c3,
-        (quad.p1.y + quad.p2.y + quad.p3.y) / 3,
-      );
-      scene.addTriangle(
-        o1,
-        o3,
-        o4,
-        c1,
-        c3,
-        c4,
-        (quad.p1.y + quad.p3.y + quad.p4.y) / 3,
-      );
-    }
-
-    scene.paint(canvas);
-
-    // A magnitude ramp needs a key, or the colours mean nothing.
-    if (surfaceSpan > 0) {
-      _drawColorbar3D(canvas, size, surfaceMin, surfaceMax);
+  /// Add every single-variable curve to [scene], depth-ordered with whatever
+  /// else is in it.
+  ///
+  /// Each curve runs along the axis its expression actually varies in: sin(x)
+  /// along x, cos(y) along y. Both are curves, not sheets — see
+  /// [PlotExpression.isSurface] for why an extruded cos(y) is the wrong
+  /// picture even though it is a legitimate surface.
+  void _addStandingCurvesTo(_DepthScene scene, Size size, double focalLength) {
+    final List<PlotExpression> curves = _lineCurves;
+    for (int c = 0; c < curves.length; c++) {
+      _addOneStandingCurveTo(scene, size, focalLength, curves[c], c, curves);
     }
   }
 
-  void _drawStandingCurve(Canvas canvas, Size size, double focalLength) {
-    final parser = function;
+  /// Coloured from the theme's series palette, the same palette 2D uses, so a
+  /// curve keeps its colour when the view is switched between 2D and 3D.
+  void _addOneStandingCurveTo(
+    _DepthScene scene,
+    Size size,
+    double focalLength,
+    PlotExpression parser,
+    int index,
+    List<PlotExpression> curves,
+  ) {
     const steps = 300;
+    final String axis = parser.curveAxis;
+    final bool alongY = axis == 'y';
+    final bool alongZ = axis == 'z';
+
+    // The parameter runs along the variable's own axis; the value is drawn
+    // perpendicular to it, and is clipped against that axis's window.
+    final double paramRange = alongZ ? rangeZ : (alongY ? rangeY : rangeX);
+    final double paramScale = alongZ ? scaleZ : (alongY ? scaleY : scaleX);
+    final double valueRange = alongZ ? rangeX : rangeZ;
+    final double valueScale = alongZ ? scaleX : scaleZ;
+
+    final Color curveColor =
+        curves.length == 1 ? colors.accent : _theme.seriesColor(index);
 
     final paint =
         Paint()
-          ..color = colors.accent
+          ..color = curveColor
           ..strokeWidth = 3
           ..style = PaintingStyle.stroke
           ..strokeCap = StrokeCap.round;
     final shadowPaint =
         Paint()
-          ..color = colors.accent.withValues(alpha: 0.2)
+          ..color = curveColor.withValues(alpha: 0.2)
           ..strokeWidth = 2
           ..style = PaintingStyle.stroke;
     final verticalPaint =
         Paint()
-          ..color = colors.accent.withValues(alpha: 0.12)
+          ..color = curveColor.withValues(alpha: 0.12)
           ..strokeWidth = 1;
 
-    final path = Path();
-    final shadowPath = Path();
-    bool started = false, shadowStarted = false;
-    double? lastZ;
+    // Previous point, or null after a break in the curve.
+    Offset? prev;
+    Offset? prevShadow;
+    double? prevDepth;
+    double? lastV;
+
+    void breakCurve() {
+      prev = null;
+      prevShadow = null;
+      prevDepth = null;
+      lastV = null;
+    }
 
     for (int i = 0; i <= steps; i++) {
-      final x = -rangeX + (2 * rangeX * i / steps);
-      double z;
+      final t = -paramRange + (2 * paramRange * i / steps);
+      double v;
       try {
-        z = parser.evaluate(x, 0);
-        if (!z.isFinite) {
-          started = false;
-          shadowStarted = false;
-          lastZ = null;
-          continue;
-        }
-        if (z < -rangeZ || z > rangeZ) {
-          started = false;
-          shadowStarted = false;
-          lastZ = null;
-          continue;
-        }
-      } catch (e) {
-        started = false;
-        shadowStarted = false;
-        lastZ = null;
+        v =
+            alongZ
+                ? parser.evaluate(0, 0, t)
+                : (alongY ? parser.evaluate(0, t) : parser.evaluate(t, 0));
+      } catch (_) {
+        breakCurve();
+        continue;
+      }
+      if (!v.isFinite || v < -valueRange || v > valueRange) {
+        breakCurve();
         continue;
       }
 
-      final point = Point3D(
-        x * scaleX,
-        0,
-        z * scaleZ,
-      ).rotateZ(rotationZ).rotateX(rotationX);
+      // Each curve stands in its own plane: an x-curve in x-z, a y-curve in
+      // y-z, a z-curve in x-z but running vertically. So sin(x), cos(y) and
+      // sin(z) on the same axes meet at right angles rather than lying on top
+      // of one another.
+      final double wx = alongZ ? v * valueScale : (alongY ? 0.0 : t * scaleX);
+      final double wy = alongY ? t * scaleY : 0.0;
+      final double wz = alongZ ? t * paramScale : v * valueScale;
+
+      final point = Point3D(wx, wy, wz).rotateZ(rotationZ).rotateX(rotationX);
+      // The value flattened away, so the curve is cast onto its own axis.
       final shadowPoint = Point3D(
-        x * scaleX,
-        0,
-        0,
+        alongZ ? 0.0 : wx,
+        wy,
+        alongZ ? wz : 0.0,
       ).rotateZ(rotationZ).rotateX(rotationX);
       final proj = point.project(focalLength, size, panX, panY);
       final shadowProj = shadowPoint.project(focalLength, size, panX, panY);
 
-      if (lastZ != null && (z - lastZ).abs() > rangeZ * 0.5) started = false;
+      // An asymptote jumps the full width of the box between two samples;
+      // joining across it draws a straight line that is not part of the curve.
+      final bool jumped =
+          lastV != null && (v - lastV!).abs() > valueRange * 0.5;
 
-      if (!started) {
-        path.moveTo(proj.dx, proj.dy);
-        started = true;
-      } else {
-        path.lineTo(proj.dx, proj.dy);
+      if (prev != null && !jumped) {
+        scene.addLine(prev!, proj, paint, (prevDepth! + point.y) / 2);
+        scene.addLine(
+          prevShadow!,
+          shadowProj,
+          shadowPaint,
+          (prevDepth! + shadowPoint.y) / 2,
+        );
       }
-      if (!shadowStarted) {
-        shadowPath.moveTo(shadowProj.dx, shadowProj.dy);
-        shadowStarted = true;
-      } else {
-        shadowPath.lineTo(shadowProj.dx, shadowProj.dy);
+      if (i % 15 == 0) {
+        scene.addLine(proj, shadowProj, verticalPaint, point.y);
       }
-      lastZ = z;
 
-      if (i % 15 == 0) canvas.drawLine(proj, shadowProj, verticalPaint);
+      prev = proj;
+      prevShadow = shadowProj;
+      prevDepth = point.y;
+      lastV = v;
     }
-
-    canvas.drawPath(shadowPath, shadowPaint);
-    canvas.drawPath(path, paint);
   }
 
   void _drawScalarField3D(Canvas canvas, Size size, double focalLength) {
@@ -2262,9 +2453,9 @@ class Plot3DPainter extends CustomPainter {
     const gridCount = 8;
     final bool is3DVector = vectorParser!.is3D;
 
-      List<Arrow3D> arrows = [];
-      double maxMag = 0;
-      double maxSurfaceAbs = 0;
+    List<Arrow3D> arrows = [];
+    double maxMag = 0;
+    double maxSurfaceAbs = 0;
 
     if (is3DVector) {
       for (int i = 0; i <= gridCount; i++) {
@@ -2274,71 +2465,23 @@ class Plot3DPainter extends CustomPainter {
             final y = -rangeY + (2 * rangeY * j / gridCount);
             final z = -rangeZ + (2 * rangeZ * k / gridCount);
 
-              final (fx, fy, fz) = vectorParser!.evaluate(x, y, z);
-              double vx = fx;
-              double vy = fy;
-              double vz = fz;
-              double surfaceValue = 0;
-              double mag = vectorParser!.magnitude(x, y, z);
-
-              if (surfaceMode == SurfaceMode.x) {
-                vx = fx;
-                vy = 0;
-                vz = 0;
-                surfaceValue = fx;
-                mag = fx.abs();
-              } else if (surfaceMode == SurfaceMode.y) {
-                vx = 0;
-                vy = fy;
-                vz = 0;
-                surfaceValue = fy;
-                mag = fy.abs();
-              } else if (surfaceMode == SurfaceMode.z) {
-                vx = 0;
-                vy = 0;
-                vz = fz;
-                surfaceValue = fz;
-                mag = fz.abs();
-              } else {
-                surfaceValue = mag;
-              }
-
-              if (!mag.isFinite || mag < 1e-10) continue;
-
-              maxMag = max(maxMag, mag);
-              maxSurfaceAbs = max(maxSurfaceAbs, surfaceValue.abs());
-
-              final inv = mag == 0 ? 0.0 : 1 / mag;
-              final nx = vx * inv;
-              final ny = vy * inv;
-              final nz = vz * inv;
-              final startPoint = Point3D(x * scaleX, y * scaleY, z * scaleZ);
-
-              arrows.add(Arrow3D(startPoint, nx, ny, nz, mag, surfaceValue));
-            }
-          }
-        }
-    } else {
-      for (int i = 0; i <= gridCount * 2; i++) {
-        for (int j = 0; j <= gridCount * 2; j++) {
-          final x = -rangeX + (2 * rangeX * i / (gridCount * 2));
-          final y = -rangeY + (2 * rangeY * j / (gridCount * 2));
-
-            final (fx, fy, fz) = vectorParser!.evaluate(x, y, 0);
+            final (fx, fy, fz) = vectorParser!.evaluate(x, y, z);
             double vx = fx;
             double vy = fy;
-            double vz = 0;
+            double vz = fz;
             double surfaceValue = 0;
-            double mag = vectorParser!.magnitude(x, y, 0);
+            double mag = vectorParser!.magnitude(x, y, z);
 
             if (surfaceMode == SurfaceMode.x) {
               vx = fx;
               vy = 0;
+              vz = 0;
               surfaceValue = fx;
               mag = fx.abs();
             } else if (surfaceMode == SurfaceMode.y) {
               vx = 0;
               vy = fy;
+              vz = 0;
               surfaceValue = fy;
               mag = fy.abs();
             } else if (surfaceMode == SurfaceMode.z) {
@@ -2360,12 +2503,60 @@ class Plot3DPainter extends CustomPainter {
             final nx = vx * inv;
             final ny = vy * inv;
             final nz = vz * inv;
-            final startPoint = Point3D(x * scaleX, y * scaleY, 0);
+            final startPoint = Point3D(x * scaleX, y * scaleY, z * scaleZ);
 
             arrows.add(Arrow3D(startPoint, nx, ny, nz, mag, surfaceValue));
           }
         }
       }
+    } else {
+      for (int i = 0; i <= gridCount * 2; i++) {
+        for (int j = 0; j <= gridCount * 2; j++) {
+          final x = -rangeX + (2 * rangeX * i / (gridCount * 2));
+          final y = -rangeY + (2 * rangeY * j / (gridCount * 2));
+
+          final (fx, fy, fz) = vectorParser!.evaluate(x, y, 0);
+          double vx = fx;
+          double vy = fy;
+          double vz = 0;
+          double surfaceValue = 0;
+          double mag = vectorParser!.magnitude(x, y, 0);
+
+          if (surfaceMode == SurfaceMode.x) {
+            vx = fx;
+            vy = 0;
+            surfaceValue = fx;
+            mag = fx.abs();
+          } else if (surfaceMode == SurfaceMode.y) {
+            vx = 0;
+            vy = fy;
+            surfaceValue = fy;
+            mag = fy.abs();
+          } else if (surfaceMode == SurfaceMode.z) {
+            vx = 0;
+            vy = 0;
+            vz = fz;
+            surfaceValue = fz;
+            mag = fz.abs();
+          } else {
+            surfaceValue = mag;
+          }
+
+          if (!mag.isFinite || mag < 1e-10) continue;
+
+          maxMag = max(maxMag, mag);
+          maxSurfaceAbs = max(maxSurfaceAbs, surfaceValue.abs());
+
+          final inv = mag == 0 ? 0.0 : 1 / mag;
+          final nx = vx * inv;
+          final ny = vy * inv;
+          final nz = vz * inv;
+          final startPoint = Point3D(x * scaleX, y * scaleY, 0);
+
+          arrows.add(Arrow3D(startPoint, nx, ny, nz, mag, surfaceValue));
+        }
+      }
+    }
 
     if (arrows.isEmpty || maxMag == 0) return;
 
@@ -2378,14 +2569,15 @@ class Plot3DPainter extends CustomPainter {
     const arrowLength = 15.0;
     final double zScale =
         (showSurface && !is3DVector && maxSurfaceAbs > 0)
-        ? (rangeZ / maxSurfaceAbs)
-        : 0.0;
+            ? (rangeZ / maxSurfaceAbs)
+            : 0.0;
     for (final arrow in arrows) {
       final double surfaceZ =
           (showSurface && !is3DVector) ? arrow.surfaceValue * zScale : 0.0;
-      final startPoint = (showSurface && !is3DVector)
-          ? Point3D(arrow.start.x, arrow.start.y, surfaceZ * scaleZ)
-          : arrow.start;
+      final startPoint =
+          (showSurface && !is3DVector)
+              ? Point3D(arrow.start.x, arrow.start.y, surfaceZ * scaleZ)
+              : arrow.start;
       final startRotated = startPoint.rotateZ(rotationZ).rotateX(rotationX);
       final startProj = startRotated.project(focalLength, size, panX, panY);
 
@@ -2548,6 +2740,49 @@ class Plot3DPainter extends CustomPainter {
   /// on the plot can be read back against the bar directly. Ticks are spaced
   /// rather than min/max only, which is what makes an intermediate value
   /// readable without counting bands.
+  /// Mark the point a long-press picked out of the scene, and name it.
+  ///
+  /// Drawn last and unoccluded: the point is on the surface the user touched,
+  /// so hiding it behind that surface would defeat the purpose. The ring is
+  /// hollow for the same reason the 2D one is — the surface stays visible
+  /// underneath it.
+  void _drawTrace3D(Canvas canvas, Size size) {
+    final SurfaceHit? hit = tracePoint;
+    if (hit == null) return;
+    if (!hit.x.isFinite || !hit.y.isFinite || !hit.z.isFinite) return;
+
+    final Offset at = Point3D(hit.x * scaleX, hit.y * scaleY, hit.z * scaleZ)
+        .rotateZ(rotationZ)
+        .rotateX(rotationX)
+        .project(focalLength, size, panX, panY);
+    if (!at.dx.isFinite || !at.dy.isFinite) return;
+
+    // One neutral marker rather than one tinted to the surface's own ramp.
+    // Only ever one point is marked — the one under the finger — so there is
+    // nothing to tell apart, and a ramp colour would have to be looked up by
+    // the curve's position within its own kind, which is not what
+    // [SurfaceHit.curveIndex] counts.
+    // Light fill, dark ring. The marker lands anywhere on a surface that runs
+    // the whole colour ramp, so it cannot borrow a colour from the plot and
+    // stay visible; a light dot outlined in the label colour reads against
+    // both the dark end of a ramp and the bright end.
+    canvas.drawCircle(at, 5, Paint()..color = _theme.boundary);
+    canvas.drawCircle(
+      at,
+      5,
+      Paint()
+        ..color = _theme.label
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
+
+    drawReadoutBox(canvas, size, _theme, <ReadoutLine>[
+      (color: _theme.axisX, text: 'x = ${formatReadout(hit.x)}', bold: false),
+      (color: _theme.axisY, text: 'y = ${formatReadout(hit.y)}', bold: false),
+      (color: _theme.axisZ, text: 'z = ${formatReadout(hit.z)}', bold: false),
+    ], anchorX: at.dx);
+  }
+
   void _drawColorbar3D(Canvas canvas, Size size, double minVal, double maxVal) {
     const double barWidth = 15.0;
     const double barHeight = 104.0;
@@ -2561,14 +2796,18 @@ class Plot3DPainter extends CustomPainter {
       barHeight,
     );
 
-    // Top of the bar is the maximum, so it reads like the axis.
-    for (int i = 0; i < barHeight; i++) {
-      canvas.drawLine(
-        Offset(barRect.left, barRect.top + i),
-        Offset(barRect.right, barRect.top + i),
-        Paint()..color = plotColormap(1.0 - i / barHeight),
-      );
-    }
+    // Top of the bar is the maximum, so it reads like the axis. Drawn as one
+    // gradient rather than a row of lines per pixel, which quantised the ramp
+    // to the bar's height in steps and showed as bands.
+    canvas.drawRect(
+      barRect,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: plotColormapStops,
+        ).createShader(barRect),
+    );
 
     canvas.drawRect(
       barRect,

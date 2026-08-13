@@ -87,7 +87,8 @@ class _TexturedContainerState extends State<TexturedContainer>
     final settings = Provider.of<SettingsProvider>(context, listen: false);
     final currentColorValue = widget.baseColor.toARGB32();
 
-    final settingsChanged = _lastTextureType != settings.textureType ||
+    final settingsChanged =
+        _lastTextureType != settings.textureType ||
         _lastColorValue != currentColorValue;
 
     if (settingsChanged) {
@@ -233,8 +234,8 @@ class _TexturedContainerState extends State<TexturedContainer>
     final textureType = settings.textureType;
 
     final currentColorValue = widget.baseColor.toARGB32();
-    final needsReload = _lastTextureType != textureType ||
-        _lastColorValue != currentColorValue;
+    final needsReload =
+        _lastTextureType != textureType || _lastColorValue != currentColorValue;
 
     if (needsReload) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -261,7 +262,8 @@ class _TexturedContainerState extends State<TexturedContainer>
     return AnimatedBuilder(
       animation: _fadeAnimation,
       builder: (context, child) {
-        final showBaseColor = _textureImage == null || _fadeAnimation.value < 1.0;
+        final showBaseColor =
+            _textureImage == null || _fadeAnimation.value < 1.0;
 
         return Container(
           width: widget.width,
@@ -271,8 +273,9 @@ class _TexturedContainerState extends State<TexturedContainer>
             color: showBaseColor ? widget.baseColor : Colors.transparent,
           ),
           child: ClipRRect(
-            borderRadius: baseDecoration.borderRadius?.resolve(TextDirection.ltr) 
-                ?? BorderRadius.zero,
+            borderRadius:
+                baseDecoration.borderRadius?.resolve(TextDirection.ltr) ??
+                BorderRadius.zero,
             child: Stack(
               fit: StackFit.passthrough,
               children: [

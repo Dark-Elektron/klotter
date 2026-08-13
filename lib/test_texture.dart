@@ -68,21 +68,17 @@ class _TexturePlaygroundState extends State<TexturePlayground> {
 
     final pixels = _generateNoisePixels(width, height);
 
-    ui.decodeImageFromPixels(
-      pixels,
-      width,
-      height,
-      ui.PixelFormat.rgba8888,
-      (image) {
-        if (mounted) {
-          setState(() {
-            _noiseImage?.dispose();
-            _noiseImage = image;
-            _isGenerating = false;
-          });
-        }
-      },
-    );
+    ui.decodeImageFromPixels(pixels, width, height, ui.PixelFormat.rgba8888, (
+      image,
+    ) {
+      if (mounted) {
+        setState(() {
+          _noiseImage?.dispose();
+          _noiseImage = image;
+          _isGenerating = false;
+        });
+      }
+    });
   }
 
   Uint8List _generateNoisePixels(int width, int height) {
@@ -91,10 +87,7 @@ class _TexturePlaygroundState extends State<TexturePlayground> {
 
     // Pre-generate a grid of random values
     const gridSize = 32;
-    final grid = List.generate(
-      gridSize * gridSize,
-      (_) => random.nextDouble(),
-    );
+    final grid = List.generate(gridSize * gridSize, (_) => random.nextDouble());
 
     double getValue(int gx, int gy) {
       return grid[(gy % gridSize) * gridSize + (gx % gridSize)];
@@ -192,7 +185,10 @@ class _TexturePlaygroundState extends State<TexturePlayground> {
               flex: 3,
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  final size = Size(constraints.maxWidth, constraints.maxHeight);
+                  final size = Size(
+                    constraints.maxWidth,
+                    constraints.maxHeight,
+                  );
 
                   if (_noiseImage == null && !_isGenerating && size.width > 0) {
                     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -202,15 +198,16 @@ class _TexturePlaygroundState extends State<TexturePlayground> {
 
                   return Container(
                     color: _baseColor,
-                    child: _noiseImage != null
-                        ? RawImage(
-                            image: _noiseImage,
-                            fit: BoxFit.cover,
-                            width: size.width,
-                            height: size.height,
-                            filterQuality: FilterQuality.medium,
-                          )
-                        : const Center(child: CircularProgressIndicator()),
+                    child:
+                        _noiseImage != null
+                            ? RawImage(
+                              image: _noiseImage,
+                              fit: BoxFit.cover,
+                              width: size.width,
+                              height: size.height,
+                              filterQuality: FilterQuality.medium,
+                            )
+                            : const Center(child: CircularProgressIndicator()),
                   );
                 },
               ),
@@ -234,40 +231,42 @@ class _TexturePlaygroundState extends State<TexturePlayground> {
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
-                        children: _presetColors.map((themeColor) {
-                          final isSelected = _baseColor.value == themeColor.color.value;
-                          return Tooltip(
-                            message: themeColor.name,
-                            child: GestureDetector(
-                              onTap: () {
-                                _baseColor = themeColor.color;
-                                _regenerate();
-                              },
-                              child: Container(
-                                width: 36,
-                                height: 36,
-                                decoration: BoxDecoration(
-                                  color: themeColor.color,
-                                  borderRadius: BorderRadius.circular(6),
-                                  border: Border.all(
-                                    color: isSelected ? Colors.white : Colors.grey,
-                                    width: isSelected ? 2 : 1,
+                        children:
+                            _presetColors.map((themeColor) {
+                              final isSelected =
+                                  _baseColor.value == themeColor.color.value;
+                              return Tooltip(
+                                message: themeColor.name,
+                                child: GestureDetector(
+                                  onTap: () {
+                                    _baseColor = themeColor.color;
+                                    _regenerate();
+                                  },
+                                  child: Container(
+                                    width: 36,
+                                    height: 36,
+                                    decoration: BoxDecoration(
+                                      color: themeColor.color,
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(
+                                        color:
+                                            isSelected
+                                                ? Colors.white
+                                                : Colors.grey,
+                                        width: isSelected ? 2 : 1,
+                                      ),
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ),
-                          );
-                        }).toList(),
+                              );
+                            }).toList(),
                       ),
 
                       const SizedBox(height: 16),
-                      
+
                       // Show current theme name
                       Text(
-                        'Current: ${_presetColors.firstWhere(
-                          (t) => t.color.value == _baseColor.value,
-                          orElse: () => _ThemeColor('Custom', _baseColor),
-                        ).name}',
+                        'Current: ${_presetColors.firstWhere((t) => t.color.value == _baseColor.value, orElse: () => _ThemeColor('Custom', _baseColor)).name}',
                         style: const TextStyle(color: Colors.grey),
                       ),
 

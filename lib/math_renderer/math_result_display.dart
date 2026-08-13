@@ -1561,10 +1561,7 @@ class _ScalableAbsBar extends StatelessWidget {
   final double fontSize;
   final Color color;
 
-  const _ScalableAbsBar({
-    required this.fontSize,
-    this.color = Colors.white,
-  });
+  const _ScalableAbsBar({required this.fontSize, this.color = Colors.white});
 
   @override
   Widget build(BuildContext context) {
@@ -1585,10 +1582,7 @@ class _AbsBarPainter extends CustomPainter {
   final Color color;
   final double strokeWidth;
 
-  _AbsBarPainter({
-    required this.color,
-    required this.strokeWidth,
-  });
+  _AbsBarPainter({required this.color, required this.strokeWidth});
 
   @override
   void paint(Canvas canvas, Size size) {

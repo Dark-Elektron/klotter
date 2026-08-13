@@ -54,8 +54,9 @@ void main() {
     });
 
     test('MathClipboard.deepCopyNode keeps indefinite derivative', () {
-      final copy =
-          MathClipboard.deepCopyNode(DerivativeNode(isDefinite: false));
+      final copy = MathClipboard.deepCopyNode(
+        DerivativeNode(isDefinite: false),
+      );
       expect((copy as DerivativeNode).isDefinite, isFalse);
     });
   });

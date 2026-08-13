@@ -23,6 +23,18 @@ class WalkthroughOverlay extends StatelessWidget {
   static const double _swipeAreaDimness = 0.15;
   static const double _tooltipOffsetFromTarget = 16.0;
 
+  /// Room a tooltip needs beside its target to be placed there.
+  ///
+  /// Sized to the tallest one in the tour — a title, four or five lines of
+  /// description and the row of buttons come to a little over 300. With less
+  /// than this on the chosen side the tooltip moves to the other side, and
+  /// with less on both it is centred instead.
+  ///
+  /// This cannot be exact without laying the tooltip out first, so the real
+  /// guard is walkthrough_targets_test.dart, which walks the whole tour and
+  /// fails if any step's buttons end up somewhere they cannot be tapped.
+  static const double _tooltipRoomNeeded = 340.0;
+
   // ============== MOBILE ADJUSTMENTS ==============
   static const Map<String, Rect> _mobileSpotlightAdjustments = {
     'ans_index': Rect.fromLTWH(8, 0, -15, 2),
@@ -486,11 +498,27 @@ class WalkthroughOverlay extends StatelessWidget {
       );
     }
 
+    // Placement is a preference, not a guarantee: it has to yield to the
+    // screen. The plot fills most of the height in this app, so "below the
+    // plot" put the tooltip past the bottom edge with its Next button out of
+    // reach — the tour could not get past the Live Graph step at all.
+    final double roomAbove = targetRect.top;
+    final double roomBelow = screenSize.height - targetRect.bottom;
+    final bool wantsAbove = step.position == TooltipPosition.above;
+
     double? top, bottom;
-    if (step.position == TooltipPosition.above) {
+    if (wantsAbove && roomAbove >= _tooltipRoomNeeded) {
       bottom = screenSize.height - targetRect.top + offset;
-    } else {
+    } else if (!wantsAbove && roomBelow >= _tooltipRoomNeeded) {
       top = targetRect.bottom + offset;
+    } else if (roomAbove >= _tooltipRoomNeeded) {
+      bottom = screenSize.height - targetRect.top + offset;
+    } else if (roomBelow >= _tooltipRoomNeeded) {
+      top = targetRect.bottom + offset;
+    } else {
+      // The target is taller than the space around it, so there is no side to
+      // sit on. Centring keeps every control reachable.
+      return Center(child: content);
     }
 
     return Positioned(

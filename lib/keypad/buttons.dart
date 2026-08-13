@@ -31,8 +31,11 @@ class MyButton extends StatelessWidget {
     // Only depend on the three settings this button actually uses, so
     // unrelated settings changes (precision, theme, font, ...) don't rebuild
     // every keypad button.
-    final (bool hapticEnabled, double settingsBorderRadius, double buttonSpacing) =
-        context.select<SettingsProvider, (bool, double, double)>(
+    final (
+      bool hapticEnabled,
+      double settingsBorderRadius,
+      double buttonSpacing,
+    ) = context.select<SettingsProvider, (bool, double, double)>(
       (s) => (s.hapticFeedback, s.borderRadius, s.buttonSpacing),
     );
     final double effectiveBorderRadius =
@@ -61,11 +64,7 @@ class MyButton extends StatelessWidget {
       maxLines: 1,
       softWrap: false,
       overflow: TextOverflow.visible,
-      style: TextStyle(
-        color: textColor,
-        fontSize: fittedFontSize,
-        height: 1.0,
-      ),
+      style: TextStyle(color: textColor, fontSize: fittedFontSize, height: 1.0),
     );
 
     // Keep a little air either side so four-letter labels like "asin" do not

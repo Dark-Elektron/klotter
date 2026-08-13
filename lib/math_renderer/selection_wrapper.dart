@@ -1013,5 +1013,3 @@ class _InsertionPoint {
     this.path,
   });
 }
-
-

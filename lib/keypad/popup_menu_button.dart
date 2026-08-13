@@ -52,7 +52,9 @@ class _PopupMenuCalcButtonState extends State<PopupMenuCalcButton> {
   bool _isPressed = false;
 
   double _effectiveBorderRadius(SettingsProvider settings) {
-    return widget.borderRadius == 0 ? settings.borderRadius : widget.borderRadius;
+    return widget.borderRadius == 0
+        ? settings.borderRadius
+        : widget.borderRadius;
   }
 
   Widget _buildIndicatorDot() {
@@ -250,10 +252,10 @@ class _PopupMenuCalcButtonState extends State<PopupMenuCalcButton> {
   Widget build(BuildContext context) {
     // Only depend on the settings this button actually uses so unrelated
     // settings changes don't rebuild every popup button.
-    final (bool haptic, double sBorderRadius, double buttonSpacing) =
-        context.select<SettingsProvider, (bool, double, double)>(
-      (s) => (s.hapticFeedback, s.borderRadius, s.buttonSpacing),
-    );
+    final (bool haptic, double sBorderRadius, double buttonSpacing) = context
+        .select<SettingsProvider, (bool, double, double)>(
+          (s) => (s.hapticFeedback, s.borderRadius, s.buttonSpacing),
+        );
     final effectiveBorderRadius =
         widget.borderRadius == 0 ? sBorderRadius : widget.borderRadius;
 

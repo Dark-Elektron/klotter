@@ -205,8 +205,7 @@ class SettingsProvider extends ChangeNotifier {
       orElse: () => PlotColorMode.themeBased,
     );
 
-    String keypadColorStr =
-        prefs.getString('keypadColorMode') ?? 'themeBased';
+    String keypadColorStr = prefs.getString('keypadColorMode') ?? 'themeBased';
     final String handStr = prefs.getString('handedness') ?? 'rightHanded';
     _handedness = Handedness.values.firstWhere(
       (e) => e.name == handStr,

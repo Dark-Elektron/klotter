@@ -2100,15 +2100,11 @@ class MathRenderer extends StatelessWidget {
       // Actual rendered height of the ∫ glyph. The nominal fontSize*1.4 under-
       // measures the text box, so for an indefinite integral (which shows only
       // the lone ∫) it must be measured to keep the symbol centered on the body.
-      final TextPainter intSymbolPainter =
-          TextPainter(
-            text: TextSpan(
-              text: '∫',
-              style: MathTextStyle.getStyle(symbolHeight),
-            ),
-            textDirection: TextDirection.ltr,
-            textScaler: textScaler,
-          )..layout();
+      final TextPainter intSymbolPainter = TextPainter(
+        text: TextSpan(text: '∫', style: MathTextStyle.getStyle(symbolHeight)),
+        textDirection: TextDirection.ltr,
+        textScaler: textScaler,
+      )..layout();
       final double intSymbolHeight = intSymbolPainter.height;
       final lowerMetrics = _getListMetrics(lower, boundSize);
       final double lowerHeight = math.max(lowerMetrics.$1, boundSize * 0.7);
@@ -2838,14 +2834,13 @@ class MathRenderer extends StatelessWidget {
       // (and their caret) align to the wrong reference axis.
       final double intSymbolHeight =
           (TextPainter(
-                text: TextSpan(
-                  text: '∫',
-                  style: MathTextStyle.getStyle(symbolHeight),
-                ),
-                textDirection: TextDirection.ltr,
-                textScaler: textScaler,
-              )..layout())
-              .height;
+            text: TextSpan(
+              text: '∫',
+              style: MathTextStyle.getStyle(symbolHeight),
+            ),
+            textDirection: TextDirection.ltr,
+            textScaler: textScaler,
+          )..layout()).height;
       final double symbolColumnHeight =
           node.isDefinite
               ? upperHeight +

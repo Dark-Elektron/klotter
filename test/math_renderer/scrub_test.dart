@@ -91,14 +91,7 @@ void main() {
       // "2.5x+3.14" scrubbing the second number must become "2.5x-2",
       // never the malformed "2.5x+-2".
       final c = MathEditorController();
-      final t = target(
-        '2.5x+3.14',
-        5,
-        9,
-        3.14,
-        signIndex: 4,
-        typedDecimals: 2,
-      );
+      final t = target('2.5x+3.14', 5, 9, 3.14, signIndex: 4, typedDecimals: 2);
       c.applyScrub(t, -2.0);
       expect(t.node.text, equals('2.5x-2.00'));
       c.applyScrub(t, 6.0);
@@ -125,8 +118,10 @@ void main() {
 
   group('drag sensitivity scales with magnitude', () {
     test('a big number moves faster per pixel than a small one', () {
-      expect(target('5000', 0, 4, 5000).perPixel,
-          greaterThan(target('5', 0, 1, 5).perPixel));
+      expect(
+        target('5000', 0, 4, 5000).perPixel,
+        greaterThan(target('5', 0, 1, 5).perPixel),
+      );
     });
 
     test('zero is still movable', () {

@@ -53,13 +53,6 @@ class HelpPage extends StatelessWidget {
 
           _buildHelpStep(
             context,
-            icon: Icons.keyboard_command_key,
-            title: 'Multicells',
-            description: 'Use the command ⌘ key to create a new solution cell.',
-            colors: colors,
-          ),
-          _buildHelpStep(
-            context,
             icon: Icons.iso,
             title: 'Structural Math',
             description:
@@ -76,14 +69,6 @@ class HelpPage extends StatelessWidget {
           ),
           _buildHelpStep(
             context,
-            icon: Icons.settings_backup_restore,
-            title: 'Recall Results',
-            description:
-                'Every calculation is assigned an orange cell number on the left. To use a result in a new equation, press "ans" followed by that cell’s number (e.g., ans0).',
-            colors: colors,
-          ),
-          _buildHelpStep(
-            context,
             icon: Icons.show_chart,
             title: 'Live Plotting',
             description:
@@ -92,10 +77,34 @@ class HelpPage extends StatelessWidget {
           ),
           _buildHelpStep(
             context,
+            icon: Icons.touch_app,
+            title: 'Read A Point',
+            description:
+                'Long-press a plot to put a marker on it. In 2D it reports every curve at that x, solving equations like x²+y²=1 for their y values; in 3D it marks the point on the surface you touched and gives its x, y and z. Tap to clear it.',
+            colors: colors,
+          ),
+          _buildHelpStep(
+            context,
+            icon: Icons.threed_rotation,
+            title: '2D And 3D',
+            description:
+                'Switch dimension with the buttons on the right of the plot. Drag to rotate a 3D view, flick to leave it spinning, and tap to stop. Pinch to zoom — in 2D, pinching up and down scales y, sideways scales x.',
+            colors: colors,
+          ),
+          _buildHelpStep(
+            context,
             icon: Icons.keyboard_command_key,
             title: 'Multiple Curves',
             description:
                 'Press ⌘ to add another expression to the same plot; each line is drawn as its own curve in its own colour. Swipe the strip above the keypad to move between plots, or to start a new one.',
+            colors: colors,
+          ),
+          _buildHelpStep(
+            context,
+            icon: Icons.ios_share,
+            title: 'Export A Plot',
+            description:
+                'Press ⇪ on the extras keypad to save the plot you are looking at as a PNG, JPEG or PDF, then share it wherever you like.',
             colors: colors,
           ),
           _buildHelpStep(

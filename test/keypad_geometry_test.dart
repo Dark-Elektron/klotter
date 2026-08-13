@@ -45,7 +45,10 @@ void main() {
       textDisplayControllers[0]?.dispose();
     });
 
-    Widget buildKeypad({required double screenWidth, bool isLandscape = false}) {
+    Widget buildKeypad({
+      required double screenWidth,
+      bool isLandscape = false,
+    }) {
       return ChangeNotifierProvider<SettingsProvider>.value(
         value: settingsProvider,
         child: MaterialApp(
@@ -109,7 +112,11 @@ void main() {
               '${size.height.toStringAsFixed(1)}dp — below the 48dp target',
         );
       }
-      expect(checked, greaterThan(0), reason: 'no main-grid keys were measured');
+      expect(
+        checked,
+        greaterThan(0),
+        reason: 'no main-grid keys were measured',
+      );
     });
 
     testWidgets('the fixed number pad keeps digits left, operators right', (
@@ -189,8 +196,7 @@ void main() {
       await tester.pumpAndSettle();
 
       double yOf(String label) {
-        final box =
-            find.text(label).evaluate().first.renderObject as RenderBox;
+        final box = find.text(label).evaluate().first.renderObject as RenderBox;
         return box.localToGlobal(Offset.zero).dy;
       }
 
@@ -222,8 +228,9 @@ void main() {
 
       // Swipe the top rows from scientific to extras. Drag from a
       // scientific-only key so the gesture lands in the swipeable half and
-      // not on the fixed number pad below it.
-      await tester.drag(find.text('ⁿ√'), const Offset(-400, 0));
+      // not on the fixed number pad below it. ≥ serves: the nth root that
+      // used to be dragged from is now inside the square root's long press.
+      await tester.drag(find.text('≥'), const Offset(-400, 0));
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pump(const Duration(milliseconds: 400));
 

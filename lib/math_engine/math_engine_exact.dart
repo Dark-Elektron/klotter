@@ -529,7 +529,6 @@ class ConstExpr extends Expr {
 
   static final ConstExpr pi = ConstExpr(ConstType.pi);
   static final ConstExpr e = ConstExpr(ConstType.e);
-  static final ConstExpr phi = ConstExpr(ConstType.phi);
   static final ConstExpr epsilon0 = ConstExpr(ConstType.epsilon0);
   static final ConstExpr mu0 = ConstExpr(ConstType.mu0);
   static final ConstExpr c0 = ConstExpr(ConstType.c0);
@@ -545,8 +544,6 @@ class ConstExpr extends Expr {
         return math.pi;
       case ConstType.e:
         return math.e;
-      case ConstType.phi:
-        return (1 + math.sqrt(5)) / 2;
       case ConstType.epsilon0:
         return 8.8541878128e-12; // vacuum permittivity F/m
       case ConstType.mu0:
@@ -594,8 +591,6 @@ class ConstExpr extends Expr {
         return [LiteralNode(text: 'π')];
       case ConstType.e:
         return [LiteralNode(text: 'e')];
-      case ConstType.phi:
-        return [LiteralNode(text: 'φ')];
       case ConstType.epsilon0:
         return [ConstantNode('ε₀')];
       case ConstType.mu0:
@@ -617,8 +612,6 @@ class ConstExpr extends Expr {
         return 'π';
       case ConstType.e:
         return 'e';
-      case ConstType.phi:
-        return 'φ';
       case ConstType.epsilon0:
         return 'ε₀';
       case ConstType.mu0:
@@ -631,7 +624,12 @@ class ConstExpr extends Expr {
   }
 }
 
-enum ConstType { pi, e, phi, epsilon0, mu0, c0, eMinus }
+/// Named constants the engine knows.
+///
+/// The golden ratio used to be here. Nothing could reach it — no key inserts
+/// it and neither `φ` nor the word could be typed — and `φ` is now the
+/// spherical polar angle, an ordinary variable.
+enum ConstType { pi, e, epsilon0, mu0, c0, eMinus }
 
 // ============================================================
 // SECTION 4.5: IMAGINARY UNIT
@@ -4725,10 +4723,6 @@ class MathNodeToExpr {
         case 'e':
           type = ConstType.e;
           break;
-        case '\u03C6': // φ
-        case 'phi':
-          type = ConstType.phi;
-          break;
         case '\u03B5\u2080':
           type = ConstType.epsilon0;
           break;
@@ -4960,10 +4954,6 @@ class MathNodeToExpr {
         }
         if (word == 'i') {
           tokens.add(_Token.fromExpr(ImaginaryExpr.i));
-          continue;
-        }
-        if (word == 'φ' || word == '\u03C6' || word == 'phi') {
-          tokens.add(_Token.fromExpr(ConstExpr.phi));
           continue;
         }
         if (word == 'ε₀' || word == '\u03B5\u2080' || word == 'epsilon0') {

@@ -144,7 +144,10 @@ extension ScrubbableEditor on MathEditorController {
       // Rewrite the operator with the sign so the expression stays well formed.
       final String sign = value < 0 ? '-' : '+';
       target.node.text =
-          text.substring(0, signIndex) + sign + body + text.substring(target.end);
+          text.substring(0, signIndex) +
+          sign +
+          body +
+          text.substring(target.end);
       target.end = signIndex + 1 + body.length;
     }
     refreshDisplay();
@@ -162,12 +165,14 @@ extension ScrubbableEditor on MathEditorController {
     return c >= 0x30 && c <= 0x39;
   }
 
-  bool isPart(int i) => isDigit(i) || (i >= 0 && i < text.length && text[i] == '.');
+  bool isPart(int i) =>
+      isDigit(i) || (i >= 0 && i < text.length && text[i] == '.');
 
   // The touch may land just past the number's last character.
   int seed = index;
   if (!isPart(seed) && isPart(seed - 1)) seed = index - 1;
-  if (!isDigit(seed) && !(isPart(seed) && (isDigit(seed - 1) || isDigit(seed + 1)))) {
+  if (!isDigit(seed) &&
+      !(isPart(seed) && (isDigit(seed - 1) || isDigit(seed + 1)))) {
     return null;
   }
 
@@ -221,5 +226,4 @@ int _decimalsOf(String s) {
 
 /// Whether [c] ends an operand, which is what makes a following +/- binary
 /// rather than a sign.
-bool _endsOperand(String c) =>
-    RegExp(r'[0-9a-zA-Z\)\]\.]').hasMatch(c);
+bool _endsOperand(String c) => RegExp(r'[0-9a-zA-Z\)\]\.]').hasMatch(c);

@@ -37,14 +37,21 @@ const List<WalkthroughStep> walkthroughSteps = [
     id: 'plot_area',
     title: 'Live Graph',
     description:
-        'Any expression using x, y or z is graphed here as you type. Drag to pan, pinch to zoom, and use the buttons on the right to switch between 2D and 3D.',
+        'Any expression using x, y or z is graphed here as you type. Drag to pan, pinch to zoom, and switch between 2D and 3D on the right. Long-press the plot to read a point off it.',
     position: TooltipPosition.below,
+  ),
+  WalkthroughStep(
+    id: 'plot_pages',
+    title: 'Your Plots',
+    description:
+        'Each plot has its own page. Swipe this strip to move between them, or past the last one to start a new plot. Backspacing an empty expression removes its plot again.',
+    position: TooltipPosition.above,
   ),
   WalkthroughStep(
     id: 'command_button',
     title: 'Command Button',
     description:
-        'Tap ⌘ to create a new calculation cell. A new cell is added only when the current cell is not empty. Each cell can have its own expression and result!',
+        'Tap ⌘ to add another line to this plot. Every line is drawn as its own curve in its own colour, so you can compare several at once.',
     position: TooltipPosition.above,
   ),
 
@@ -78,7 +85,7 @@ const List<WalkthroughStep> walkthroughSteps = [
     id: 'extras_keypad',
     title: 'Extra Functions',
     description:
-        'Permutations, combinations, factorial, undo/redo, and settings are here.',
+        'Permutations, combinations, factorial, undo/redo, export and settings are here. ⇪ saves the plot you are looking at as an image or PDF.',
     position: TooltipPosition.above,
     mobileOnly: true,
   ),
@@ -114,7 +121,7 @@ const List<WalkthroughStep> walkthroughSteps = [
     id: 'tablet_swipe_left_extras',
     title: 'Swipe for More',
     description:
-        'Swipe LEFT to reveal the Extras keypad with permutations, combinations, undo/redo, and settings.',
+        'Swipe LEFT to reveal the Extras keypad with permutations, combinations, undo/redo, export and settings.',
     position: TooltipPosition.above,
     requiresAction: true,
     requiredAction: WalkthroughAction.swipeLeft,
@@ -124,7 +131,7 @@ const List<WalkthroughStep> walkthroughSteps = [
     id: 'tablet_extras_visible',
     title: 'Number Pad & Extras',
     description:
-        'Now you can see the Number pad and Extra functions together. Access permutations, combinations, factorial, and more!',
+        'Now you can see the Number pad and Extra functions together — including ⇪, which saves the current plot as an image or PDF.',
     position: TooltipPosition.above,
     tabletOnly: true,
   ),
@@ -150,7 +157,8 @@ const List<WalkthroughStep> walkthroughSteps = [
   WalkthroughStep(
     id: 'complete',
     title: 'You\'re All Set!',
-    description: 'You now know the basics. Enjoy calculating!',
+    description:
+        'That is the tour. Type an expression using x, y or z and watch it plot as you go.',
     position: TooltipPosition.center,
   ),
 ];

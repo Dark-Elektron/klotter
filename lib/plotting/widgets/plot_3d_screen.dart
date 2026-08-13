@@ -7,10 +7,17 @@ import '../../utils/app_colors.dart';
 import '../parsers/vector_field_parser.dart';
 import '../parsers/plot_expression.dart';
 import '../painters/plot_3d_painter.dart';
+import '../utils/pinch_tracker.dart';
+import '../utils/surface_pick.dart';
 import '../utils/plot_theme.dart';
 
 class Plot3DScreen extends StatefulWidget {
   final PlotExpression function;
+
+  /// One surface per line of the cell, matching how 2D draws one curve per
+  /// line. Empty means "just [function]".
+  final List<PlotExpression> functions;
+
   final bool is3DFunction;
   final Tool3DMode toolMode;
   final PlotMode plotMode;
@@ -28,6 +35,7 @@ class Plot3DScreen extends StatefulWidget {
   const Plot3DScreen({
     super.key,
     required this.function,
+    this.functions = const <PlotExpression>[],
     required this.is3DFunction,
     required this.toolMode,
     required this.plotMode,
@@ -97,11 +105,15 @@ class Plot3DScreenState extends State<Plot3DScreen>
   void _trackPointerDown(PointerDownEvent event) {
     _velocityTracker = VelocityTracker.withKind(event.kind);
     _velocityTracker!.addPosition(event.timeStamp, event.position);
+    _pinch.down(event.pointer, event.localPosition);
   }
 
   void _trackPointerMove(PointerMoveEvent event) {
     _velocityTracker?.addPosition(event.timeStamp, event.position);
+    _pinch.move(event.pointer, event.localPosition);
   }
+
+  void _trackPointerUp(PointerEvent event) => _pinch.up(event.pointer);
 
   Offset get _measuredVelocity =>
       _velocityTracker?.getVelocity().pixelsPerSecond ?? Offset.zero;
@@ -182,9 +194,40 @@ class Plot3DScreenState extends State<Plot3DScreen>
     if (rZ > 0) zRange = rZ;
   }
 
+  /// How far the 3D box may be zoomed.
+  ///
+  /// The old ceiling of 50 was reached in a couple of pinches and then simply
+  /// stopped, which reads as the plot being stuck rather than at a limit. The
+  /// sampling grid is a fixed number of steps across whatever range is set, so
+  /// a wide box costs no more to draw — it is only coarser.
+  static const double _minRange = 0.001;
+  static const double _maxRange = 100000.0;
+
   double _lastScale = 1.0;
-  double _lastHorizontalScale = 1.0;
-  double _lastVerticalScale = 1.0;
+
+  /// Uniform scale since the previous update, for the locked-axis zooms.
+  ///
+  /// Two fingers converging on the same point drive the reported scale to zero,
+  /// and the update after that divides by it — so an axis range becomes
+  /// Infinity or NaN, which `clamp` does not repair because NaN compares false
+  /// against both limits. A range like that reaches the painter's grid spacing
+  /// and throws `Unsupported operation: Infinity or NaN toInt` every frame.
+  double _uniformDelta(double scale) {
+    final bool usable = scale.isFinite && scale > 0;
+    if (!usable || _lastScale <= 0) {
+      _lastScale = usable ? scale : 1.0;
+      return 1.0;
+    }
+    final double delta = scale / _lastScale;
+    _lastScale = scale;
+    if (!delta.isFinite || delta <= 0) return 1.0;
+    return delta.clamp(0.25, 4.0);
+  }
+
+  /// Free zoom reads each axis from the finger separation along it. See
+  /// [PinchTracker] for why the reported horizontal and vertical scales are not
+  /// usable for that.
+  final PinchTracker _pinch = PinchTracker();
 
   void resetView() {
     setState(() {
@@ -208,21 +251,27 @@ class Plot3DScreenState extends State<Plot3DScreen>
     // surface, so scaling z by max|F| blows the box far past the shape: for
     // x²+y²+z²=1 over x,y in [-5,5], max|F| is 49, which stretched z to ±59
     // and left the unit sphere falling between two z-samples — nothing drawn.
-    if (widget.function.isLevelSet) return null;
+    //
+    // Every height surface in the cell has to fit, not just the first: sizing
+    // the box to one of them leaves the others clipped at the lid.
+    final List<PlotExpression> curves =
+        _curves.where((PlotExpression e) => !e.isLevelSet).toList();
+    if (curves.isEmpty) return null;
     try {
-      final parser = widget.function;
       double maxAbs = 0;
       const int samples = 6;
-      for (int i = 0; i <= samples; i++) {
-        final tx = i / samples;
-        final x = -xRange + (2 * xRange) * tx;
-        for (int j = 0; j <= samples; j++) {
-          final ty = j / samples;
-          final y = -yRange + (2 * yRange) * ty;
-          final z = parser.evaluate(x, y, 0);
-          if (!z.isFinite) continue;
-          final absZ = z.abs();
-          if (absZ > maxAbs) maxAbs = absZ;
+      for (final PlotExpression parser in curves) {
+        for (int i = 0; i <= samples; i++) {
+          final tx = i / samples;
+          final x = -xRange + (2 * xRange) * tx;
+          for (int j = 0; j <= samples; j++) {
+            final ty = j / samples;
+            final y = -yRange + (2 * yRange) * ty;
+            final z = parser.evaluate(x, y, 0);
+            if (!z.isFinite) continue;
+            final absZ = z.abs();
+            if (absZ > maxAbs) maxAbs = absZ;
+          }
         }
       }
       if (maxAbs <= 0) return null;
@@ -231,6 +280,50 @@ class Plot3DScreenState extends State<Plot3DScreen>
       return null;
     }
   }
+
+  /// The point a long-press picked off the surface, in data coordinates.
+  ///
+  /// Not persisted in the saved view: the 2D trace clears on restore too, and
+  /// a marker reappearing on a plot you have since rotated would be pointing
+  /// at nothing in particular.
+  SurfaceHit? _tracePoint;
+
+  /// Exposed for tests; the marker is otherwise private state.
+  @visibleForTesting
+  SurfaceHit? get tracePointForTest => _tracePoint;
+
+  /// Put the marker where the touch meets the surface, or take it away when
+  /// the touch is over empty space.
+  void _pickTrace(Offset local, Size size) {
+    if (size.width <= 0 || size.height <= 0) return;
+    final SurfaceHit? hit = pickSurface(
+      PlotCamera(
+        size: size,
+        rotationX: rotationX,
+        rotationZ: rotationZ,
+        panX: panX,
+        panY: panY,
+        rangeX: xRange,
+        rangeY: yRange,
+        rangeZ: zRange,
+      ),
+      _curves,
+      local,
+    );
+    setState(() => _tracePoint = hit);
+  }
+
+  void _clearTrace() {
+    if (_tracePoint == null) return;
+    setState(() => _tracePoint = null);
+  }
+
+  /// Every function to draw, or just [Plot3DScreen.function] when the caller
+  /// gave no list.
+  List<PlotExpression> get _curves =>
+      widget.functions.isEmpty
+          ? <PlotExpression>[widget.function]
+          : widget.functions;
 
   @override
   void initState() {
@@ -242,6 +335,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
   void didUpdateWidget(covariant Plot3DScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.function != widget.function ||
+        oldWidget.functions != widget.functions ||
         oldWidget.fieldType != widget.fieldType) {
       _autoScaleIfNeeded();
     }
@@ -267,6 +361,8 @@ class Plot3DScreenState extends State<Plot3DScreen>
           // do not expose.
           onPointerDown: _trackPointerDown,
           onPointerMove: _trackPointerMove,
+          onPointerUp: _trackPointerUp,
+          onPointerCancel: _trackPointerUp,
           child: GestureDetector(
             onScaleStart: (details) {
               // Any touch stops the spin — including a plain tap, which reaches
@@ -275,8 +371,6 @@ class Plot3DScreenState extends State<Plot3DScreen>
               _stopSpin();
               _wasRotating = false;
               _lastScale = 1.0;
-              _lastHorizontalScale = 1.0;
-              _lastVerticalScale = 1.0;
             },
             onScaleUpdate: (details) {
               setState(() {
@@ -288,21 +382,24 @@ class Plot3DScreenState extends State<Plot3DScreen>
                     // Zoom mode
                     switch (widget.zoomAxis) {
                       case ZoomAxis.free:
-                        // Free zoom - use horizontal/vertical scale for X/Y
-                        final hScaleDelta =
-                            details.horizontalScale / _lastHorizontalScale;
-                        final vScaleDelta =
-                            details.verticalScale / _lastVerticalScale;
-                        _lastHorizontalScale = details.horizontalScale;
-                        _lastVerticalScale = details.verticalScale;
+                        // Free zoom — each axis follows the finger separation
+                        // along it. horizontalScale and verticalScale are
+                        // ratios against the separation at the start of the
+                        // gesture, which for a near-level pinch is a pixel or
+                        // two, or zero; dividing by that produced a NaN range
+                        // that clamp() passes straight through, because NaN
+                        // compares false against both limits.
+                        final pinch = _pinch.read();
+                        final hScaleDelta = pinch.x;
+                        final vScaleDelta = pinch.y;
 
                         if ((hScaleDelta - 1.0).abs() > 0.001) {
                           xRange /= hScaleDelta;
-                          xRange = xRange.clamp(1.0, 50.0);
+                          xRange = xRange.clamp(_minRange, _maxRange);
                         }
                         if ((vScaleDelta - 1.0).abs() > 0.001) {
                           yRange /= vScaleDelta;
-                          yRange = yRange.clamp(1.0, 50.0);
+                          yRange = yRange.clamp(_minRange, _maxRange);
                         }
                         // Keep Z in sync with data when possible
                         final autoZ = _computeAutoZRange();
@@ -311,11 +408,10 @@ class Plot3DScreenState extends State<Plot3DScreen>
 
                       case ZoomAxis.x:
                         // X-axis only zoom
-                        final scaleDelta = details.scale / _lastScale;
-                        _lastScale = details.scale;
+                        final scaleDelta = _uniformDelta(details.scale);
                         if ((scaleDelta - 1.0).abs() > 0.001) {
                           xRange /= scaleDelta;
-                          xRange = xRange.clamp(1.0, 50.0);
+                          xRange = xRange.clamp(_minRange, _maxRange);
                           final autoZ = _computeAutoZRange();
                           if (autoZ != null) zRange = autoZ;
                         }
@@ -323,11 +419,10 @@ class Plot3DScreenState extends State<Plot3DScreen>
 
                       case ZoomAxis.y:
                         // Y-axis only zoom
-                        final scaleDelta = details.scale / _lastScale;
-                        _lastScale = details.scale;
+                        final scaleDelta = _uniformDelta(details.scale);
                         if ((scaleDelta - 1.0).abs() > 0.001) {
                           yRange /= scaleDelta;
-                          yRange = yRange.clamp(1.0, 50.0);
+                          yRange = yRange.clamp(_minRange, _maxRange);
                           final autoZ = _computeAutoZRange();
                           if (autoZ != null) zRange = autoZ;
                         }
@@ -335,11 +430,10 @@ class Plot3DScreenState extends State<Plot3DScreen>
 
                       case ZoomAxis.z:
                         // Z-axis only zoom
-                        final scaleDelta = details.scale / _lastScale;
-                        _lastScale = details.scale;
+                        final scaleDelta = _uniformDelta(details.scale);
                         if ((scaleDelta - 1.0).abs() > 0.001) {
                           zRange /= scaleDelta;
-                          zRange = zRange.clamp(1.0, 50.0);
+                          zRange = zRange.clamp(_minRange, _maxRange);
                         }
                         break;
                     }
@@ -360,10 +454,29 @@ class Plot3DScreenState extends State<Plot3DScreen>
                 }
               });
             },
+            // Long-press reads a point off the surface, as it does in 2D.
+            // There is no conflict with rotating: a plain drag is a scale
+            // gesture, which wins the moment the finger moves.
+            onLongPressStart:
+                (details) => _pickTrace(
+                  details.localPosition,
+                  Size(constraints.maxWidth, constraints.maxHeight),
+                ),
+            onLongPressMoveUpdate:
+                (details) => _pickTrace(
+                  details.localPosition,
+                  Size(constraints.maxWidth, constraints.maxHeight),
+                ),
+            // Stopping the spin used to fall out of onScaleStart, which a tap
+            // reached as a degenerate scale gesture. Registering onTap gives
+            // the tap recogniser the arena instead, so it has to do both jobs
+            // or a tap no longer halts a spinning plot.
+            onTap: () {
+              _stopSpin();
+              _clearTrace();
+            },
             onScaleEnd: (details) {
               _lastScale = 1.0;
-              _lastHorizontalScale = 1.0;
-              _lastVerticalScale = 1.0;
               // Only a one-finger rotate carries the spin: a pinch ends at a
               // chosen zoom, and panning ends where the plot was placed.
               //
@@ -388,8 +501,10 @@ class Plot3DScreenState extends State<Plot3DScreen>
               child: CustomPaint(
                 size: Size(constraints.maxWidth, constraints.maxHeight),
                 painter: Plot3DPainter(
+                  tracePoint: _tracePoint,
                   plotTheme: widget.plotTheme,
                   function: widget.function,
+                  functions: widget.functions,
                   is3DFunction: widget.is3DFunction,
                   rotationX: rotationX,
                   rotationZ: rotationZ,

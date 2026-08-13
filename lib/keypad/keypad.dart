@@ -8,6 +8,7 @@ import 'popup_menu_button.dart';
 import '../settings/settings.dart';
 import '../settings/settings_provider.dart';
 import '../utils/app_colors.dart';
+import '../utils/coordinate_system.dart';
 import 'dart:async';
 import '../walkthrough/walkthrough_service.dart';
 import '../walkthrough/walkthrough_steps.dart';
@@ -84,6 +85,23 @@ class CalculatorKeypad extends StatefulWidget {
   final VoidCallback? onUndoAppState;
   final VoidCallback? onRedoAppState;
 
+  /// Save the plot of the cell being edited to a file.
+  final VoidCallback? onExportPlot;
+
+  /// Which system the three variable keys are showing.
+  ///
+  /// Held by the owner rather than the keypad because the plot has to know it
+  /// too: an expression in ρ and θ is drawn by converting the sample point,
+  /// so the renderer needs the same answer the keys are giving.
+  final CoordinateSystem variableSystem;
+
+  /// Which system the three unit-vector keys are showing. Independent of
+  /// [variableSystem] — r̂ alongside x and y is a normal thing to write.
+  final CoordinateSystem unitVectorSystem;
+
+  final ValueChanged<CoordinateSystem>? onVariableSystemChanged;
+  final ValueChanged<CoordinateSystem>? onUnitVectorSystemChanged;
+
   const CalculatorKeypad({
     super.key,
     required this.screenWidth,
@@ -110,6 +128,11 @@ class CalculatorKeypad extends StatefulWidget {
     this.canRedoAppState = false,
     this.onUndoAppState,
     this.onRedoAppState,
+    this.onExportPlot,
+    this.variableSystem = CoordinateSystem.cartesian,
+    this.unitVectorSystem = CoordinateSystem.cartesian,
+    this.onVariableSystemChanged,
+    this.onUnitVectorSystemChanged,
   });
 
   @override
@@ -158,7 +181,6 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     15, 10, 11, 12, 5, 16, 13, 14, 17, 19, // 0 1 2 3 4 | . x / E cmd
   ];
 
-
   /// The phone number pad, mirrored for a left-hander so the digits move to
   /// the right half and the operators to the left.
   List<int> get _phoneNumberOrder =>
@@ -174,8 +196,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
   }
   // -----------------------------------------------------------------------
 
-  bool get _isTabletLayout =>
-      widget.isLandscape || widget.screenWidth > 600;
+  bool get _isTabletLayout => widget.isLandscape || widget.screenWidth > 600;
 
   // One shape everywhere: each half of the keypad is a single 20-key grid, so
   // 10 columns x 2 rows. Splitting the keypad into a swipeable function half
@@ -255,20 +276,27 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
   ];
 
   /// Variables and algebra up top, then the six trig keys as a 2x3 block.
+  // Scientific source indices, in the order _scientificButtons builds them:
+  //  0 x   1 y   2 z   3 sin   4 cos   5 tan   6 =  7 x²  8 π  9 log
+  // 10 x̂  11 ŷ  12 ẑ  13 asin 14 acos 15 atan 16 ≥  17 √  18 e 19 °
+  //
+  // Reflowing to five columns keeps every pair in one column: a unit vector
+  // under its variable, an inverse under its trig function, the root under
+  // the square, the relational operators under equals.
   static const List<int> _scientificFiveWide = <int>[
-    0, 1, 2, 3, 4, // x y z x̂ ŷ
-    5, 6, 7, 8, 9, // ẑ = x² √ ⁿ√
-    10, 11, 12, 16, 17, // sin cos tan | log °
-    13, 14, 15, 18, 19, // asin acos atan | π e
+    0, 1, 2, 6, 7, // x    y    z    =  x²
+    10, 11, 12, 16, 17, // x̂    ŷ    ẑ    ≥  √
+    3, 4, 5, 8, 9, // sin  cos  tan  π  log
+    13, 14, 15, 18, 19, // asin acos atan e  °
   ];
 
   /// Rows of 6, 7, 7 — the scientific block is one column narrower in the top
   /// row so the whole keypad lands on exactly 20 columns. Rows 1 and 2 start
   /// at the same grid column, which is what keeps the trig keys aligned.
   static const List<int> _scientificLandscape = <int>[
-    0, 1, 2, 3, 4, 5, // x y z x̂ ŷ ẑ
-    10, 11, 12, 6, 7, 8, 9, // sin cos tan | = x² √ ⁿ√
-    13, 14, 15, 16, 17, 18, 19, // asin acos atan | log ° π e
+    0, 1, 2, 10, 11, 12, // x  y  z  x̂  ŷ  ẑ
+    3, 4, 5, 6, 7, 8, 9, // sin  cos  tan  =  x² π log
+    13, 14, 15, 16, 17, 18, 19, // asin acos atan ≥ √  e  °
   ];
 
   // Extras source indices:
@@ -389,8 +417,6 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     'CE',
     'EN',
   ];
-
-
 
   @override
   void initState() {
@@ -710,9 +736,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
                             children: [
                               SizedBox.expand(
                                 key: widget.scientificKeypadKey,
-                                child: _buildScientificGrid(
-                                  widget.isLandscape,
-                                ),
+                                child: _buildScientificGrid(widget.isLandscape),
                               ),
                               SizedBox.expand(
                                 key: widget.extrasKeypadKey,
@@ -747,7 +771,6 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     );
   }
 
-
   // ============================================================
   // SCIENTIFIC PAGE
   //
@@ -768,23 +791,6 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
       buttontapped: () {
         onTap();
         widget.onUpdateMathEditor();
-      },
-      buttonText: label,
-      color: _kpButton,
-      textColor: _kpButtonText,
-    );
-  }
-
-  /// A key that wraps the current selection when there is one, and otherwise
-  /// inserts a fresh node.
-  Widget _sciWrap(
-    String label, {
-    required bool Function() wrap,
-    required VoidCallback normal,
-  }) {
-    return MyButton(
-      buttontapped: () {
-        _handleButtonWithSelection(wrapAction: wrap, normalAction: normal);
       },
       buttonText: label,
       color: _kpButton,
@@ -835,17 +841,119 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     );
   }
 
+  /// A coordinate variable key, with the other systems behind a long press.
+  ///
+  /// The whole group changes together: choosing spherical from any of the
+  /// three turns them all into ρ, θ, ϕ. A row showing two systems at once would
+  /// mean nothing, because the symbols only have meaning relative to one.
+  /// A coordinate variable key.
+  ///
+  /// A long press offers the symbol this key becomes in each other system —
+  /// hold x and you are offered r and ρ, not the names of the systems they
+  /// belong to. Choosing one moves the whole group, so y and z follow to
+  /// match: a row reading x, θ, z would mean nothing, because each symbol
+  /// only has meaning relative to one system.
+  Widget _sciVariable(int axis) {
+    final CoordinateSystem system = widget.variableSystem;
+    return _sciMenu(
+      system.variables[axis],
+      onTap: () => _activeController?.insertCharacter(system.variables[axis]),
+      menuItems: _systemChoices(
+        system,
+        (CoordinateSystem s) => s.variables,
+        axis,
+        (CoordinateSystem s) {
+          // Switch the keys and type the symbol, as every other long-press
+          // menu does: choosing ln from the log key writes ln. Picking r
+          // without writing r would leave you to press the key again.
+          widget.onVariableSystemChanged?.call(s);
+          _activeController?.insertCharacter(s.variables[axis]);
+        },
+      ),
+    );
+  }
+
+  /// The unit vector on the same axis, switched independently of the
+  /// variables — writing r̂ while still using x and y is legitimate.
+  Widget _sciUnitVector(int axis) {
+    final CoordinateSystem system = widget.unitVectorSystem;
+    return _sciMenu(
+      system.unitVectorLabels[axis],
+      onTap:
+          () =>
+              _activeController?.insertUnitVector(system.unitVectorAxes[axis]),
+      menuItems: _systemChoices(
+        system,
+        (CoordinateSystem s) => s.unitVectorLabels,
+        axis,
+        (CoordinateSystem s) {
+          widget.onUnitVectorSystemChanged?.call(s);
+          _activeController?.insertUnitVector(s.unitVectorAxes[axis]);
+        },
+      ),
+    );
+  }
+
+  /// The other systems, each shown as the symbol this key would become.
+  ///
+  /// Where two systems give the same symbol on this axis the whole triple is
+  /// shown instead — θ is the second variable of both cylindrical and
+  /// spherical, so two menu rows reading "θ" would be a coin toss.
+  List<CalcMenuItem> _systemChoices(
+    CoordinateSystem current,
+    List<String> Function(CoordinateSystem) symbols,
+    int axis,
+    void Function(CoordinateSystem) choose,
+  ) {
+    final List<CoordinateSystem> others =
+        CoordinateSystem.values.where((s) => s != current).toList();
+    final List<String> onThisAxis = <String>[
+      for (final CoordinateSystem s in others) symbols(s)[axis],
+    ];
+    final bool ambiguous = onThisAxis.toSet().length != onThisAxis.length;
+
+    return <CalcMenuItem>[
+      for (int i = 0; i < others.length; i++)
+        _sciItem(
+          ambiguous
+              ? '${onThisAxis[i]}      ${symbols(others[i]).join('  ')}'
+              : onThisAxis[i],
+          () => choose(others[i]),
+        ),
+    ];
+  }
+
+  /// Relational operators. The key carries the one a tap gives you; the rest
+  /// are a long press away, as with the trig and log keys.
+  Widget _sciInequality() {
+    return _sciMenu(
+      '≥',
+      onTap: () => _activeController?.insertCharacter('≥'),
+      menuItems: <CalcMenuItem>[
+        for (final String op in const <String>['>', '≤', '<', '≠'])
+          _sciItem(op, () => _activeController?.insertCharacter(op)),
+      ],
+    );
+  }
+
   List<Widget> _scientificButtons() {
+    // Two rows of ten, each key above or below its relative:
+    //
+    //   x  y  z  sin   cos   tan   =  x²  π  log
+    //   x̂  ŷ  ẑ  asin  acos  atan  ≥  √   e  °
+    //
+    // Unit vectors under their variables, inverse trig under trig, the root
+    // under the square, the relational operators under equals.
     return <Widget>[
-      // ---- row 1: build the expression ----
-      _sciPlain('x', () => _activeController?.insertCharacter('x')),
-      _sciPlain('y', () => _activeController?.insertCharacter('y')),
-      _sciPlain('z', () => _activeController?.insertCharacter('z')),
-      _sciPlain('x̂', () => _activeController?.insertUnitVector('x')),
-      _sciPlain('ŷ', () => _activeController?.insertUnitVector('y')),
-      _sciPlain('ẑ', () => _activeController?.insertUnitVector('z')),
+      // ---- row 1 ----
+      _sciVariable(0),
+      _sciVariable(1),
+      _sciVariable(2),
+      _sciTrig('sin', 'sinh'),
+      _sciTrig('cos', 'cosh'),
+      _sciTrig('tan', 'tanh'),
       _sciPlain('=', () => _activeController?.insertCharacter('=')),
-      // x squared taps to square, long-press for an arbitrary exponent.
+      // Taps to square, long-press for an arbitrary exponent.
       _sciMenu(
         'x²',
         onTap:
@@ -865,25 +973,30 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
           ),
         ],
       ),
-      _sciWrap(
-        '√',
-        wrap: () => _activeController!.selectionWrapper.wrapInSquareRoot(),
-        normal: () => _activeController?.insertSquareRoot(),
+      _sciMenu(
+        'π',
+        menuBackground: Colors.white,
+        onTap: () => _activeController?.insertCharacter('π'),
+        menuItems: [
+          _sciItem(
+            'ε₀ (permittivity)',
+            () => _activeController?.insertConstant('ε₀'),
+          ),
+          _sciItem(
+            'μ₀ (permeability)',
+            () => _activeController?.insertConstant('μ₀'),
+          ),
+          _sciItem(
+            'c₀ (speed of light)',
+            () => _activeController?.insertConstant('c₀'),
+          ),
+          _sciItem(
+            'e⁻ (elementary charge)',
+            () => _activeController?.insertConstant('e⁻'),
+          ),
+        ],
       ),
-      _sciWrap(
-        'ⁿ√',
-        wrap: () => _activeController!.selectionWrapper.wrapInNthRoot(),
-        normal: () => _activeController?.insertNthRoot(),
-      ),
-
-      // ---- row 2: apply a function ----
-      _sciTrig('sin', 'sinh'),
-      _sciTrig('cos', 'cosh'),
-      _sciTrig('tan', 'tanh'),
-      _sciTrig('asin', 'asinh'),
-      _sciTrig('acos', 'acosh'),
-      _sciTrig('atan', 'atanh'),
-      // log taps to log base 10, long-press for ln and an arbitrary base.
+      // Taps to log base 10; ln and an arbitrary base are a long press away.
       _sciMenu(
         'log',
         onTap:
@@ -911,31 +1024,38 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
           ),
         ],
       ),
-      _sciPlain('°', () => _activeController?.insertCharacter('°')),
+
+      // ---- row 2 ----
+      _sciUnitVector(0),
+      _sciUnitVector(1),
+      _sciUnitVector(2),
+      _sciTrig('asin', 'asinh'),
+      _sciTrig('acos', 'acosh'),
+      _sciTrig('atan', 'atanh'),
+      _sciInequality(),
+      // The nth root moved in here: same operation with the index supplied,
+      // so it belongs behind the square root rather than beside it.
       _sciMenu(
-        'π',
-        menuBackground: Colors.white,
-        onTap: () => _activeController?.insertCharacter('π'),
+        '√',
+        onTap:
+            () => _handleButtonWithSelection(
+              wrapAction:
+                  () => _activeController!.selectionWrapper.wrapInSquareRoot(),
+              normalAction: () => _activeController?.insertSquareRoot(),
+            ),
         menuItems: [
           _sciItem(
-            'ε₀ (permittivity)',
-            () => _activeController?.insertConstant('ε₀'),
-          ),
-          _sciItem(
-            'μ₀ (permeability)',
-            () => _activeController?.insertConstant('μ₀'),
-          ),
-          _sciItem(
-            'c₀ (speed of light)',
-            () => _activeController?.insertConstant('c₀'),
-          ),
-          _sciItem(
-            'e⁻ (elementary charge)',
-            () => _activeController?.insertConstant('e⁻'),
+            'ⁿ√',
+            () => _handleButtonWithSelection(
+              wrapAction:
+                  () => _activeController!.selectionWrapper.wrapInNthRoot(),
+              normalAction: () => _activeController?.insertNthRoot(),
+            ),
           ),
         ],
       ),
       _sciPlain('e', () => _activeController?.insertCharacter('e')),
+      _sciPlain('°', () => _activeController?.insertCharacter('°')),
     ];
   }
 
@@ -955,10 +1075,9 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
           _scientificButtons(),
           _scientificTabletOrder,
         );
-        final List<Widget> numbers = _arrange(
-          <Widget>[for (int i = 0; i < 20; i++) _numberButtonAt(i)],
-          _numberTabletOrder,
-        );
+        final List<Widget> numbers = _arrange(<Widget>[
+          for (int i = 0; i < 20; i++) _numberButtonAt(i),
+        ], _numberTabletOrder);
 
         // Walk each group with its own cursor: a group takes a different
         // number of columns on different rows.
@@ -1044,124 +1163,123 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
   /// One key of the number pad, addressed by its index in [_buttons] so both
   /// the phone grid and the tablet block can place it wherever they like.
   Widget _numberButtonAt(int index) {
-        if (index == 3) {
-          return MyButton(
-            buttontapped: () {
-              _handleButtonWithSelection(
-                wrapAction:
-                    () =>
-                        _activeController!.selectionWrapper.wrapInParenthesis(),
-                normalAction:
-                    () => _activeController?.insertCharacter(_buttons[index]),
-              );
-            },
-            buttonText: '\u0028\u0029',
-            color: _kpButton,
-            textColor: _kpButtonText,
+    if (index == 3) {
+      return MyButton(
+        buttontapped: () {
+          _handleButtonWithSelection(
+            wrapAction:
+                () => _activeController!.selectionWrapper.wrapInParenthesis(),
+            normalAction:
+                () => _activeController?.insertCharacter(_buttons[index]),
           );
-        } else if (index == 4) {
-          return GestureDetector(
-            onLongPressStart: (_) => _startContinuousDelete(),
-            onLongPressEnd: (_) => _stopContinuousDelete(),
-            onLongPressCancel: _stopContinuousDelete,
-            child: MyButton(
-              buttontapped: _handleSingleBackspace,
-              buttonText: '\u232B',
-              color: const Color.fromARGB(255, 226, 104, 104),
-              textColor: _kpButtonText,
-            ),
+        },
+        buttonText: '\u0028\u0029',
+        color: _kpButton,
+        textColor: _kpButtonText,
+      );
+    } else if (index == 4) {
+      return GestureDetector(
+        onLongPressStart: (_) => _startContinuousDelete(),
+        onLongPressEnd: (_) => _stopContinuousDelete(),
+        onLongPressCancel: _stopContinuousDelete,
+        child: MyButton(
+          buttontapped: _handleSingleBackspace,
+          buttonText: '\u232B',
+          color: const Color.fromARGB(255, 226, 104, 104),
+          textColor: _kpButtonText,
+        ),
+      );
+    } else if (index == 8) {
+      return MyButton(
+        buttontapped: () {
+          _activeController?.insertCharacter('\u002B');
+          widget.onUpdateMathEditor();
+        },
+        buttonText: '\u002B',
+        color: _kpButton,
+        textColor: _kpButtonText,
+      );
+    } else if (index == 9) {
+      return MyButton(
+        buttontapped: () {
+          _activeController?.insertCharacter('\u2212');
+          widget.onUpdateMathEditor();
+        },
+        buttonText: '\u2212',
+        color: _kpButton,
+        textColor: _kpButtonText,
+      );
+    } else if (index == 13) {
+      return MyButton(
+        buttontapped: () {
+          _activeController?.insertCharacter(
+            widget.settingsProvider.multiplicationSign,
           );
-        } else if (index == 8) {
-          return MyButton(
-            buttontapped: () {
-              _activeController?.insertCharacter('\u002B');
-              widget.onUpdateMathEditor();
-            },
-            buttonText: '\u002B',
-            color: _kpButton,
-            textColor: _kpButtonText,
+          widget.onUpdateMathEditor();
+        },
+        buttonText: '\u00D7',
+        color: _kpButton,
+        textColor: _kpButtonText,
+      );
+    } // Division button (index 14)
+    else if (index == 14) {
+      return MyButton(
+        buttontapped: () {
+          _handleButtonWithSelection(
+            wrapAction:
+                () => _activeController!.selectionWrapper.wrapInFraction(),
+            normalAction:
+                () => _activeController?.insertCharacter(_buttons[index]),
           );
-        } else if (index == 9) {
-          return MyButton(
-            buttontapped: () {
-              _activeController?.insertCharacter('\u2212');
-              widget.onUpdateMathEditor();
-            },
-            buttonText: '\u2212',
-            color: _kpButton,
-            textColor: _kpButtonText,
-          );
-        } else if (index == 13) {
-          return MyButton(
-            buttontapped: () {
-              _activeController?.insertCharacter(
-                widget.settingsProvider.multiplicationSign,
-              );
-              widget.onUpdateMathEditor();
-            },
-            buttonText: '\u00D7',
-            color: _kpButton,
-            textColor: _kpButtonText,
-          );
-        } // Division button (index 14)
-        else if (index == 14) {
-          return MyButton(
-            buttontapped: () {
-              _handleButtonWithSelection(
-                wrapAction:
-                    () => _activeController!.selectionWrapper.wrapInFraction(),
-                normalAction:
-                    () => _activeController?.insertCharacter(_buttons[index]),
-              );
-            },
-            buttonText: '\u00F7',
-            color: _kpButton,
-            textColor: _kpButtonText,
-          );
-        } else if (index == 17) {
-          // Scientific notation is the only behaviour for this key. klotter is
-          // an advanced calculator: 1E6 earns the slot, percentage does not.
-          return MyButton(
-            buttontapped: () {
-              _activeController?.insertCharacter(MathTextStyle.scientificE);
-              widget.onUpdateMathEditor();
-            },
-            buttonText: MathTextStyle.scientificE,
-            color: _kpButton,
-            textColor: _kpButtonText,
-          );
-        } else if (index == 18) {
-          return MyButton(
-            buttontapped: () {
-              _activeController?.clear();
-              widget.onUpdateMathEditor();
-              widget.onSetState();
-            },
-            buttonText: _buttons[index],
-            color: _kpButton,
-            textColor: _kpButtonText,
-          );
-        } else if (index == 19) {
-          return Container(
-            key: widget.commandButtonKey,
-            child: MyButton(
-              buttontapped: _handleEnter,
-              buttonText: '\u2318',
-              color: Colors.blueGrey,
-              textColor: _kpButtonText,
-            ),
-          );
-        } else {
-          return MyButton(
-            buttontapped: () {
-              _activeController?.insertCharacter(_buttons[index]);
-              widget.onUpdateMathEditor();
-            },
-            buttonText: _buttons[index],
-            color: _kpButton,
-            textColor: _kpButtonText,
-          );
-        }
+        },
+        buttonText: '\u00F7',
+        color: _kpButton,
+        textColor: _kpButtonText,
+      );
+    } else if (index == 17) {
+      // Scientific notation is the only behaviour for this key. klotter is
+      // an advanced calculator: 1E6 earns the slot, percentage does not.
+      return MyButton(
+        buttontapped: () {
+          _activeController?.insertCharacter(MathTextStyle.scientificE);
+          widget.onUpdateMathEditor();
+        },
+        buttonText: MathTextStyle.scientificE,
+        color: _kpButton,
+        textColor: _kpButtonText,
+      );
+    } else if (index == 18) {
+      return MyButton(
+        buttontapped: () {
+          _activeController?.clear();
+          widget.onUpdateMathEditor();
+          widget.onSetState();
+        },
+        buttonText: _buttons[index],
+        color: _kpButton,
+        textColor: _kpButtonText,
+      );
+    } else if (index == 19) {
+      return Container(
+        key: widget.commandButtonKey,
+        child: MyButton(
+          buttontapped: _handleEnter,
+          buttonText: '\u2318',
+          color: Colors.blueGrey,
+          textColor: _kpButtonText,
+        ),
+      );
+    } else {
+      return MyButton(
+        buttontapped: () {
+          _activeController?.insertCharacter(_buttons[index]);
+          widget.onUpdateMathEditor();
+        },
+        buttonText: _buttons[index],
+        color: _kpButton,
+        textColor: _kpButtonText,
+      );
+    }
   }
 
   // ============================================================
@@ -1383,13 +1501,22 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
         ),
       ],
     );
-    final Widget kUndo = _extrasAction('⎌', () => widget.onUndoAppState?.call());
+    final Widget kUndo = _extrasAction(
+      '⎌',
+      () => widget.onUndoAppState?.call(),
+    );
     final Widget kRedo = _extrasAction(
       '⎌',
       () => widget.onRedoAppState?.call(),
       mirrored: true,
     );
     final Widget kClearAll = _extrasAction('⌧', widget.onClearAllDisplays);
+    // U+21EA, an upward arrow out of a tray: the plot leaving the app. It sits
+    // in the slot that was empty, beside the other whole-app actions rather
+    // than among the maths keys.
+    final Widget kExport = _extrasAction('⇪', () {
+      widget.onExportPlot?.call();
+    });
     final Widget kHelp = _extrasAction(
       'ⓘ',
       () => Navigator.push(context, SlidePageRoute(page: HelpPage())),
@@ -1416,7 +1543,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
       // row 1
       kI, kX, kRoot, kSin, kFactorial, kComb, kDeriv, kUndo, kRedo, kClearAll,
       // row 2
-      kPi, kSquare, kAbs, kAsin, kPerm, kSum, kIntegral, _extrasBlank(), kHelp,
+      kPi, kSquare, kAbs, kAsin, kPerm, kSum, kIntegral, kExport, kHelp,
       kSettings,
     ];
   }

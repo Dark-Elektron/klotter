@@ -48,6 +48,11 @@ app.*.map.json
 /upload-keystore.jks
 .claude/
 .vscode/
-test_out*
-PLOTT*
-analysis_outp*
+# Scratch output, all at the repo root. These are anchored and given their
+# full names deliberately: an unanchored `PLOTT*` also matched the directories
+# lib/plotting and test/plotting, because ignore matching is case-insensitive
+# where core.ignorecase is on. That silently kept 7 library files and every
+# plotting test out of the repository.
+/test_out*
+/PLOTTING_ROADMAP.md
+/analysis_outp*

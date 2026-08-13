@@ -195,8 +195,9 @@ class MathEditorInlineState extends State<MathEditorInline>
     // Long-press over a number tunes it; long-press anywhere else selects, as
     // before. Disambiguating here avoids inventing a second gesture on a
     // surface that already owns tap, double-tap, long-press and pan.
-    final ScrubTarget? target =
-        widget.controller.scrubTargetAt(localToContainer);
+    final ScrubTarget? target = widget.controller.scrubTargetAt(
+      localToContainer,
+    );
     if (target != null) {
       setState(() {
         _scrubTarget = target;

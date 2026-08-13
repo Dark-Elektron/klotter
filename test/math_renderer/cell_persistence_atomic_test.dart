@@ -48,9 +48,13 @@ void main() {
   });
 
   test('active index is stored inside the single blob (one key)', () async {
-    await CellPersistence.saveAll([
-      [LiteralNode(text: '9')],
-    ], <Map<String, dynamic>?>[null], 0);
+    await CellPersistence.saveAll(
+      [
+        [LiteralNode(text: '9')],
+      ],
+      <Map<String, dynamic>?>[null],
+      0,
+    );
 
     final prefs = await SharedPreferences.getInstance();
     // The legacy separate key is not written by saveAll.
@@ -63,27 +67,29 @@ void main() {
     expect((decoded as Map)['activeIndex'], equals(0));
   });
 
-  test('reads the legacy bare-list format and separate active_cell key',
-      () async {
-    // Old format: a bare JSON list under calculator_cells + a separate int.
-    final legacyCells = jsonEncode([
-      {'expression': '', 'answer': '42'},
-    ]);
-    SharedPreferences.setMockInitialValues({
-      'calculator_cells': legacyCells,
-      'active_cell': 1,
-    });
+  test(
+    'reads the legacy bare-list format and separate active_cell key',
+    () async {
+      // Old format: a bare JSON list under calculator_cells + a separate int.
+      final legacyCells = jsonEncode([
+        {'expression': '', 'answer': '42'},
+      ]);
+      SharedPreferences.setMockInitialValues({
+        'calculator_cells': legacyCells,
+        'active_cell': 1,
+      });
 
-    final cells = await CellPersistence.loadCells();
-    final activeIndex = await CellPersistence.loadActiveIndex();
+      final cells = await CellPersistence.loadCells();
+      final activeIndex = await CellPersistence.loadActiveIndex();
 
-    // A save written before plot views existed still loads: the old `answer`
-    // field is ignored rather than treated as corruption, and the missing
-    // view falls back to the default.
-    expect(cells, hasLength(1));
-    expect(cells.first.plotView, isNull);
-    expect(activeIndex, equals(1)); // falls back to the legacy key
-  });
+      // A save written before plot views existed still loads: the old `answer`
+      // field is ignored rather than treated as corruption, and the missing
+      // view falls back to the default.
+      expect(cells, hasLength(1));
+      expect(cells.first.plotView, isNull);
+      expect(activeIndex, equals(1)); // falls back to the legacy key
+    },
+  );
 
   test('returns empty list and index 0 when nothing is stored', () async {
     expect(await CellPersistence.loadCells(), isEmpty);
