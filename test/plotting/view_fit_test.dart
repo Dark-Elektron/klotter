@@ -17,7 +17,7 @@ void main() {
   /// Where the drawing actually lands, measured the way the painter draws it:
   /// the box corners and arrow tips, projected over a full turn of azimuth at
   /// the tilt the fit is made for, with the fit's own centring applied.
-  ({double width, double height}) footprint(Size size) {
+  ({double width, double height, double floor}) footprint(Size size) {
     final ViewFit f = Plot3DPainter.viewExtentsFor(size);
     final double focal = Plot3DPainter.focalLengthFor(size);
     const double tilt = 0.6;
@@ -26,6 +26,7 @@ void main() {
 
     double left = double.infinity, right = double.negativeInfinity;
     double top = double.infinity, bottom = double.negativeInfinity;
+    double floorLeft = double.infinity, floorRight = double.negativeInfinity;
 
     for (int a = 0; a < 24; a++) {
       final double az = a * math.pi / 12;
@@ -53,9 +54,17 @@ void main() {
         right = math.max(right, sxp);
         top = math.min(top, syp);
         bottom = math.max(bottom, syp);
+        if (p[2] == -f.vertical) {
+          floorLeft = math.min(floorLeft, sxp);
+          floorRight = math.max(floorRight, sxp);
+        }
       }
     }
-    return (width: right - left, height: bottom - top);
+    return (
+      width: right - left,
+      height: bottom - top,
+      floor: floorRight - floorLeft,
+    );
   }
 
   const List<Size> shapes = <Size>[
@@ -73,19 +82,20 @@ void main() {
       expect(footprint(phone).height / phone.height, greaterThan(0.9));
     });
 
-    test('spends most of its width on the plan', () {
-      // Not all of it: the plan is deliberately held to _planFill so the
-      // rest is available to a taller box, which leans into the width as it
-      // grows. That trade is the knob.
-      final double used = footprint(phone).width / phone.width;
-      expect(used, greaterThan(0.75));
-      expect(used, lessThan(0.95));
+    test('draws its floor across the panel', () {
+      // The floor, not the whole drawing. That distinction is the bug this
+      // replaced: budgeting everything drawn left the visible grid covering
+      // under two thirds of the panel while the box's top corners, which
+      // nobody reads as the width, touched both edges.
+      expect(footprint(phone).floor / phone.width, greaterThan(0.85));
     });
 
     test('is a cuboid, with z the long axis', () {
       // The shape asked for: a cube left the height empty above the box.
       final ViewFit f = Plot3DPainter.viewExtentsFor(phone);
-      expect(f.vertical, greaterThan(f.planar * 2));
+      // Only modestly taller than wide. z takes what the height affords once
+      // the floor has the width, and on this panel that is not much more.
+      expect(f.vertical, greaterThan(f.planar * 1.1));
     });
 
     test('and sits centred, not low', () {
@@ -97,10 +107,18 @@ void main() {
   });
 
   group('whatever the panel shape', () {
-    test('nothing runs off the canvas', () {
+    test('nothing meaningful runs off the canvas', () {
       for (final Size s in shapes) {
         expect(footprint(s).height, lessThan(s.height), reason: 'height on $s');
-        expect(footprint(s).width, lessThan(s.width), reason: 'width on $s');
+        // The floor stays inside. Only the topmost corners of the box lean
+        // past the edge, by the few percent _widthOverhang allows — holding
+        // those in would cost either a narrow floor or a short box.
+        expect(footprint(s).floor, lessThan(s.width), reason: 'floor on $s');
+        expect(
+          footprint(s).width,
+          lessThan(s.width * 1.06),
+          reason: 'width on $s',
+        );
       }
     });
 
