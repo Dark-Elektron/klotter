@@ -1332,27 +1332,35 @@ class Plot2DPainter extends CustomPainter {
     }
   }
 
+  /// The scale for whatever the colours mean, across the top of the plot.
+  ///
+  /// Horizontal and centred rather than a vertical strip down the left edge:
+  /// the left is now the parameter panels' corner, and a plot is wider than it
+  /// is tall, so a bar laid along the width has room for its labels without
+  /// taking a bite out of the drawing area.
   void _drawColorbar(Canvas canvas, Size size, double minVal, double maxVal) {
     final theme = plotTheme;
-    const barWidth = 15.0;
-    const barHeight = 100.0;
-    const margin = 10.0;
+    const double barHeight = 12.0;
+    const double margin = 10.0;
+    // Bounded so it neither dominates a wide plot nor vanishes on a narrow
+    // one, and always leaves room for a label at each end.
+    final double barWidth = (size.width * 0.45).clamp(80.0, 220.0);
 
     final barRect = Rect.fromLTWH(
+      (size.width - barWidth) / 2,
       margin,
-      size.height / 2 - barHeight / 2,
       barWidth,
       barHeight,
     );
 
-    // One gradient, not a line per pixel: sampling the ramp per row quantises
-    // it to the bar's height in steps, which reads as banding.
+    // One gradient, not a line per pixel: sampling the ramp per column
+    // quantises it to the bar's width in steps, which reads as banding.
     canvas.drawRect(
       barRect,
       Paint()
         ..shader = const LinearGradient(
-          begin: Alignment.bottomCenter,
-          end: Alignment.topCenter,
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
           colors: plotColormapStops,
         ).createShader(barRect),
     );
@@ -1366,17 +1374,21 @@ class Plot2DPainter extends CustomPainter {
     );
 
     final textStyle = TextStyle(color: theme.colorbarText, fontSize: 10);
-    final maxTp = TextPainter(
-      text: TextSpan(text: _formatNumber(maxVal), style: textStyle),
+    TextPainter label(double v) => TextPainter(
+      text: TextSpan(text: _formatNumber(v), style: textStyle),
       textDirection: TextDirection.ltr,
     )..layout();
-    maxTp.paint(canvas, Offset(barRect.right + 4, barRect.top - 4));
 
-    final minTp = TextPainter(
-      text: TextSpan(text: _formatNumber(minVal), style: textStyle),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    minTp.paint(canvas, Offset(barRect.right + 4, barRect.bottom - 6));
+    // Low at the left end, high at the right, each outside the bar so neither
+    // sits on top of the ramp it is labelling.
+    final minTp = label(minVal);
+    minTp.paint(
+      canvas,
+      Offset(barRect.left - minTp.width - 4, barRect.center.dy - 6),
+    );
+    label(
+      maxVal,
+    ).paint(canvas, Offset(barRect.right + 4, barRect.center.dy - 6));
   }
 
   void _drawLabels(

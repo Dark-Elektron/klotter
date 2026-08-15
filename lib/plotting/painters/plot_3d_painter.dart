@@ -2973,28 +2973,33 @@ class Plot3DPainter extends CustomPainter {
     ], anchorX: at.dx);
   }
 
+  /// The value scale, laid along the top of the plot.
+  ///
+  /// Horizontal and centred to match 2D, and to leave the left edge to the
+  /// parameter panels. Ticks hang below the bar rather than beside it, which
+  /// is the only arrangement that keeps five labels from colliding.
   void _drawColorbar3D(Canvas canvas, Size size, double minVal, double maxVal) {
-    const double barWidth = 15.0;
-    const double barHeight = 104.0;
+    const double barHeight = 12.0;
     const double margin = 10.0;
     const int ticks = 4;
+    final double barWidth = (size.width * 0.45).clamp(80.0, 220.0);
 
     final Rect barRect = Rect.fromLTWH(
+      (size.width - barWidth) / 2,
       margin,
-      size.height / 2 - barHeight / 2,
       barWidth,
       barHeight,
     );
 
-    // Top of the bar is the maximum, so it reads like the axis. Drawn as one
-    // gradient rather than a row of lines per pixel, which quantised the ramp
-    // to the bar's height in steps and showed as bands.
+    // Left end is the minimum, so it reads like the axis underneath it. Drawn
+    // as one gradient rather than a line per pixel, which quantised the ramp
+    // to the bar's width in steps and showed as bands.
     canvas.drawRect(
       barRect,
       Paint()
         ..shader = const LinearGradient(
-          begin: Alignment.bottomCenter,
-          end: Alignment.topCenter,
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
           colors: plotColormapStops,
         ).createShader(barRect),
     );
@@ -3013,12 +3018,12 @@ class Plot3DPainter extends CustomPainter {
     );
     for (int i = 0; i <= ticks; i++) {
       final double t = i / ticks;
-      final double y = barRect.top + barHeight * t;
-      final double value = maxVal - (maxVal - minVal) * t;
+      final double x = barRect.left + barWidth * t;
+      final double value = minVal + (maxVal - minVal) * t;
 
       canvas.drawLine(
-        Offset(barRect.right, y),
-        Offset(barRect.right + 3, y),
+        Offset(x, barRect.bottom),
+        Offset(x, barRect.bottom + 3),
         Paint()
           ..color = _theme.colorbarBorder
           ..strokeWidth = 1,
@@ -3028,7 +3033,13 @@ class Plot3DPainter extends CustomPainter {
         text: TextSpan(text: _formatNumber(value), style: textStyle),
         textDirection: TextDirection.ltr,
       )..layout();
-      tp.paint(canvas, Offset(barRect.right + 6, y - tp.height / 2));
+      // Centred under its tick, and pulled inside the canvas at the ends so
+      // the first and last labels are not half cut off.
+      final double left = (x - tp.width / 2).clamp(
+        2.0,
+        size.width - tp.width - 2,
+      );
+      tp.paint(canvas, Offset(left, barRect.bottom + 5));
     }
   }
 
