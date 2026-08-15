@@ -4,6 +4,7 @@ import '../../utils/app_colors.dart';
 import 'package:flutter/material.dart';
 import '../models/enums.dart';
 import '../parsers/plot_expression.dart';
+import '../utils/parametric.dart';
 import '../parsers/vector_field_parser.dart';
 import '../utils/colormap.dart';
 import '../utils/curve_features.dart';
@@ -40,6 +41,13 @@ class Plot2DPainter extends CustomPainter {
   /// colour mode and the theme's series palette.
   final PlotThemeData plotTheme;
 
+  /// The spans u and v are swept over when the expression is parametric.
+  ///
+  /// Unused otherwise — a field is sampled over the window, so it has no
+  /// parameter to sweep.
+  final ParameterRange uRange;
+  final ParameterRange vRange;
+
   Plot2DPainter({
     required this.function,
     this.functions = const <PlotExpression>[],
@@ -57,6 +65,8 @@ class Plot2DPainter extends CustomPainter {
     required this.colors,
     this.interacting = false,
     required this.plotTheme,
+    this.uRange = defaultParameterRange,
+    this.vRange = defaultParameterRange,
   });
 
   @override
@@ -98,7 +108,13 @@ class Plot2DPainter extends CustomPainter {
         _drawScalarField(canvas, size, toScreenX, toScreenY);
       }
     } else {
-      if (fieldType == FieldType.vector && vectorParser != null) {
+      // A parametric expression is checked before the field, because the two
+      // are written the same way. Only the variables tell them apart: `y x̂ − x ŷ`
+      // is an arrow at every point, `cos(u) x̂ + sin(u) ŷ` is one point swept
+      // into a curve.
+      if (vectorParser != null && vectorParser!.isParametric) {
+        _drawParametric(canvas, toScreenX, toScreenY);
+      } else if (fieldType == FieldType.vector && vectorParser != null) {
         _drawVectorField(canvas, size, toScreenX, toScreenY);
       } else {
         _drawFunction(canvas, size, toScreenX, toScreenY);
@@ -650,6 +666,46 @@ class Plot2DPainter extends CustomPainter {
         );
       }
     }
+  }
+
+  /// Draw the path traced by sweeping u.
+  ///
+  /// A parametric curve is free to double back, cross itself or close, so it
+  /// is drawn as the sequence of points it is rather than as a value per x.
+  /// The one thing inherited from the ordinary curve path is how a gap is
+  /// handled: a break lifts the pen instead of joining across it.
+  void _drawParametric(
+    Canvas canvas,
+    double Function(double) toScreenX,
+    double Function(double) toScreenY,
+  ) {
+    final VectorFieldParser? field = vectorParser;
+    if (field == null) return;
+
+    final paint =
+        Paint()
+          ..color = plotTheme.seriesColor(0)
+          ..strokeWidth = 3
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round;
+
+    final path = Path();
+    bool started = false;
+    for (final ParametricPoint? p in sampleParametricCurve(field, u: uRange)) {
+      if (p == null) {
+        started = false;
+        continue;
+      }
+      final Offset at = Offset(toScreenX(p.x), toScreenY(p.y));
+      if (started) {
+        path.lineTo(at.dx, at.dy);
+      } else {
+        path.moveTo(at.dx, at.dy);
+        started = true;
+      }
+    }
+    canvas.drawPath(path, paint);
   }
 
   void _drawFunction(
