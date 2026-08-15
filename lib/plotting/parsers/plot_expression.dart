@@ -82,6 +82,13 @@ class PlotExpression {
   /// The variables a plot may bind.
   static const Set<String> plottableVariables = {'x', 'y', 'z'};
 
+  /// The parameters a parametric plot is swept over.
+  ///
+  /// One of them traces a curve; both together sweep a surface. Unlike a
+  /// coordinate they name no place — they are the input a position is
+  /// computed from.
+  static const Set<String> parameterVariables = {'u', 'v'};
+
   /// The system whose symbols cover [free], or null when none does.
   ///
   /// Tried in order, so a line using only shared symbols settles on the
@@ -150,7 +157,47 @@ class PlotExpression {
     // Only the coordinate symbols choose the system. Anything else is simply
     // an unknown name, and falls through to the error below that says so —
     // routing it through here instead reported a mix of nothing at all.
+    // u and v are parameters, not places. A parametric line is swept by them
+    // and returns a position, so it cannot also be a function of where it
+    // already is — mixing them with a coordinate is a contradiction rather
+    // than a mix of two conventions.
+    final Set<String> parameters = free.intersection(parameterVariables);
     final Set<String> coords = free.intersection(allCoordinateSymbols);
+    if (parameters.isNotEmpty && coords.isNotEmpty) {
+      final List<String> both = <String>[...parameters, ...coords]..sort();
+      return PlotExpression._(
+        null,
+        const <String>{},
+        'Cannot mix ${both.join(' and ')}: u and v are parameters, '
+        'not coordinates',
+      );
+    }
+    if (parameters.isNotEmpty) {
+      final Set<String> strays = free.difference(parameterVariables);
+      if (strays.isNotEmpty) {
+        final List<String> sorted = strays.toList()..sort();
+        return PlotExpression._(
+          null,
+          const <String>{},
+          'Cannot plot: unknown variable ${sorted.join(', ')}',
+        );
+      }
+      if (_hasUnresolvedCalculus(compiled)) {
+        return PlotExpression._(
+          null,
+          const <String>{},
+          'Cannot plot: unresolved derivative or integral',
+        );
+      }
+      return PlotExpression._(
+        compiled,
+        free,
+        null,
+        isLevelSet: isLevelSet,
+        relation: relation?.$3 ?? PlotRelation.equal,
+      );
+    }
+
     final CoordinateSystem? inferred = _systemFor(coords);
     if (inferred == null) {
       final List<String> mixed = coords.toList()..sort();
@@ -349,6 +396,28 @@ class PlotExpression {
     if (usesZ && !usesX && !usesY) return 'z';
     if (usesY && !usesX) return 'y';
     return 'x';
+  }
+
+  /// True when this line is swept by a parameter rather than sampled over
+  /// space.
+  bool get isParametric => variables.any(parameterVariables.contains);
+
+  /// True when both parameters appear, so this sweeps a surface rather than
+  /// tracing a curve.
+  bool get isParametricSurface =>
+      variables.contains('u') && variables.contains('v');
+
+  /// Sample a parametric line at the given parameter values.
+  double evaluateAt({double u = 0, double v = 0}) {
+    final Expr? c = _compiled;
+    if (c == null) return double.nan;
+    _bindings['u'] = u;
+    _bindings['v'] = v;
+    try {
+      return c.evalWith(_bindings);
+    } catch (_) {
+      return double.nan;
+    }
   }
 
   /// Sample the expression at a point in **Cartesian** space. Returns NaN when

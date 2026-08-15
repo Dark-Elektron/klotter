@@ -32,6 +32,32 @@ class VectorFieldParser {
     this.error,
   });
 
+  /// True when the components are swept by a parameter rather than sampled
+  /// over space.
+  ///
+  /// The same notation carries both meanings, and the variables decide which:
+  /// `y x̂ − x ŷ` places an arrow at every point of the plane, while
+  /// `cos(u) x̂ + sin(u) ŷ` is a single point whose position depends on u, so
+  /// sweeping u traces a circle. One is a field, the other a path.
+  bool get isParametric => <PlotExpression?>[
+    xComponent,
+    yComponent,
+    zComponent,
+  ].any((PlotExpression? c) => c != null && c.isParametric);
+
+  /// True when both parameters appear, so the sweep covers a surface.
+  ///
+  /// Counted across the whole vector rather than within one component, because
+  /// that is where the second dimension comes from: `u x̂ + v ŷ` is a patch of
+  /// the plane even though neither component mentions both parameters on its
+  /// own.
+  bool get isParametricSurface =>
+      <PlotExpression?>[xComponent, yComponent, zComponent]
+          .whereType<PlotExpression>()
+          .expand((PlotExpression c) => c.variables)
+          .toSet()
+          .containsAll(PlotExpression.parameterVariables);
+
   /// True when [nodes] contain a unit vector anywhere at the top level.
   static bool isVectorFieldNodes(List<MathNode> nodes) =>
       nodes.any((n) => n is UnitVectorNode);
