@@ -475,6 +475,10 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
 
   bool _canShowSurface() {
     if (_fieldType == FieldType.vector) {
+      // A parametric surface qualifies whether or not it has a z component:
+      // the menu picks what its colours mean, and a flat patch in the plane
+      // still has an x, a y and a magnitude worth colouring by.
+      if (_vectorParser?.isParametricSurface ?? false) return true;
       return _vectorParser != null && !_vectorParser!.is3D;
     }
     return _is3DFunction;

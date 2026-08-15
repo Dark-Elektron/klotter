@@ -20,8 +20,19 @@ const ParameterRange defaultParameterRange = (min: 0.0, max: 2 * math.pi);
 /// the surface grids do.
 const int parametricCurveSteps = 400;
 
-/// How many steps each way a parametric surface is swept at.
-const int parametricSurfaceSteps = 60;
+/// How many steps each way a parametric surface is swept at while still.
+///
+/// Raised from 60 once the mesh started shading from averaged corner normals:
+/// the extra rows are what smooth a silhouette, and smoothing across a cell no
+/// longer depends on how many cells there are.
+const int parametricSurfaceSteps = 96;
+
+/// The grid used while a finger is on the plot.
+///
+/// A drag re-sweeps every frame — nothing about a parametric mesh is cached —
+/// so this trades resolution for a frame rate, the same bargain the height
+/// surfaces make.
+const int parametricSurfaceStepsMoving = 40;
 
 /// Sweep [field] over its parameter and return the path.
 ///

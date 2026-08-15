@@ -919,7 +919,12 @@ class Plot3DPainter extends CustomPainter {
     // A colorbar keys one ramp to one set of values, so it can only speak for
     // a lone surface. With several, each has its own ramp and its own range,
     // and a single bar would attach the wrong numbers to all but one of them.
-    if (curves.length == 1) {
+    // A parametric mesh coloured by a value owns the bar: it is the only
+    // surface on the axes, and its ramp is the one the numbers belong to.
+    final (double, double)? parametric = _parametricValueRange;
+    if (parametric != null) {
+      _drawColorbar3D(canvas, size, parametric.$1, parametric.$2);
+    } else if (curves.length == 1) {
       if (soleMin != null && soleMax != null) {
         _drawColorbar3D(canvas, size, soleMin, soleMax);
       }
@@ -2279,17 +2284,23 @@ class Plot3DPainter extends CustomPainter {
   /// along x, cos(y) along y. Both are curves, not sheets — see
   /// [PlotExpression.isSurface] for why an extruded cos(y) is the wrong
   /// picture even though it is a legitimate surface.
+  /// The value range the parametric mesh was coloured over, or null when it
+  /// is shaded by its own geometry instead. Read by the colorbar.
+  static (double, double)? _parametricValueRange;
+
   /// Add the patch swept out by u and v.
   ///
-  /// Shaded by its own geometry rather than by height: a parametric surface
-  /// is free to fold back over itself, so z says nothing useful about which
-  /// part of it you are looking at. The facing of each cell does, which is
-  /// what makes a sphere read as a sphere rather than as a flat disc.
+  /// Normals are averaged at the corners rather than taken per cell, so the
+  /// shading runs continuously across the mesh. Flat-shading a cell leaves it
+  /// a facet however fine the grid is — the same reason the heatmap colours
+  /// its corners and not its cells — and a sphere came out looking cut from
+  /// gemstone.
   void _addParametricSurfaceTo(
     _DepthScene scene,
     Size size,
     double focalLength,
   ) {
+    _parametricValueRange = null;
     final VectorFieldParser? field = vectorParser;
     if (field == null || !field.isParametricSurface) return;
 
@@ -2297,101 +2308,150 @@ class Plot3DPainter extends CustomPainter {
       field,
       u: uRange,
       v: vRange,
-      steps: interacting ? 34 : parametricSurfaceSteps,
+      steps:
+          interacting ? parametricSurfaceStepsMoving : parametricSurfaceSteps,
     );
-    if (grid.length < 2) return;
+    if (grid.length < 2 || grid.first.length < 2) return;
+    final int rows = grid.length;
+    final int cols = grid.first.length;
+
+    // Every corner rotated once. Each is shared by up to four cells, and the
+    // rotation is most of the per-cell cost.
+    final List<List<Point3D?>> pts = <List<Point3D?>>[
+      for (int i = 0; i < rows; i++)
+        <Point3D?>[
+          for (int j = 0; j < cols; j++)
+            () {
+              final ParametricPoint? p = grid[i][j];
+              if (p == null ||
+                  p.x.abs() > rangeX ||
+                  p.y.abs() > rangeY ||
+                  p.z.abs() > rangeZ) {
+                return null;
+              }
+              return Point3D(
+                p.x * scaleX,
+                p.y * scaleY,
+                p.z * scaleZ,
+              ).rotateZ(rotationZ).rotateX(rotationX);
+            }(),
+        ],
+    ];
+
+    // What the colours mean. `none` shades by facing alone; the others read a
+    // component of the swept position, which for a parametric surface is the
+    // position vector itself — so Fz is height and the magnitude is distance
+    // from the origin.
+    final bool byValue = surfaceMode != SurfaceMode.none;
+    double valueAt(ParametricPoint p) => switch (surfaceMode) {
+      SurfaceMode.x => p.x,
+      SurfaceMode.y => p.y,
+      SurfaceMode.z => p.z,
+      SurfaceMode.magnitude => sqrt(p.x * p.x + p.y * p.y + p.z * p.z),
+      SurfaceMode.none => 0,
+    };
+
+    double minV = double.infinity;
+    double maxV = double.negativeInfinity;
+    if (byValue) {
+      for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+          if (pts[i][j] == null) continue;
+          final double v = valueAt(grid[i][j]!);
+          if (!v.isFinite) continue;
+          if (v < minV) minV = v;
+          if (v > maxV) maxV = v;
+        }
+      }
+      if (minV > maxV) return; // nothing defined anywhere
+      _parametricValueRange = (minV, maxV);
+    }
+    final double span = maxV > minV ? maxV - minV : 1.0;
 
     final Color base = _theme.seriesColor(0);
 
-    /// A corner in rotated space, or null where the sweep is undefined or
-    /// leaves the box.
-    Point3D? corner(int i, int j) {
-      final ParametricPoint? p = grid[i][j];
-      if (p == null ||
-          p.x.abs() > rangeX ||
-          p.y.abs() > rangeY ||
-          p.z.abs() > rangeZ) {
-        return null;
-      }
-      return Point3D(
-        p.x * scaleX,
-        p.y * scaleY,
-        p.z * scaleZ,
-      ).rotateZ(rotationZ).rotateX(rotationX);
+    /// The averaged normal's facing at a corner, 0 edge-on to 1 square on.
+    ///
+    /// Central differences where both neighbours exist, one-sided at the rim,
+    /// so the edge of the sheet is shaded like the rest of it.
+    double facingAt(int i, int j) {
+      final Point3D? here = pts[i][j];
+      if (here == null) return 0.5;
+      final Point3D ua = (i > 0 ? pts[i - 1][j] : null) ?? here;
+      final Point3D ub = (i < rows - 1 ? pts[i + 1][j] : null) ?? here;
+      final Point3D va = (j > 0 ? pts[i][j - 1] : null) ?? here;
+      final Point3D vb = (j < cols - 1 ? pts[i][j + 1] : null) ?? here;
+
+      final double ux = ub.x - ua.x;
+      final double uy = ub.y - ua.y;
+      final double uz = ub.z - ua.z;
+      final double vx = vb.x - va.x;
+      final double vy = vb.y - va.y;
+      final double vz = vb.z - va.z;
+      final double nx = uy * vz - uz * vy;
+      final double ny = uz * vx - ux * vz;
+      final double nz = ux * vy - uy * vx;
+      final double len = sqrt(nx * nx + ny * ny + nz * nz);
+      // A degenerate corner has no facing; the mid tone is the honest answer.
+      return len == 0 ? 0.5 : ny.abs() / len;
     }
 
-    // Cached a row at a time: every corner is shared by up to four cells, and
-    // rotating each one once instead of four times is most of the cost.
-    List<Point3D?> row = <Point3D?>[
-      for (int j = 0; j < grid[0].length; j++) corner(0, j),
-    ];
+    /// The colour at one corner.
+    int shadeAt(int i, int j) {
+      final double facing = facingAt(i, j);
+      if (!byValue) {
+        // Never fully dark: a corner seen edge-on is still surface, and
+        // dropping it to nothing punches a hole along every silhouette.
+        final double t = 0.45 + 0.55 * facing;
+        return Color.from(
+          alpha: 0.92,
+          red: base.r * t,
+          green: base.g * t,
+          blue: base.b * t,
+        ).toARGB32();
+      }
+      // The ramp carries the value; the shading on top is kept light so the
+      // form still reads without the colour drifting far from the number it
+      // stands for. Without any, a sphere coloured by magnitude is one flat
+      // colour and reads as a disc.
+      final Color ramp = plotColormap(
+        ((valueAt(grid[i][j]!) - minV) / span).clamp(0.0, 1.0),
+      );
+      final double t = 0.82 + 0.18 * facing;
+      return Color.from(
+        alpha: 0.95,
+        red: ramp.r * t,
+        green: ramp.g * t,
+        blue: ramp.b * t,
+      ).toARGB32();
+    }
 
-    for (int i = 1; i < grid.length; i++) {
-      final List<Point3D?> next = <Point3D?>[
-        for (int j = 0; j < grid[i].length; j++) corner(i, j),
-      ];
-
-      for (int j = 1; j < row.length && j < next.length; j++) {
-        final Point3D? a = row[j - 1];
-        final Point3D? b = row[j];
-        final Point3D? c = next[j];
-        final Point3D? d = next[j - 1];
+    for (int i = 1; i < rows; i++) {
+      for (int j = 1; j < cols; j++) {
+        final Point3D? a = pts[i - 1][j - 1];
+        final Point3D? b = pts[i - 1][j];
+        final Point3D? c = pts[i][j];
+        final Point3D? d = pts[i][j - 1];
         // A cell missing a corner is a hole in the surface, and drawing it
         // would span the gap with a sheet the sweep never covers.
         if (a == null || b == null || c == null || d == null) continue;
 
-        final int shade = _facingShade(base, a, b, c).toARGB32();
+        final int ca = shadeAt(i - 1, j - 1);
+        final int cb = shadeAt(i - 1, j);
+        final int cc = shadeAt(i, j);
+        final int cd = shadeAt(i, j - 1);
+
         final Offset oa = a.project(focalLength, size, panX, panY);
         final Offset ob = b.project(focalLength, size, panX, panY);
         final Offset oc = c.project(focalLength, size, panX, panY);
         final Offset od = d.project(focalLength, size, panX, panY);
 
-        scene.addTriangle(
-          oa,
-          ob,
-          oc,
-          shade,
-          shade,
-          shade,
-          (a.y + b.y + c.y) / 3,
-        );
-        scene.addTriangle(
-          oa,
-          oc,
-          od,
-          shade,
-          shade,
-          shade,
-          (a.y + c.y + d.y) / 3,
-        );
+        // Two triangles sharing the a-c diagonal, each with its own depth so
+        // a cell can sort against a grid segment passing under it.
+        scene.addTriangle(oa, ob, oc, ca, cb, cc, (a.y + b.y + c.y) / 3);
+        scene.addTriangle(oa, oc, od, ca, cc, cd, (a.y + c.y + d.y) / 3);
       }
-      row = next;
     }
-  }
-
-  /// Lighten or darken [base] by how squarely a cell faces the viewer.
-  ///
-  /// The light sits with the camera, so the shading follows the surface as it
-  /// is turned — which is the whole point of shading it at all.
-  Color _facingShade(Color base, Point3D a, Point3D b, Point3D c) {
-    final double ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
-    final double vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
-    final double nx = uy * vz - uz * vy;
-    final double ny = uz * vx - ux * vz;
-    final double nz = ux * vy - uy * vx;
-    final double len = sqrt(nx * nx + ny * ny + nz * nz);
-    // A degenerate cell has no facing; the mid tone is the honest answer.
-    final double facing = len == 0 ? 0.5 : (ny.abs() / len);
-
-    // Never fully black: a cell seen edge-on is still part of the surface, and
-    // dropping it to nothing punches a hole along every silhouette.
-    final double t = 0.45 + 0.55 * facing;
-    return Color.from(
-      alpha: 0.92,
-      red: base.r * t,
-      green: base.g * t,
-      blue: base.b * t,
-    );
   }
 
   /// Add the path traced by sweeping u, in the same depth order as everything
