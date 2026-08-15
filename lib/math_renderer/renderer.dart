@@ -14,6 +14,7 @@ export 'math_editor_widgets.dart';
 // Import the modules we depend on
 import 'math_nodes.dart';
 import 'math_text_style.dart';
+import '../utils/render_box.dart';
 
 /// Renders a math expression tree as Flutter widgets.
 class MathRenderer extends StatelessWidget {
@@ -177,7 +178,7 @@ class MathRenderer extends StatelessWidget {
           '\u00B7',
           '\u00D7',
           '*',
-          '=',
+          ...MathTextStyle.relationalSigns,
         };
         if (operatorChars.contains(firstChar)) {
           forceLeadingOp = true;
@@ -2973,14 +2974,13 @@ class _LiteralWidgetState extends State<LiteralWidget> {
     if (!mounted) return;
     if (_lastReportedVersion == widget.structureVersion) return;
 
-    final RenderBox? box = context.findRenderObject() as RenderBox?;
+    final RenderBox? box = laidOutBox(context);
     if (box == null || !box.attached) {
       _scheduleLayoutRetry();
       return;
     }
 
-    final RenderBox? rootBox =
-        widget.rootKey.currentContext?.findRenderObject() as RenderBox?;
+    final RenderBox? rootBox = laidOutBox(widget.rootKey.currentContext);
     if (rootBox == null || !rootBox.attached) {
       _scheduleLayoutRetry();
       return;
@@ -3149,14 +3149,13 @@ class _ComplexNodeWrapperState extends State<_ComplexNodeWrapper> {
   void _register() {
     if (!mounted) return;
 
-    final RenderBox? box = context.findRenderObject() as RenderBox?;
+    final RenderBox? box = laidOutBox(context);
     if (box == null || !box.attached) {
       _scheduleRegisterRetry();
       return;
     }
 
-    final RenderBox? rootBox =
-        widget.rootKey.currentContext?.findRenderObject() as RenderBox?;
+    final RenderBox? rootBox = laidOutBox(widget.rootKey.currentContext);
     if (rootBox == null || !rootBox.attached) {
       _scheduleRegisterRetry();
       return;

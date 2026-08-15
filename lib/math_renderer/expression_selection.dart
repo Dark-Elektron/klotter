@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'math_editor_controller.dart';
 import 'renderer.dart';
+import '../utils/render_box.dart';
 
 // ============== SELECTION DATA CLASSES ==============
 
@@ -401,8 +402,7 @@ class _SelectionOverlayWidgetState extends State<SelectionOverlayWidget> {
     final selection = widget.controller.selection;
     if (selection == null || selection.isEmpty) return null;
 
-    final containerBox =
-        widget.containerKey.currentContext?.findRenderObject() as RenderBox?;
+    final containerBox = laidOutBox(widget.containerKey.currentContext);
     if (containerBox == null) return null;
 
     final norm = selection.normalized;
@@ -513,8 +513,7 @@ class _SelectionOverlayWidgetState extends State<SelectionOverlayWidget> {
   }
 
   Rect? _getCursorGlobalBounds() {
-    final containerBox =
-        widget.containerKey.currentContext?.findRenderObject() as RenderBox?;
+    final containerBox = laidOutBox(widget.containerKey.currentContext);
     if (containerBox == null) return null;
 
     final cursor = widget.controller.cursor;
@@ -556,8 +555,7 @@ class _SelectionOverlayWidgetState extends State<SelectionOverlayWidget> {
   }
 
   void _onHandleDragUpdate(bool isStart, Offset globalPosition) {
-    final containerBox =
-        widget.containerKey.currentContext?.findRenderObject() as RenderBox?;
+    final containerBox = laidOutBox(widget.containerKey.currentContext);
     if (containerBox == null) return;
 
     final localPos = containerBox.globalToLocal(globalPosition);
@@ -601,9 +599,7 @@ class _SelectionOverlayWidgetState extends State<SelectionOverlayWidget> {
         menuTopY = (expressionTop ?? cursorBounds.top) - 55 - _menuOffset;
       } else if (widget.cursorLocalPosition != null) {
         // Fallback to tap position if cursor bounds unavailable
-        final containerBox =
-            widget.containerKey.currentContext?.findRenderObject()
-                as RenderBox?;
+        final containerBox = laidOutBox(widget.containerKey.currentContext);
         if (containerBox != null) {
           final globalPos = containerBox.localToGlobal(
             widget.cursorLocalPosition!,
@@ -700,8 +696,7 @@ class _SelectionOverlayWidgetState extends State<SelectionOverlayWidget> {
 
   /// Get the top Y coordinate of the entire expression or current composite node
   double? _getExpressionTop() {
-    final containerBox =
-        widget.containerKey.currentContext?.findRenderObject() as RenderBox?;
+    final containerBox = laidOutBox(widget.containerKey.currentContext);
     if (containerBox == null) return null;
 
     final selection = widget.controller.selection;

@@ -101,6 +101,7 @@ class PlotExpression {
   factory PlotExpression.compile(
     List<MathNode> nodes, {
     CoordinateSystem system = CoordinateSystem.cartesian,
+    bool isVectorComponent = false,
   }) {
     if (nodes.isEmpty) {
       return PlotExpression._(null, {}, 'Please enter a function');
@@ -177,8 +178,14 @@ class PlotExpression {
     // `x+z` was evaluated with z bound to 0 and drew the graph of x, with
     // nothing to say the z had been dropped. An equation is the way to plot a
     // relation among all three.
+    // A vector field's components are functions of position, so all three
+    // coordinates are inputs to them. The rule below is about a *height*,
+    // where the third coordinate is the answer rather than something to
+    // sample over — applying it to a component rejected fields like
+    // rθθ̂ + zr̂, whose components legitimately mention all three.
     final List<String> names = system.variables;
-    if (!isLevelSet &&
+    if (!isVectorComponent &&
+        !isLevelSet &&
         free.contains(names[2]) &&
         (free.contains(names[0]) || free.contains(names[1]))) {
       return PlotExpression._(

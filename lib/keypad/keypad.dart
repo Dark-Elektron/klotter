@@ -216,123 +216,253 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
   /// preference.
   int get _tabletRows => widget.isLandscape ? 3 : 4;
 
-  /// Columns each group takes on each row: extras | scientific | numbers.
-  ///
-  /// Landscape is a true 3x20. Three 20-key blocks cannot tile 20 columns as
-  /// rectangles, but they do not have to be rectangles: numbers stays a clean
-  /// 7-wide block and the extras/scientific boundary steps one column between
-  /// the first row and the rest. 60 cells, 59 keys, one gap.
-  static const List<List<int>> _landscapeRowWidths = <List<int>>[
-    <int>[7, 6, 7],
-    <int>[6, 7, 7],
-    <int>[6, 7, 7],
-  ];
-
-  static const List<List<int>> _portraitRowWidths = <List<int>>[
-    <int>[5, 5, 5],
-    <int>[5, 5, 5],
-    <int>[5, 5, 5],
-    <int>[5, 5, 5],
-  ];
-
-  List<List<int>> get _rowWidths =>
-      widget.isLandscape ? _landscapeRowWidths : _portraitRowWidths;
-
   /// Total columns: 3x20 landscape, 4x15 portrait.
-  ///
   int get _tabletColumns => widget.isLandscape ? 20 : 15;
 
   bool get _leftHanded =>
       widget.settingsProvider.handedness == Handedness.leftHanded;
 
-  // ---- tablet key orders -------------------------------------------------
-  // Every block is authored per width, because a 20-key list reflows
-  // differently at 5 and 7 columns and "just let it wrap" scatters the groups
-  // that matter — the six trig keys especially.
+  // ---- tablet key map -----------------------------------------------------
   //
-  // Both orientations show the SAME 58 keys and the same 2 blanks; only the
-  // shape changes. Extras permanently drops its `x`, which duplicates the
-  // scientific `x` (both give y and z on long-press), and its filler blank.
+  // Each orientation is authored as the grid you actually see: one name per
+  // cell, null for a deliberate gap. Keys are placed by name, so a key that is
+  // never placed is a failing test rather than a key that quietly disappears --
+  // which is what happened to export, whose index no table happened to mention.
   //
-  // -1 means an empty cell.
+  // Names are prefixed because the three blocks genuinely share labels: there
+  // is a scientific root and an extras root, a scientific x and an extras x.
 
-  /// Backspace tops the outer column, the action key ends it — the two are
-  /// the extremes of the same column, which is the screen edge.
-  static const List<int> _numberFiveWide = <int>[
-    0, 1, 2, 3, 4, // 7 8 9 ()  | <-
-    5, 6, 7, 8, 9, // 4 5 6 +   | -
-    10, 11, 12, 13, 14, // 1 2 3 x   | /
-    15, 16, 17, 18, 19, // 0 . E CE  | cmd
+  /// Names for `_scientificButtons()`, in the order it builds them.
+  static const List<String> _sciNames = <String>[
+    'sci.x',
+    'sci.y',
+    'sci.z',
+    'sci.sin',
+    'sci.cos',
+    'sci.tan',
+    'sci.eq',
+    'sci.sq',
+    'sci.pi',
+    'sci.log',
+    'sci.xhat',
+    'sci.yhat',
+    'sci.zhat',
+    'sci.asin',
+    'sci.acos',
+    'sci.atan',
+    'sci.geq',
+    'sci.root',
+    'sci.e',
+    'sci.deg',
   ];
 
-  /// The outer column is all editing keys — backspace, clear, action — with no
-  /// hole between them; 21 cells for 20 keys leaves one gap, and it belongs at
-  /// the end of the last row with the other blocks' gaps rather than in the
-  /// middle of a column where it reads as a missing key.
-  static const List<int> _numberSevenWide = <int>[
-    0, 1, 2, 3, 8, 9, 4, // 7 8 9 ( ) + -  | <-
-    5, 6, 7, 13, 14, 17, 18, // 4 5 6 x / E    | CE
-    10, 11, 12, 15, 16, -1, 19, // 1 2 3 0 .      | cmd
+  /// Names for `_extrasButtons()`, in the order it builds them.
+  static const List<String> _extNames = <String>[
+    'ext.i',
+    'ext.u',
+    'ext.sq',
+    'ext.sin',
+    'ext.fact',
+    'ext.npr',
+    'ext.deriv',
+    'ext.undo',
+    'ext.redo',
+    'ext.clear',
+    'ext.pi',
+    'ext.v',
+    'ext.root',
+    'ext.asin',
+    'ext.abs',
+    'ext.sum',
+    'ext.int',
+    'ext.export',
+    'ext.help',
+    'ext.settings',
   ];
 
-  /// Variables and algebra up top, then the six trig keys as a 2x3 block.
-  // Scientific source indices, in the order _scientificButtons builds them:
-  //  0 x   1 y   2 z   3 sin   4 cos   5 tan   6 =  7 x²  8 π  9 log
-  // 10 x̂  11 ŷ  12 ẑ  13 asin 14 acos 15 atan 16 ≥  17 √  18 e 19 °
-  //
-  // Reflowing to five columns keeps every pair in one column: a unit vector
-  // under its variable, an inverse under its trig function, the root under
-  // the square, the relational operators under equals.
-  static const List<int> _scientificFiveWide = <int>[
-    0, 1, 2, 6, 7, // x    y    z    =  x²
-    10, 11, 12, 16, 17, // x̂    ŷ    ẑ    ≥  √
-    3, 4, 5, 8, 9, // sin  cos  tan  π  log
-    13, 14, 15, 18, 19, // asin acos atan e  °
+  /// Names for `_numberButtonAt(0..19)`.
+  static const List<String> _numNames = <String>[
+    'num.7',
+    'num.8',
+    'num.9',
+    'num.paren',
+    'num.back',
+    'num.4',
+    'num.5',
+    'num.6',
+    'num.plus',
+    'num.minus',
+    'num.1',
+    'num.2',
+    'num.3',
+    'num.times',
+    'num.div',
+    'num.0',
+    'num.dot',
+    'num.exp',
+    'num.ce',
+    'num.cmd',
   ];
 
-  /// Rows of 6, 7, 7 — the scientific block is one column narrower in the top
-  /// row so the whole keypad lands on exactly 20 columns. Rows 1 and 2 start
-  /// at the same grid column, which is what keeps the trig keys aligned.
-  static const List<int> _scientificLandscape = <int>[
-    0, 1, 2, 10, 11, 12, // x  y  z  x̂  ŷ  ẑ
-    3, 4, 5, 6, 7, 8, 9, // sin  cos  tan  =  x² π log
-    13, 14, 15, 16, 17, 18, 19, // asin acos atan ≥ √  e  °
+  /// Every key a tablet shows, by name. Exposed for the test that checks each
+  /// one is placed exactly once in each orientation.
+  static List<String> get tabletKeyNames => <String>[
+    ..._extNames,
+    ..._sciNames,
+    ..._numNames,
   ];
 
-  // Extras source indices:
-  //  0 i   1 x   2 √   3 sin  4 x!  5 nCr  6 d/dx 7 undo 8 redo 9 clear
-  // 10 π  11 x² 12 |x| 13 asin 14 nPr 15 Σ  16 ∫  17 blank* 18 help 19 settings
-  //  (* the filler blank is not placed; -1 supplies empties where needed)
-  //
-  // The first column is the screen edge, since extras is the outermost block.
-  // It runs clear at the top, then undo and redo, with settings at the bottom.
-  static const List<int> _extrasFiveWide = <int>[
-    9, 0, 10, 2, 11, // clear    | i π √ x²
-    7, 12, 3, 13, 4, // undo     | |x| sin asin x!
-    8, 5, 14, 6, 15, // redo     | nCr nPr d/dx Σ
-    19, 18, 16, 1, -1, // settings | help ∫ x
+  /// 3 rows x 20. Columns 0-6 are extras, the middle is scientific, and the
+  /// numbers sit under the right hand.
+  ///
+  /// Variables and unit vectors run down columns 7 and 8, with each trig
+  /// family in its own column beside them. Equals and its inequality take
+  /// column 6, which only rows 1 and 2 reach. The four arithmetic operators
+  /// form a 2x2 block at columns 17-18, which is what swapping the times key
+  /// with E buys.
+  static const List<List<String?>> _tabletLandscapeGrid = <List<String?>>[
+    <String?>[
+      'ext.clear',
+      'ext.i',
+      'ext.pi',
+      'ext.root',
+      'ext.sq',
+      'ext.abs',
+      'ext.sin',
+      'sci.xhat',
+      'sci.x',
+      'sci.sin',
+      'sci.asin',
+      'sci.sq',
+      'sci.e',
+      'num.7',
+      'num.8',
+      'num.9',
+      'num.paren',
+      'num.plus',
+      'num.minus',
+      'num.back',
+    ],
+    <String?>[
+      'ext.undo',
+      'ext.redo',
+      'ext.asin',
+      'ext.fact',
+      'ext.v',
+      'ext.npr',
+      'sci.eq',
+      'sci.yhat',
+      'sci.y',
+      'sci.cos',
+      'sci.acos',
+      'sci.root',
+      'sci.log',
+      'num.4',
+      'num.5',
+      'num.6',
+      'num.exp',
+      'num.div',
+      'num.times',
+      'num.ce',
+    ],
+    <String?>[
+      'ext.settings',
+      'ext.help',
+      'ext.deriv',
+      'ext.sum',
+      'ext.int',
+      'ext.u',
+      'sci.geq',
+      'sci.zhat',
+      'sci.z',
+      'sci.tan',
+      'sci.atan',
+      'sci.pi',
+      'sci.deg',
+      'num.1',
+      'num.2',
+      'num.3',
+      'num.0',
+      'num.dot',
+      'ext.export',
+      'num.cmd',
+    ],
   ];
 
-  /// Rows of 7, 6, 6 — 19 cells for 19 keys, no gaps.
-  static const List<int> _extrasLandscape = <int>[
-    9, 0, 10, 2, 11, 12, 3, // clear    | i π √ x² |x| sin
-    7, 8, 13, 4, 5, 14, // undo redo | asin x! nCr nPr
-    19, 18, 6, 15, 16, 1, // settings help | d/dx Σ ∫ x
+  /// 4 rows x 15, five columns per block.
+  static const List<List<String?>> _tabletPortraitGrid = <List<String?>>[
+    <String?>[
+      'ext.clear',
+      'ext.i',
+      'ext.pi',
+      'ext.root',
+      'ext.sq',
+      'sci.x',
+      'sci.y',
+      'sci.z',
+      'sci.eq',
+      'sci.sq',
+      'num.7',
+      'num.8',
+      'num.9',
+      'num.paren',
+      'num.back',
+    ],
+    <String?>[
+      'ext.undo',
+      'ext.abs',
+      'ext.sin',
+      'ext.asin',
+      'ext.fact',
+      'sci.xhat',
+      'sci.yhat',
+      'sci.zhat',
+      'sci.geq',
+      'sci.root',
+      'num.4',
+      'num.5',
+      'num.6',
+      'num.plus',
+      'num.minus',
+    ],
+    <String?>[
+      'ext.redo',
+      'ext.v',
+      'ext.npr',
+      'ext.deriv',
+      'ext.sum',
+      'sci.sin',
+      'sci.cos',
+      'sci.tan',
+      'sci.pi',
+      'sci.log',
+      'num.1',
+      'num.2',
+      'num.3',
+      'num.times',
+      'num.div',
+    ],
+    <String?>[
+      'ext.settings',
+      'ext.help',
+      'ext.int',
+      'ext.u',
+      'ext.export',
+      'sci.asin',
+      'sci.acos',
+      'sci.atan',
+      'sci.e',
+      'sci.deg',
+      'num.0',
+      'num.dot',
+      'num.exp',
+      'num.ce',
+      'num.cmd',
+    ],
   ];
 
-  List<int> get _numberTabletOrder =>
-      widget.isLandscape ? _numberSevenWide : _numberFiveWide;
-
-  List<int> get _scientificTabletOrder =>
-      widget.isLandscape ? _scientificLandscape : _scientificFiveWide;
-
-  List<int> get _extrasTabletOrder =>
-      widget.isLandscape ? _extrasLandscape : _extrasFiveWide;
-
-  /// Place [source] into [order], where -1 leaves an empty cell.
-  List<Widget> _arrange(List<Widget> source, List<int> order) => <Widget>[
-    for (final int i in order) i < 0 ? _extrasBlank() : source[i],
-  ];
+  List<List<String?>> get _tabletGrid =>
+      widget.isLandscape ? _tabletLandscapeGrid : _tabletPortraitGrid;
 
   /// Mirror a row-major order across the vertical axis.
   ///
@@ -1067,36 +1197,14 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
   Widget _buildTabletKeypad() {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final List<Widget> extras = _arrange(
-          _extrasButtons(),
-          _extrasTabletOrder,
-        );
-        final List<Widget> scientific = _arrange(
-          _scientificButtons(),
-          _scientificTabletOrder,
-        );
-        final List<Widget> numbers = _arrange(<Widget>[
-          for (int i = 0; i < 20; i++) _numberButtonAt(i),
-        ], _numberTabletOrder);
+        final Map<String, Widget> byName = _tabletKeyWidgets();
+        final List<List<String?>> grid = _tabletGrid;
 
-        // Walk each group with its own cursor: a group takes a different
-        // number of columns on different rows.
-        final List<List<Widget>> groups = <List<Widget>>[
-          extras,
-          scientific,
-          numbers,
+        final List<Widget> cells = <Widget>[
+          for (final List<String?> row in grid)
+            for (final String? name in row)
+              name == null ? _extrasBlank() : byName[name] ?? _extrasBlank(),
         ];
-        final List<int> taken = <int>[0, 0, 0];
-        final List<Widget> cells = <Widget>[];
-
-        for (final List<int> widths in _rowWidths) {
-          for (int g = 0; g < groups.length; g++) {
-            for (int c = 0; c < widths[g]; c++) {
-              final int i = taken[g]++;
-              cells.add(i < groups[g].length ? groups[g][i] : _extrasBlank());
-            }
-          }
-        }
 
         // Mirroring is a reflection of the finished grid: reverse every row.
         // That flips block order and each block's contents in one step.
@@ -1123,6 +1231,28 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
         );
       },
     );
+  }
+
+  /// Every tablet key, looked up by name.
+  ///
+  /// The three builders keep producing their keys in their own order; this
+  /// pairs each list with its names. If a builder gains a key and its name
+  /// list is not updated the lengths stop matching, which is the check that
+  /// the old index tables could not make.
+  Map<String, Widget> _tabletKeyWidgets() {
+    final List<Widget> sci = _scientificButtons();
+    final List<Widget> ext = _extrasButtons();
+    final List<Widget> num = <Widget>[
+      for (int i = 0; i < _numNames.length; i++) _numberButtonAt(i),
+    ];
+    assert(sci.length == _sciNames.length, 'scientific keys lost their names');
+    assert(ext.length == _extNames.length, 'extras keys lost their names');
+
+    return <String, Widget>{
+      for (int i = 0; i < _sciNames.length; i++) _sciNames[i]: sci[i],
+      for (int i = 0; i < _extNames.length; i++) _extNames[i]: ext[i],
+      for (int i = 0; i < _numNames.length; i++) _numNames[i]: num[i],
+    };
   }
 
   Widget _buildScientificGrid(bool isLandscape) {
@@ -1315,12 +1445,14 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     String label,
     VoidCallback? onTap, {
     bool mirrored = false,
+    double? fontSize,
   }) {
     final Widget button = MyButton(
       buttontapped: onTap,
       buttonText: label,
       color: _kpButton,
       textColor: _kpButtonText,
+      fontSize: fontSize ?? 22,
     );
     // Redo is undo's mirror image. Unicode has no flipped twin of U+238C, so
     // the glyph is drawn reversed rather than substituted with a different
@@ -1386,13 +1518,17 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
         _sciItem('c₀', () => _activeController?.insertConstant('c₀')),
       ],
     );
-    final Widget kX = _sciMenu(
-      'x',
-      onTap: () => _activeController?.insertCharacter('x'),
-      menuItems: [
-        _sciItem('y', () => _activeController?.insertCharacter('y')),
-        _sciItem('z', () => _activeController?.insertCharacter('z')),
-      ],
+    // u and v are the parameters a parametric plot runs over: one traces a
+    // curve, both together sweep a surface. They are their own quantities
+    // rather than another name for a coordinate, so neither offers the x/y/z
+    // menu the scientific variable keys carry.
+    final Widget kU = _extrasAction(
+      'u',
+      () => _activeController?.insertCharacter('u'),
+    );
+    final Widget kV = _extrasAction(
+      'v',
+      () => _activeController?.insertCharacter('v'),
     );
     final Widget kSquare = _extrasVariants(
       'x²',
@@ -1457,13 +1593,15 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
       'ⁿPᵣ',
       wrap: () => _wrapper.wrapInPermutation(),
       normal: () => _activeController?.insertPermutation(),
-      variants: const [],
-    );
-    final Widget kComb = _extrasVariants(
-      'ⁿCᵣ',
-      wrap: () => _wrapper.wrapInCombination(),
-      normal: () => _activeController?.insertCombination(),
-      variants: const [],
+      // One key for both: the same idea with and without order, and
+      // splitting them cost a cell that u and v now use.
+      variants: [
+        _extrasWrapItem(
+          'ⁿCᵣ',
+          wrap: () => _wrapper.wrapInCombination(),
+          normal: () => _activeController?.insertCombination(),
+        ),
+      ],
     );
     final Widget kSum = _extrasVariants(
       '∑',
@@ -1514,7 +1652,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     // U+21EA, an upward arrow out of a tray: the plot leaving the app. It sits
     // in the slot that was empty, beside the other whole-app actions rather
     // than among the maths keys.
-    final Widget kExport = _extrasAction('⇪', () {
+    final Widget kExport = _extrasAction('⇪', fontSize: 30, () {
       widget.onExportPlot?.call();
     });
     final Widget kHelp = _extrasAction(
@@ -1541,9 +1679,10 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     // The grid fills row-major, so this list is the two rows back to back.
     return <Widget>[
       // row 1
-      kI, kX, kRoot, kSin, kFactorial, kComb, kDeriv, kUndo, kRedo, kClearAll,
+      kI, kU, kSquare, kSin, kFactorial, kPerm, kDeriv, kUndo, kRedo,
+      kClearAll,
       // row 2
-      kPi, kSquare, kAbs, kAsin, kPerm, kSum, kIntegral, kExport, kHelp,
+      kPi, kV, kRoot, kAsin, kAbs, kSum, kIntegral, kExport, kHelp,
       kSettings,
     ];
   }
@@ -1763,3 +1902,17 @@ class _EasySnapPageViewState extends State<EasySnapPageView> {
     );
   }
 }
+
+// ---- exposed for tests ------------------------------------------------------
+// Dart privacy is per library, so these reach the state class from the same
+// file. They exist so a test can assert every key is placed exactly once in
+// each orientation — the check the old index tables could not support.
+
+/// Every key a tablet shows, by name.
+List<String> get tabletKeyNames => _CalculatorKeypadState.tabletKeyNames;
+
+/// The authored grid for an orientation; null is a deliberate empty cell.
+List<List<String?>> tabletGridFor({required bool landscape}) =>
+    landscape
+        ? _CalculatorKeypadState._tabletLandscapeGrid
+        : _CalculatorKeypadState._tabletPortraitGrid;

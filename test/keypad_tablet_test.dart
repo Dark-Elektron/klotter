@@ -131,7 +131,7 @@ void main() {
           );
         }
       }
-      // A true 3x20 holding all 59 keys: the groups are not all rectangles,
+      // A true 3x20 holding all 60 keys: the groups are not all rectangles,
       // so numbers stays a clean 7-wide block while the extras/scientific
       // boundary steps one column between the first row and the rest.
       expect(xs.length, equals(20));
@@ -190,7 +190,7 @@ void main() {
       return out;
     }
 
-    testWidgets('all 59 keys are present in both orientations', (tester) async {
+    testWidgets('all 60 keys are present in both orientations', (tester) async {
       // extras 19 + scientific 20 + numbers 20.
       for (final landscape in <bool>[true, false]) {
         await pumpTablet(tester, landscape: landscape);
@@ -205,7 +205,8 @@ void main() {
             if (!blank) keys++;
           }
         }
-        expect(keys, equals(59), reason: landscape ? 'landscape' : 'portrait');
+        // 60: the extras block gained the export key.
+        expect(keys, equals(60), reason: landscape ? 'landscape' : 'portrait');
       }
     });
 
@@ -261,8 +262,8 @@ void main() {
       testWidgets('the six trig keys form one block in $orient', (
         tester,
       ) async {
-        // sin/cos/tan over asin/acos/atan, adjacent columns, two rows —
-        // they used to scatter across the reflow.
+        // The six stay together whichever way the grid runs: as two rows in
+        // portrait, as two columns in landscape. They used to scatter.
         await pumpTablet(tester, landscape: landscape);
 
         // tan and atan appear once each; the rest are anchored to them.
@@ -273,17 +274,30 @@ void main() {
         final acos = at(tester, 'acos', near: atan);
         final asin = at(tester, 'asin', near: atan);
 
-        // Each triple shares a row.
-        expect(cos.dy, closeTo(sin.dy, 0.5));
-        expect(tan.dy, closeTo(sin.dy, 0.5));
-        expect(acos.dy, closeTo(asin.dy, 0.5));
-        expect(atan.dy, closeTo(asin.dy, 0.5));
+        if (landscape) {
+          // Landscape runs each family down its own column, with the inverses
+          // in the column beside them, so the six still touch.
+          expect(cos.dx, closeTo(sin.dx, 0.5));
+          expect(tan.dx, closeTo(sin.dx, 0.5));
+          expect(acos.dx, closeTo(asin.dx, 0.5));
+          expect(atan.dx, closeTo(asin.dx, 0.5));
 
-        // The inverse row sits directly beneath, in the same columns.
-        expect(asin.dy, greaterThan(sin.dy));
-        expect(asin.dx, closeTo(sin.dx, 0.5));
-        expect(acos.dx, closeTo(cos.dx, 0.5));
-        expect(atan.dx, closeTo(tan.dx, 0.5));
+          expect(asin.dx, greaterThan(sin.dx));
+          expect(asin.dy, closeTo(sin.dy, 0.5));
+          expect(acos.dy, closeTo(cos.dy, 0.5));
+          expect(atan.dy, closeTo(tan.dy, 0.5));
+        } else {
+          // Portrait keeps them as rows, inverses directly beneath.
+          expect(cos.dy, closeTo(sin.dy, 0.5));
+          expect(tan.dy, closeTo(sin.dy, 0.5));
+          expect(acos.dy, closeTo(asin.dy, 0.5));
+          expect(atan.dy, closeTo(asin.dy, 0.5));
+
+          expect(asin.dy, greaterThan(sin.dy));
+          expect(asin.dx, closeTo(sin.dx, 0.5));
+          expect(acos.dx, closeTo(cos.dx, 0.5));
+          expect(atan.dx, closeTo(tan.dx, 0.5));
+        }
       });
 
       testWidgets('digits 1-9 form a 3x3 block in $orient', (tester) async {
@@ -354,7 +368,7 @@ void main() {
   });
 
   group('empty cells are deliberate, not holes', () {
-    // 59 keys never divide a 3-row grid evenly, so landscape has 4 spare cells
+    // The grid is authored per orientation now, so there are no spare cells
     // against portrait's 1. They must read as a ragged bottom edge rather than
     // as missing keys, so every one belongs in the last row.
     for (final landscape in <bool>[true, false]) {

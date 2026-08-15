@@ -276,6 +276,14 @@ class Plot3DPainter extends CustomPainter {
   /// is not being traced.
   final SurfaceHit? tracePoint;
 
+  /// True while the plot is being dragged, pinched or spinning.
+  ///
+  /// A surface is sampled more finely when it is still. At rest the mesh is
+  /// built once and then only redrawn, so the extra cells cost a single frame;
+  /// in motion every frame pays for them, and a 50-cell surface already takes
+  /// most of a 60 Hz frame.
+  final bool interacting;
+
   Plot3DPainter({
     required this.function,
     this.functions = const <PlotExpression>[],
@@ -295,6 +303,7 @@ class Plot3DPainter extends CustomPainter {
     required this.colors,
     required this.plotTheme,
     this.tracePoint,
+    this.interacting = false,
   });
 
   // Remove the getter since rangeZ is now a parameter
@@ -698,10 +707,15 @@ class Plot3DPainter extends CustomPainter {
   ///
   /// [minV] and [maxV] cover only the corners actually drawn, so colour maps
   /// across what is on screen rather than across values clipped away.
+  /// Cells on a side while still, and while moving.
+  static const int _surfaceGridStill = 76;
+  static const int _surfaceGridMoving = 50;
+
   ({List<Quad> quads, double minV, double maxV}) _surfaceQuads(
     PlotExpression parser, {
-    int gridSize = 50,
+    int? gridSize,
   }) {
+    gridSize ??= interacting ? _surfaceGridMoving : _surfaceGridStill;
     // Heights are cached: rotating changes where the camera sees the surface
     // from, not the surface, so re-walking the expression tree every frame was
     // wasted work.
@@ -2004,10 +2018,15 @@ class Plot3DPainter extends CustomPainter {
         );
       }
 
+      // Just beyond the plotted box, which is where the axis stops meaning
+      // anything. Not at 0.9 of the range, which put the head inside the box
+      // with the line running on past it; and not at the line's true end at
+      // twice the range, which is off screen for the vertical axis.
+      const double arrowAt = 1.18;
       final arrowPos = Point3D(
-        dir.x * range * 0.9 * scale,
-        dir.y * range * 0.9 * scale,
-        dir.z * range * 0.9 * scale,
+        dir.x * range * arrowAt * scale,
+        dir.y * range * arrowAt * scale,
+        dir.z * range * arrowAt * scale,
       ).rotateZ(rotationZ).rotateX(rotationX);
       final arrowProj = arrowPos.project(focalLength, size, panX, panY);
 
@@ -2030,27 +2049,27 @@ class Plot3DPainter extends CustomPainter {
         if (length > 0) {
           final normalized = direction / length;
           final perpendicular = Offset(-normalized.dy, normalized.dx);
-          const arrowSize = 10.0;
+          // A solid cone rather than an open V: longer than it is wide, and
+          // closed, so it reads as the head of the axis rather than two
+          // strokes near it.
+          const double arrowLength = 16.0;
+          const double arrowHalfWidth = 5.5;
+          final Offset base = arrowProj - normalized * arrowLength;
           canvas.drawPath(
             Path()
-              ..moveTo(
-                arrowProj.dx -
-                    normalized.dx * arrowSize +
-                    perpendicular.dx * arrowSize / 2,
-                arrowProj.dy -
-                    normalized.dy * arrowSize +
-                    perpendicular.dy * arrowSize / 2,
-              )
-              ..lineTo(arrowProj.dx, arrowProj.dy)
+              ..moveTo(arrowProj.dx, arrowProj.dy)
               ..lineTo(
-                arrowProj.dx -
-                    normalized.dx * arrowSize -
-                    perpendicular.dx * arrowSize / 2,
-                arrowProj.dy -
-                    normalized.dy * arrowSize -
-                    perpendicular.dy * arrowSize / 2,
-              ),
-            axisPaint..style = PaintingStyle.stroke,
+                base.dx + perpendicular.dx * arrowHalfWidth,
+                base.dy + perpendicular.dy * arrowHalfWidth,
+              )
+              ..lineTo(
+                base.dx - perpendicular.dx * arrowHalfWidth,
+                base.dy - perpendicular.dy * arrowHalfWidth,
+              )
+              ..close(),
+            Paint()
+              ..color = color
+              ..style = PaintingStyle.fill,
           );
         }
 
@@ -2091,7 +2110,7 @@ class Plot3DPainter extends CustomPainter {
         }
 
         const tickLen = 5.0;
-        Point3D tick1End, tick2End;
+        Point3D tick1End;
 
         if (label == 'X') {
           tick1End = Point3D(
@@ -2099,21 +2118,11 @@ class Plot3DPainter extends CustomPainter {
             tickLen,
             0,
           ).rotateZ(rotationZ).rotateX(rotationX);
-          tick2End = Point3D(
-            t * scale,
-            0,
-            tickLen,
-          ).rotateZ(rotationZ).rotateX(rotationX);
         } else if (label == 'Y') {
           tick1End = Point3D(
             tickLen,
             t * scale,
             0,
-          ).rotateZ(rotationZ).rotateX(rotationX);
-          tick2End = Point3D(
-            0,
-            t * scale,
-            tickLen,
           ).rotateZ(rotationZ).rotateX(rotationX);
         } else {
           tick1End = Point3D(
@@ -2121,23 +2130,13 @@ class Plot3DPainter extends CustomPainter {
             0,
             t * scale,
           ).rotateZ(rotationZ).rotateX(rotationX);
-          tick2End = Point3D(
-            0,
-            tickLen,
-            t * scale,
-          ).rotateZ(rotationZ).rotateX(rotationX);
         }
 
-        canvas.drawLine(
-          tickProj,
-          tick1End.project(focalLength, size, panX, panY),
-          tickPaint,
-        );
-        canvas.drawLine(
-          tickProj,
-          tick2End.project(focalLength, size, panX, panY),
-          tickPaint,
-        );
+        // One mark straight through the axis. Two marks at right angles read
+        // as a small corner sitting beside the line rather than a division
+        // of it.
+        final Offset tick1 = tick1End.project(focalLength, size, panX, panY);
+        canvas.drawLine(tickProj + (tickProj - tick1), tick1, tickPaint);
 
         Point3D labelPos;
         if (label == 'X') {

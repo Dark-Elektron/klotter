@@ -241,11 +241,17 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     'command_button': _commandButtonKey,
     'plot_pages': _plotStripKey,
     // Mobile keypad steps
-    'number_keypad': _mainKeypadAreaKey,
+    // The number pad has a box of its own. The scientific and extras pages do
+    // not: they are children of the PageView, so the one that is off screen
+    // reports an off-screen rect and the highlight lands somewhere random.
+    // Both steps point at the swipeable half instead, which is the area that
+    // actually holds them.
+    'number_keypad': _numberKeypadKey,
     'scientific_keypad': _mainKeypadAreaKey,
     'extras_keypad': _mainKeypadAreaKey,
     'swipe_right_scientific': _mainKeypadAreaKey,
     'swipe_left_number': _mainKeypadAreaKey,
+    // The swipe happens on the top rows, so only those are lit.
     'swipe_left_extras': _mainKeypadAreaKey,
     'swipe_right_back': _mainKeypadAreaKey,
     'settings_button': _settingsButtonKey, // NEW
@@ -257,7 +263,9 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     'tablet_settings_button': _settingsButtonKey, // NEW
     // Common
     'main_keypad_area': _mainKeypadAreaKey,
-    'complete': _mainKeypadAreaKey,
+
+    // 'complete' deliberately has no target: the closing card is about the
+    // app as a whole, and spotlighting the keypad implied it was about that.
   };
 
   Future<void> _initializeWalkthrough() async {
@@ -1581,6 +1589,9 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       },
                     ),
                   ),
+                  // A hairline between the expression and the strip below it,
+                  // so the two read as separate surfaces rather than one.
+                  Container(height: 1, color: colors.divider),
                   KeyedSubtree(
                     key: _plotStripKey,
                     child: _buildPageSwipeStrip(colors),

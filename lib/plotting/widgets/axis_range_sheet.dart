@@ -5,7 +5,18 @@ import 'package:flutter/material.dart';
 import '../../utils/app_colors.dart';
 
 /// The window a plot is showing.
-typedef AxisRanges = ({double xMin, double xMax, double yMin, double yMax});
+/// The window a plot is showing.
+///
+/// z is null for a 2D plot, which has no third axis to set.
+typedef AxisRanges =
+    ({
+      double xMin,
+      double xMax,
+      double yMin,
+      double yMax,
+      double? zMin,
+      double? zMax,
+    });
 
 /// Numeric entry for the plot window.
 ///
@@ -46,6 +57,10 @@ class _AxisRangeSheetState extends State<AxisRangeSheet> {
   late final TextEditingController _xMax;
   late final TextEditingController _yMin;
   late final TextEditingController _yMax;
+
+  /// Present only for a 3D plot.
+  TextEditingController? _zMin;
+  TextEditingController? _zMax;
   String? _error;
 
   @override
@@ -62,6 +77,10 @@ class _AxisRangeSheetState extends State<AxisRangeSheet> {
     _xMax = TextEditingController(text: f(widget.initial.xMax));
     _yMin = TextEditingController(text: f(widget.initial.yMin));
     _yMax = TextEditingController(text: f(widget.initial.yMax));
+    final double? z0 = widget.initial.zMin;
+    final double? z1 = widget.initial.zMax;
+    _zMin = z0 == null ? null : TextEditingController(text: f(z0));
+    _zMax = z1 == null ? null : TextEditingController(text: f(z1));
   }
 
   @override
@@ -70,6 +89,8 @@ class _AxisRangeSheetState extends State<AxisRangeSheet> {
     _xMax.dispose();
     _yMin.dispose();
     _yMax.dispose();
+    _zMin?.dispose();
+    _zMax?.dispose();
     super.dispose();
   }
 
@@ -79,11 +100,19 @@ class _AxisRangeSheetState extends State<AxisRangeSheet> {
     final double? y0 = parseBound(_yMin.text);
     final double? y1 = parseBound(_yMax.text);
 
-    if (x0 == null || x1 == null || y0 == null || y1 == null) {
+    final double? z0 = _zMin == null ? null : parseBound(_zMin!.text);
+    final double? z1 = _zMax == null ? null : parseBound(_zMax!.text);
+    final bool zWanted = _zMin != null;
+
+    if (x0 == null ||
+        x1 == null ||
+        y0 == null ||
+        y1 == null ||
+        (zWanted && (z0 == null || z1 == null))) {
       setState(() => _error = 'Enter a number, or something like 2pi or -pi/2');
       return;
     }
-    if (x1 - x0 < 1e-9 || y1 - y0 < 1e-9) {
+    if (x1 - x0 < 1e-9 || y1 - y0 < 1e-9 || (zWanted && z1! - z0! < 1e-9)) {
       setState(() => _error = 'Each maximum must be greater than its minimum');
       return;
     }
@@ -92,6 +121,8 @@ class _AxisRangeSheetState extends State<AxisRangeSheet> {
       xMax: x1,
       yMin: y0,
       yMax: y1,
+      zMin: z0,
+      zMax: z1,
     ));
   }
 
@@ -147,6 +178,16 @@ class _AxisRangeSheetState extends State<AxisRangeSheet> {
                 Expanded(child: _field('y max', _yMax, c)),
               ],
             ),
+            if (_zMin != null && _zMax != null) ...<Widget>[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(child: _field('z min', _zMin!, c)),
+                  const SizedBox(width: 12),
+                  Expanded(child: _field('z max', _zMax!, c)),
+                ],
+              ),
+            ],
             if (_error != null) ...[
               const SizedBox(height: 10),
               Text(

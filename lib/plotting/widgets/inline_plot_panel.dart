@@ -254,13 +254,51 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     });
   }
 
+  /// The 3D box, set by hand.
+  ///
+  /// Auto-fitting cannot help a surface that diverges — sin(r)/r² climbs
+  /// without limit at the origin — so the height has to be settable.
+  Future<void> _edit3DRanges() async {
+    final state = _plot3DKey.currentState;
+    if (state == null) return;
+    final result = await AxisRangeSheet.show(
+      context,
+      initial: (
+        xMin: -state.xRange,
+        xMax: state.xRange,
+        yMin: -state.yRange,
+        yMax: state.yRange,
+        zMin: -state.zRange,
+        zMax: state.zRange,
+      ),
+      colors: _colorsNoListen(context),
+    );
+    if (result == null) return;
+    state.setBox(
+      xMin: result.xMin,
+      xMax: result.xMax,
+      yMin: result.yMin,
+      yMax: result.yMax,
+      zMin: result.zMin,
+      zMax: result.zMax,
+    );
+    _publishView();
+  }
+
   Future<void> _editRanges() async {
     final state = _plot2DKey.currentState;
     if (state == null) return;
     final (xMin, xMax, yMin, yMax) = state.ranges;
     final result = await AxisRangeSheet.show(
       context,
-      initial: (xMin: xMin, xMax: xMax, yMin: yMin, yMax: yMax),
+      initial: (
+        xMin: xMin,
+        xMax: xMax,
+        yMin: yMin,
+        yMax: yMax,
+        zMin: null,
+        zMax: null,
+      ),
       colors: _colorsNoListen(context),
     );
     if (result == null) return;
@@ -596,6 +634,13 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                           selectedColor: Colors.tealAccent,
                           onTap: _togglePan,
                           tooltip: 'Pan',
+                        ),
+                        _buildModeButton(
+                          icon: Icons.crop_free,
+                          isSelected: false,
+                          selectedColor: Colors.tealAccent,
+                          onTap: _edit3DRanges,
+                          tooltip: 'Set range',
                         ),
                       ],
                     ],

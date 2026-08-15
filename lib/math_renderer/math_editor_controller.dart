@@ -175,7 +175,7 @@ class MathEditorController extends ChangeNotifier {
         char == '-' ||
         char == '*' ||
         char == '/' ||
-        char == '=' ||
+        MathTextStyle.relationalSigns.contains(char) ||
         char == ' ' ||
         char == MathTextStyle.plusSign ||
         char == MathTextStyle.minusSign ||
@@ -187,7 +187,7 @@ class MathEditorController extends ChangeNotifier {
     return char == '+' ||
         char == '-' ||
         char == '/' ||
-        char == '=' ||
+        MathTextStyle.relationalSigns.contains(char) ||
         char == ' ' ||
         char == MathTextStyle.plusSign ||
         char == MathTextStyle.minusSign;
@@ -202,7 +202,7 @@ class MathEditorController extends ChangeNotifier {
     // Standard word boundaries (excluding minus for special handling)
     if (char == '+' ||
         char == '/' ||
-        char == '=' ||
+        MathTextStyle.relationalSigns.contains(char) ||
         char == ' ' ||
         char == MathTextStyle.plusSign) {
       return true;
@@ -657,7 +657,7 @@ class MathEditorController extends ChangeNotifier {
     return char == '+' ||
         char == '-' ||
         char == '*' ||
-        char == '=' ||
+        MathTextStyle.relationalSigns.contains(char) ||
         char == MathTextStyle.plusSign ||
         char == MathTextStyle.minusSign ||
         char == MathTextStyle.multiplySign;

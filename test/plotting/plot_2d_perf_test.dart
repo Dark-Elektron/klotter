@@ -107,21 +107,24 @@ void main() {
   });
 
   group('smoke: nothing has become wildly slow', () {
-    // Loose enough to survive the whole suite running in parallel, so these
-    // only catch an order-of-magnitude change.
+    // Deliberately very loose. These run alongside the rest of the suite, and
+    // a wall clock there measures whatever else the machine is doing more
+    // than it measures the painter — tighter numbers flapped twice. The real
+    // guard is the grid size above, which is deterministic; these only catch
+    // something becoming slow by an order of magnitude.
     testWidgets('an ordinary curve', (tester) async {
       final double ms = await medianFrame(tester, 'x^2');
-      expect(ms, lessThan(40), reason: '${ms.toStringAsFixed(1)} ms');
+      expect(ms, lessThan(120), reason: '${ms.toStringAsFixed(1)} ms');
     });
 
     testWidgets('an implicit curve', (tester) async {
       final double ms = await medianFrame(tester, 'x^2+y^2=4');
-      expect(ms, lessThan(60), reason: '${ms.toStringAsFixed(1)} ms');
+      expect(ms, lessThan(180), reason: '${ms.toStringAsFixed(1)} ms');
     });
 
     testWidgets('a shaded region', (tester) async {
       final double ms = await medianFrame(tester, 'x^2+y^2<4');
-      expect(ms, lessThan(80), reason: '${ms.toStringAsFixed(1)} ms');
+      expect(ms, lessThan(240), reason: '${ms.toStringAsFixed(1)} ms');
     });
   });
 }

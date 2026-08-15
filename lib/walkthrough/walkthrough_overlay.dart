@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'walkthrough_service.dart';
 import 'walkthrough_steps.dart';
 import 'walkthrough_widgets.dart';
+import '../utils/render_box.dart';
 
 class WalkthroughOverlay extends StatelessWidget {
   final WalkthroughService walkthroughService;
@@ -163,8 +164,7 @@ class WalkthroughOverlay extends StatelessWidget {
 
     if (targetKey?.currentContext == null) return null;
 
-    final RenderBox? box =
-        targetKey!.currentContext!.findRenderObject() as RenderBox?;
+    final RenderBox? box = laidOutBox(targetKey?.currentContext);
     if (box == null || !box.attached) return null;
 
     final position = box.localToGlobal(Offset.zero);
@@ -189,8 +189,7 @@ class WalkthroughOverlay extends StatelessWidget {
 
     final keypadKey = targetKeys['main_keypad_area'];
     if (keypadKey?.currentContext != null) {
-      final RenderBox? box =
-          keypadKey!.currentContext!.findRenderObject() as RenderBox?;
+      final RenderBox? box = laidOutBox(keypadKey?.currentContext);
       if (box != null && box.attached) {
         final position = box.localToGlobal(Offset.zero);
         keypadRect = position & box.size;
@@ -210,19 +209,34 @@ class WalkthroughOverlay extends StatelessWidget {
             color: Colors.black.withValues(alpha: _overlayDarkness),
           ),
         ),
-        Expanded(
-          child: IgnorePointer(
-            ignoring: true,
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: _swipeAreaDimness),
-                border: Border(
-                  top: BorderSide(
-                    color: Colors.amber.withValues(alpha: 0.5),
-                    width: 2,
-                  ),
+        // Only the rows that actually slide. This used to run to the bottom of
+        // the screen, so a step about swiping the top rows lit the number pad
+        // underneath as well — which never moves.
+        IgnorePointer(
+          ignoring: true,
+          child: Container(
+            height: keypadRect?.height,
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: _swipeAreaDimness),
+              border: Border(
+                top: BorderSide(
+                  color: Colors.amber.withValues(alpha: 0.5),
+                  width: 2,
+                ),
+                bottom: BorderSide(
+                  color: Colors.amber.withValues(alpha: 0.5),
+                  width: 2,
                 ),
               ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: GestureDetector(
+            onTap: () {},
+            child: Container(
+              width: screenSize.width,
+              color: Colors.black.withValues(alpha: _overlayDarkness),
             ),
           ),
         ),
@@ -461,8 +475,7 @@ class WalkthroughOverlay extends StatelessWidget {
       Rect? keypadRect;
       final keypadKey = targetKeys['main_keypad_area'];
       if (keypadKey?.currentContext != null) {
-        final RenderBox? box =
-            keypadKey!.currentContext!.findRenderObject() as RenderBox?;
+        final RenderBox? box = laidOutBox(keypadKey?.currentContext);
         if (box != null && box.attached) {
           final position = box.localToGlobal(Offset.zero);
           keypadRect = position & box.size;
@@ -517,8 +530,10 @@ class WalkthroughOverlay extends StatelessWidget {
       top = targetRect.bottom + offset;
     } else {
       // The target is taller than the space around it, so there is no side to
-      // sit on. Centring keeps every control reachable.
-      return Center(child: content);
+      // sit on. Sitting a little below centre keeps every control reachable
+      // while leaving more of the plot visible above it — the whole point of
+      // the step being to look at the plot.
+      return Align(alignment: const Alignment(0, 0.82), child: content);
     }
 
     return Positioned(

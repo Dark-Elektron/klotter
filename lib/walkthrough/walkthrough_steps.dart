@@ -44,7 +44,7 @@ const List<WalkthroughStep> walkthroughSteps = [
     id: 'plot_pages',
     title: 'Your Plots',
     description:
-        'Each plot has its own page. Swipe this strip to move between them, or past the last one to start a new plot. Backspacing an empty expression removes its plot again.',
+        'Each plot has its own page. Swipe this strip to move between them, or past the last one to start a new plot.',
     position: TooltipPosition.above,
   ),
   WalkthroughStep(
@@ -68,7 +68,7 @@ const List<WalkthroughStep> walkthroughSteps = [
     id: 'scientific_keypad',
     title: 'Scientific Functions',
     description:
-        'The top two rows hold sin, cos, tan, logarithms, roots, exponents — and the x, y and z variables you plot with.',
+        'Trigonometry, logarithms, roots and exponents, alongside the variables and unit vectors you build expressions from. Long-press a variable to work in polar or spherical coordinates instead — the plot converts for you.',
     position: TooltipPosition.above,
     mobileOnly: true,
   ),

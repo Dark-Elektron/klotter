@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+
+import '../utils/render_box.dart';
 import '../settings/settings_provider.dart';
 
 /// Menu item data for the popup menu
@@ -73,7 +75,10 @@ class _PopupMenuCalcButtonState extends State<PopupMenuCalcButton> {
 
     final settings = Provider.of<SettingsProvider>(context, listen: false);
 
-    final RenderBox renderBox = context.findRenderObject() as RenderBox;
+    // Skip the menu rather than crash if this key has been rebuilt but not
+    // yet laid out; the next press will find it settled.
+    final RenderBox? renderBox = laidOutBox(context);
+    if (renderBox == null) return;
     final Size size = renderBox.size;
     final Offset position = renderBox.localToGlobal(Offset.zero);
 
@@ -189,7 +194,10 @@ class _PopupMenuCalcButtonState extends State<PopupMenuCalcButton> {
   void _updateHighlight(Offset globalPosition) {
     if (_overlayEntry == null) return;
 
-    final RenderBox renderBox = context.findRenderObject() as RenderBox;
+    // Runs on every pointer move while the menu is open, so it can land
+    // between a rebuild and the layout that follows it.
+    final RenderBox? renderBox = laidOutBox(context);
+    if (renderBox == null) return;
     final Size size = renderBox.size;
     final Offset buttonPosition = renderBox.localToGlobal(Offset.zero);
 

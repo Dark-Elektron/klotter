@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:math' as math;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -8,6 +9,7 @@ import '../parsers/vector_field_parser.dart';
 import '../parsers/plot_expression.dart';
 import '../painters/plot_3d_painter.dart';
 import '../utils/pinch_tracker.dart';
+import '../utils/plot_cache.dart';
 import '../utils/surface_pick.dart';
 import '../utils/plot_theme.dart';
 
@@ -102,10 +104,20 @@ class Plot3DScreenState extends State<Plot3DScreen>
   VelocityTracker? _velocityTracker;
   bool _wasRotating = false;
 
+  /// True while a finger is down or the plot is still spinning. The surface
+  /// samples coarsely for the duration and sharpens when it settles.
+  bool _interacting = false;
+
+  void _setInteracting(bool value) {
+    if (_interacting == value) return;
+    setState(() => _interacting = value);
+  }
+
   void _trackPointerDown(PointerDownEvent event) {
     _velocityTracker = VelocityTracker.withKind(event.kind);
     _velocityTracker!.addPosition(event.timeStamp, event.position);
     _pinch.down(event.pointer, event.localPosition);
+    _setInteracting(true);
   }
 
   void _trackPointerMove(PointerMoveEvent event) {
@@ -113,7 +125,11 @@ class Plot3DScreenState extends State<Plot3DScreen>
     _pinch.move(event.pointer, event.localPosition);
   }
 
-  void _trackPointerUp(PointerEvent event) => _pinch.up(event.pointer);
+  void _trackPointerUp(PointerEvent event) {
+    _pinch.up(event.pointer);
+    // Still moving if a flick left it spinning.
+    if (!isSpinning) _setInteracting(false);
+  }
 
   Offset get _measuredVelocity =>
       _velocityTracker?.getVelocity().pixelsPerSecond ?? Offset.zero;
@@ -121,6 +137,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
   void _stopSpin() {
     if (_spinTicker?.isActive ?? false) _spinTicker!.stop();
     _spinAzimuth = 0;
+    _setInteracting(false);
   }
 
   void _startSpin(Offset velocity) {
@@ -134,6 +151,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
 
     _spinAzimuth = az;
     _lastTick = Duration.zero;
+    _setInteracting(true);
     _spinTicker ??= createTicker(_onSpinTick);
     if (!_spinTicker!.isActive) _spinTicker!.start();
   }
@@ -229,6 +247,38 @@ class Plot3DScreenState extends State<Plot3DScreen>
   /// usable for that.
   final PinchTracker _pinch = PinchTracker();
 
+  /// Set the box by hand.
+  ///
+  /// The box is centred on the origin, so it is held as half-extents; a
+  /// min/max pair is applied as the larger of the two magnitudes. Nothing
+  /// auto-fits a divergent surface, which is the case this exists for.
+  void setBox({
+    required double xMin,
+    required double xMax,
+    required double yMin,
+    required double yMax,
+    double? zMin,
+    double? zMax,
+  }) {
+    double halfOf(double lo, double hi) =>
+        math.max(lo.abs(), hi.abs()).clamp(_minRange, _maxRange);
+    setState(() {
+      xRange = halfOf(xMin, xMax);
+      yRange = halfOf(yMin, yMax);
+      if (zMin != null && zMax != null) {
+        zRange = halfOf(zMin, zMax);
+        _manualZ = true;
+      }
+    });
+  }
+
+  /// Once the height has been set by hand, stop re-fitting it on every edit.
+  bool _manualZ = false;
+
+  /// Re-fit the box height to the current surface and window.
+  @visibleForTesting
+  void autoScaleForTest() => _autoScaleIfNeeded();
+
   void resetView() {
     setState(() {
       _stopSpin();
@@ -258,24 +308,49 @@ class Plot3DScreenState extends State<Plot3DScreen>
         _curves.where((PlotExpression e) => !e.isLevelSet).toList();
     if (curves.isEmpty) return null;
     try {
-      double maxAbs = 0;
-      const int samples = 6;
+      // Measured on the same lattice the surface is drawn from, and taken
+      // from the cache the painter fills, so this costs nothing.
+      //
+      // It used to be its own 7x7 grid, which is coarse enough to step over
+      // whatever the surface actually does. For sin(r)/r² over ±24 the samples
+      // land at multiples of 8, miss the spike at the origin entirely, and
+      // return 0.02 — so the box was built a hundred times too short and the
+      // spike came out clipped flat.
+      final List<double> magnitudes = <double>[];
       for (final PlotExpression parser in curves) {
-        for (int i = 0; i <= samples; i++) {
-          final tx = i / samples;
-          final x = -xRange + (2 * xRange) * tx;
-          for (int j = 0; j <= samples; j++) {
-            final ty = j / samples;
-            final y = -yRange + (2 * yRange) * ty;
-            final z = parser.evaluate(x, y, 0);
-            if (!z.isFinite) continue;
-            final absZ = z.abs();
-            if (absZ > maxAbs) maxAbs = absZ;
+        final List<List<double>> grid = cachedHeightGrid(
+          parser,
+          xRange,
+          yRange,
+          50,
+        );
+        for (final List<double> row in grid) {
+          for (final double z in row) {
+            if (z.isFinite) magnitudes.add(z.abs());
           }
         }
       }
-      if (maxAbs <= 0) return null;
-      return maxAbs * 1.2;
+      if (magnitudes.isEmpty) return null;
+      magnitudes.sort();
+
+      // The tallest point, so a bounded surface gets its true height: sinc
+      // peaks at 1 and the box comes out at 1.2, matching what it should be.
+      //
+      // A percentile cannot stand in for this. A peak occupies very few of the
+      // samples — even the 99.5th of 2,601 sits far down the skirt of a sinc
+      // and gave 0.26 for a surface that reaches 1.
+      //
+      // The percentile's job is only to notice a pole. sin(r)/r² climbs
+      // without limit at the origin, and sizing the box to it would press
+      // everything else flat onto the floor, so the height is capped at a
+      // generous multiple of the bulk of the surface. Nothing can auto-fit a
+      // divergent surface properly; set those bounds by hand.
+      final double tallest = magnitudes.last;
+      final double bulk = magnitudes[((magnitudes.length - 1) * 0.99).floor()];
+      final double reference =
+          (bulk > 0 && tallest > bulk * 20) ? bulk * 20 : tallest;
+      if (reference <= 0) return null;
+      return reference * 1.2;
     } catch (_) {
       return null;
     }
@@ -342,6 +417,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
   }
 
   void _autoScaleIfNeeded() {
+    if (_manualZ) return;
     final newZ = _computeAutoZRange();
     if (newZ == null) return;
     setState(() {
@@ -502,6 +578,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
                 size: Size(constraints.maxWidth, constraints.maxHeight),
                 painter: Plot3DPainter(
                   tracePoint: _tracePoint,
+                  interacting: _interacting,
                   plotTheme: widget.plotTheme,
                   function: widget.function,
                   functions: widget.functions,

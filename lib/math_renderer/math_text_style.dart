@@ -7,6 +7,21 @@ class MathTextStyle {
   static const String minusSign = '\u2212';
   static const String equalsSign = '=';
 
+  /// Every sign that relates two sides of an expression.
+  ///
+  /// They lay out identically: a relation is surrounded by the same air
+  /// whichever one it is, so x ≥ 2 reads like x = 2 rather than being jammed
+  /// against its operands. Only `=` used to be listed, so the inequalities
+  /// were spaced as though they were part of the term beside them.
+  static const Set<String> relationalSigns = <String>{
+    '=',
+    '≥',
+    '≤',
+    '>',
+    '<',
+    '≠',
+  };
+
   static const String multiplyDot = '\u00B7';
   static const String multiplyTimes = '\u00D7';
 
@@ -34,7 +49,10 @@ class MathTextStyle {
     multiplyDot,
     multiplyTimes,
     '*', // Add standard asterisk
-    equalsSign,
+    // Every relation, not just equals: this set is what decides whether a
+    // character gets a space either side, so listing only `=` left x≥2
+    // rendered as though the sign belonged to the term beside it.
+    ...relationalSigns,
   };
 
   /// Scientific E character (small caps E) used for notation like 1ᴇ-17
@@ -95,7 +113,7 @@ class MathTextStyle {
       '/',
       '÷',
       '^',
-      '=',
+      ...relationalSigns,
     };
     return unaryPreceders.contains(prevChar);
   }

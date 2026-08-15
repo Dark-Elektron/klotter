@@ -3,6 +3,7 @@ import 'expression_selection.dart';
 import 'math_editor_controller.dart';
 import 'scrub.dart';
 import 'renderer.dart';
+import '../utils/render_box.dart';
 
 /// The main math editor widget that handles user interaction.
 class MathEditorInline extends StatefulWidget {
@@ -109,11 +110,10 @@ class MathEditorInlineState extends State<MathEditorInline>
       _removeSelectionOverlay();
     }
 
-    final RenderBox? containerBox =
-        _containerKey.currentContext?.findRenderObject() as RenderBox?;
+    final RenderBox? containerBox = laidOutBox(_containerKey.currentContext);
     if (containerBox == null) return;
 
-    final RenderBox? myBox = context.findRenderObject() as RenderBox?;
+    final RenderBox? myBox = laidOutBox(context);
     if (myBox == null) return;
 
     final globalPos = myBox.localToGlobal(event.localPosition);
@@ -125,11 +125,10 @@ class MathEditorInlineState extends State<MathEditorInline>
   void _handleDoubleTapDown(TapDownDetails details) {
     widget.onFocus?.call();
 
-    final RenderBox? containerBox =
-        _containerKey.currentContext?.findRenderObject() as RenderBox?;
+    final RenderBox? containerBox = laidOutBox(_containerKey.currentContext);
     if (containerBox == null) return;
 
-    final RenderBox? gestureBox = context.findRenderObject() as RenderBox?;
+    final RenderBox? gestureBox = laidOutBox(context);
     if (gestureBox == null) return;
 
     final globalPoint = gestureBox.localToGlobal(details.localPosition);
@@ -179,9 +178,8 @@ class MathEditorInlineState extends State<MathEditorInline>
   double _scrubStartX = 0;
 
   Offset? _toContainer(Offset local) {
-    final RenderBox? containerBox =
-        _containerKey.currentContext?.findRenderObject() as RenderBox?;
-    final RenderBox? gestureBox = context.findRenderObject() as RenderBox?;
+    final RenderBox? containerBox = laidOutBox(_containerKey.currentContext);
+    final RenderBox? gestureBox = laidOutBox(context);
     if (containerBox == null || gestureBox == null) return null;
     return containerBox.globalToLocal(gestureBox.localToGlobal(local));
   }
