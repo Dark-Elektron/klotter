@@ -73,14 +73,19 @@ void main() {
       expect(footprint(phone).height / phone.height, greaterThan(0.9));
     });
 
-    test('fills its width', () {
-      expect(footprint(phone).width / phone.width, greaterThan(0.9));
+    test('spends most of its width on the plan', () {
+      // Not all of it: the plan is deliberately held to _planFill so the
+      // rest is available to a taller box, which leans into the width as it
+      // grows. That trade is the knob.
+      final double used = footprint(phone).width / phone.width;
+      expect(used, greaterThan(0.75));
+      expect(used, lessThan(0.95));
     });
 
     test('is a cuboid, with z the long axis', () {
       // The shape asked for: a cube left the height empty above the box.
       final ViewFit f = Plot3DPainter.viewExtentsFor(phone);
-      expect(f.vertical, greaterThan(f.planar * 1.2));
+      expect(f.vertical, greaterThan(f.planar * 2));
     });
 
     test('and sits centred, not low', () {

@@ -86,8 +86,9 @@ void main() {
     await tester.runAsync(() async {
       final int lit = await curvePixels(await render(circleNodes()));
       // A radius-1 circle inside a range-5 box is small on screen; measured
-      // at 223 px, so this catches it disappearing, not it being thin.
-      expect(lit, greaterThan(150), reason: 'only $lit px of curve colour');
+      // at 139 px on the square test canvas, so this catches it
+      // disappearing, not it being thin.
+      expect(lit, greaterThan(90), reason: 'only $lit px of curve colour');
     });
   });
 

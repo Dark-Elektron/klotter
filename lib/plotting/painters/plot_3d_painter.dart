@@ -364,7 +364,30 @@ class Plot3DPainter extends CustomPainter {
   static const double axisArrowOvershoot = 1.18;
 
   /// How much of the viewport the drawing is allowed to reach across.
-  static const double _fitMargin = 0.96;
+  /// How wide the floor plane is drawn, as a fraction of the panel width.
+  ///
+  /// **This is the knob for the width of the plan.** Held back from the full
+  /// panel on purpose: the plan is not the only thing competing for the
+  /// width. A tall box leans its front-top corner towards the eye, where
+  /// perspective spreads it sideways, so every bit of width the plan takes is
+  /// height the z axis cannot have. Lower this to trade a narrower floor for
+  /// a taller box.
+  static const double _planFill = 0.80;
+
+  /// How tall the drawing is allowed to stand, as a fraction of the panel
+  /// height.
+  ///
+  /// **This is the knob for the height of the z axis.** It bounds the whole
+  /// drawing, arrowheads included, so 1.0 would put the tip of the z arrow
+  /// exactly on the top edge.
+  static const double _zFill = 0.98;
+
+  /// The most of the panel width anything may use, plan or leaning corner.
+  ///
+  /// Above [_planFill] because it is a hard edge rather than a budget: the
+  /// plan is kept to the smaller figure, and what is left over absorbs the
+  /// sideways spread of a tall box instead of capping its height.
+  static const double _widthCap = 0.98;
 
   /// The tilt the box is fitted at.
   ///
@@ -424,8 +447,9 @@ class Plot3DPainter extends CustomPainter {
     if (_fitSize == size && _fitResult != null) return _fitResult!;
 
     final double focalLength = focalLengthFor(size);
-    final double limitX = size.width * _fitMargin;
-    final double limitY = size.height * _fitMargin;
+    final double planLimit = size.width * _planFill;
+    final double limitX = size.width * _widthCap;
+    final double limitY = size.height * _zFill;
     final double ct = cos(_fitTilt), st = sin(_fitTilt);
 
     /// The projected bounding box of the drawing, over a full turn of azimuth.
@@ -463,15 +487,23 @@ class Plot3DPainter extends CustomPainter {
       return (left: left, right: right, top: top, bottom: bottom);
     }
 
-    /// The largest box of a given shape that still fits.
-    double largestAt(double aspect) {
+    /// The largest value one extent can take, holding the other.
+    ///
+    /// [ownLimitX] is what the plan is measured against — the plan's own
+    /// budget when fitting the plan, the hard edge when fitting the height,
+    /// which is what lets a tall box spend the difference.
+    double largest(
+      double Function(double) planarOf,
+      double Function(double) verticalOf,
+      double ownLimitX,
+    ) {
       double lo = 1, hi = 4000;
-      for (int i = 0; i < 22; i++) {
+      for (int i = 0; i < 24; i++) {
         final double mid = (lo + hi) / 2;
-        final b = boundsOf(mid, mid * aspect);
+        final b = boundsOf(planarOf(mid), verticalOf(mid));
         final bool ok =
             b != null &&
-            b.right - b.left <= limitX &&
+            b.right - b.left <= ownLimitX &&
             b.top - b.bottom <= limitY;
         if (ok) {
           lo = mid;
@@ -482,23 +514,26 @@ class Plot3DPainter extends CustomPainter {
       return lo;
     }
 
-    double planar = 1, vertical = 1, best = -1;
-    for (int i = 0; i <= 24; i++) {
-      final double aspect = 1.0 + i * 3.0 / 24;
-      final double p = largestAt(aspect);
-      final b = boundsOf(p, p * aspect);
-      if (b == null) continue;
-      // Scored on the tighter of the two, so a spike that fills the height by
-      // giving up the width does not win.
-      final double score = min(
-        (b.right - b.left) / size.width,
-        (b.top - b.bottom) / size.height,
-      );
-      if (score > best) {
-        best = score;
-        planar = p;
-        vertical = p * aspect;
-      }
+    // Each extent answers to its own knob. They are fitted in turn because
+    // they are coupled — a taller box leans further into the width, a wider
+    // plan leans further into the height — but only through perspective, so
+    // a few rounds settle it.
+    double planar = min(size.width, size.height) * 0.2;
+    double vertical = planar;
+    for (int pass = 0; pass < 5; pass++) {
+      planar = largest((double p) => p, (_) => vertical, planLimit);
+      vertical = largest((_) => planar, (double v) => v, limitX);
+    }
+
+    // z is the long axis, never the short one. On a panel wide enough that
+    // the height fit came out under the plan, the two are re-fitted together
+    // as a cube — raising the vertical on its own would push the box off the
+    // top and bottom, since the plan was sized against a limit the taller box
+    // no longer respects.
+    if (vertical < planar) {
+      final double cube = largest((double e) => e, (double e) => e, limitX);
+      planar = cube;
+      vertical = cube;
     }
 
     // Centre what is actually drawn, not the origin it is drawn around.
