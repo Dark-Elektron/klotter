@@ -19,7 +19,7 @@ void main() {
 
   group('a curve', () {
     test('cos(u)x̂ + sin(u)ŷ traces the unit circle', () {
-      final pts = sampleParametricCurve(circle());
+      final pts = sampleParametricCurve(circle(), u: fullTurn);
       expect(pts.length, parametricCurveSteps + 1);
 
       for (final p in pts) {
@@ -33,8 +33,8 @@ void main() {
       }
     });
 
-    test('it closes, because the default sweep is a full turn', () {
-      final pts = sampleParametricCurve(circle());
+    test('swept over a full turn, it closes', () {
+      final pts = sampleParametricCurve(circle(), u: fullTurn);
       expect(pts.first!.x, closeTo(pts.last!.x, 1e-9));
       expect(pts.first!.y, closeTo(pts.last!.y, 1e-9));
     });
@@ -42,7 +42,7 @@ void main() {
     test('a missing component is zero, not a gap', () {
       // No ẑ term, so the circle lies in the plane z = 0 rather than being
       // discarded as undefined.
-      for (final p in sampleParametricCurve(circle())) {
+      for (final p in sampleParametricCurve(circle(), u: fullTurn)) {
         expect(p!.z, 0);
       }
     });
@@ -93,9 +93,25 @@ void main() {
     });
   });
 
+  group('the default sweep', () {
+    test('is the unit interval', () {
+      // What a parameter means before you decide otherwise: u runs from one
+      // end of the thing to the other. An angle asks for its own range.
+      expect(defaultParameterRange.min, 0);
+      expect(defaultParameterRange.max, 1);
+    });
+
+    test('is what a curve gets when nothing is said', () {
+      final pts = sampleParametricCurve(circle());
+      // cos(0)=1 at the start, cos(1)≈0.54 at the end — an arc, not a circle.
+      expect(pts.first!.x, closeTo(1, 1e-9));
+      expect(pts.last!.x, closeTo(math.cos(1), 1e-9));
+    });
+  });
+
   group('extent', () {
     test('measures how far the path reaches', () {
-      final e = parametricExtent(sampleParametricCurve(circle()));
+      final e = parametricExtent(sampleParametricCurve(circle(), u: fullTurn));
       expect(e, isNotNull);
       expect(e!.x, closeTo(1, 1e-6));
       expect(e.y, closeTo(1, 1e-6));

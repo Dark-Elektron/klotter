@@ -33,7 +33,8 @@ void main() {
 
   Future<ui.Image> render(
     List<MathNode> nodes, {
-    ParameterRange u = defaultParameterRange,
+    // A full turn, not the [0, 1] default: these are circles.
+    ParameterRange u = fullTurn,
   }) async {
     final expr = PlotExpression.compile(nodes);
     final painter = Plot3DPainter(

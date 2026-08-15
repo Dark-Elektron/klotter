@@ -25,7 +25,9 @@ void main() {
 
   Future<ui.Image> render(
     List<MathNode> nodes, {
-    ParameterRange u = defaultParameterRange,
+    // A full turn, not the [0, 1] default: these tests are about a circle,
+    // and an arc would not close.
+    ParameterRange u = fullTurn,
   }) async {
     final field = VectorFieldParser.fromNodes(nodes);
     final colors = AppColors.fromType(ThemeType.classic);

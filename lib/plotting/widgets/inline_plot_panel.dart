@@ -78,8 +78,11 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
 
   /// What u and v are swept over. Per panel rather than per app: two plots
   /// open at once are usually two different curves.
-  ParameterRange _uRange = defaultParameterRange;
-  ParameterRange _vRange = defaultParameterRange;
+  ///
+  /// Seeded from the saved view in [initState], so swiping to the next plot
+  /// and back does not hand the sweep back to the default.
+  late ParameterRange _uRange;
+  late ParameterRange _vRange;
   bool _showContour = false;
   SurfaceMode _surfaceMode = SurfaceMode.none;
   ZoomAxis _zoomAxis = ZoomAxis.free;
@@ -97,7 +100,13 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   PlotViewState currentView() {
     final p2 = _plot2DKey.currentState;
     final p3 = _plot3DKey.currentState;
-    PlotViewState view = widget.initialView.copyWith(show3D: _show3D);
+    PlotViewState view = widget.initialView.copyWith(
+      show3D: _show3D,
+      uMin: _uRange.min,
+      uMax: _uRange.max,
+      vMin: _vRange.min,
+      vMax: _vRange.max,
+    );
     if (p2 != null) {
       final (xMin, xMax, yMin, yMax) = p2.ranges;
       view = view.copyWith(xMin: xMin, xMax: xMax, yMin: yMin, yMax: yMax);
@@ -154,6 +163,8 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   void initState() {
     super.initState();
     _show3D = widget.initialView.show3D;
+    _uRange = (min: widget.initialView.uMin, max: widget.initialView.uMax);
+    _vRange = (min: widget.initialView.vMin, max: widget.initialView.vMax);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) setState(_restoreView);
     });
@@ -712,7 +723,10 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                 child: ParameterRangeChip(
                   name: 'u',
                   range: _uRange,
-                  onChanged: (r) => setState(() => _uRange = r),
+                  onChanged: (r) {
+                    setState(() => _uRange = r);
+                    _publishView();
+                  },
                 ),
               ),
 
@@ -723,7 +737,10 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                 child: ParameterRangeChip(
                   name: 'v',
                   range: _vRange,
-                  onChanged: (r) => setState(() => _vRange = r),
+                  onChanged: (r) {
+                    setState(() => _vRange = r);
+                    _publishView();
+                  },
                 ),
               ),
 

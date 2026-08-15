@@ -6,12 +6,15 @@ import '../parsers/vector_field_parser.dart';
 typedef ParametricPoint = ({double x, double y, double z});
 
 /// The span a parameter is swept over.
-///
-/// A full turn by default, since most parametric curves worth typing close on
-/// themselves over 0..2π — a circle, a cardioid, a Lissajous figure.
 typedef ParameterRange = ({double min, double max});
 
-const ParameterRange defaultParameterRange = (min: 0.0, max: 2 * math.pi);
+/// The unit interval, which is what a parameter means before you decide
+/// otherwise: u runs from one end of the thing to the other. Ranges that want
+/// an angle say so — and the panel takes `2pi` as readily as `1`.
+const ParameterRange defaultParameterRange = (min: 0.0, max: 1.0);
+
+/// A full turn, the range an angular sweep usually wants.
+const ParameterRange fullTurn = (min: 0.0, max: 2 * math.pi);
 
 /// How many steps a curve is sampled at.
 ///

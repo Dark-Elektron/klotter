@@ -18,6 +18,10 @@ class PlotViewState {
     this.rangeX = 5,
     this.rangeY = 5,
     this.rangeZ = 5,
+    this.uMin = 0,
+    this.uMax = 1,
+    this.vMin = 0,
+    this.vMax = 1,
   });
 
   /// Which view the cell was left showing.
@@ -28,6 +32,11 @@ class PlotViewState {
 
   /// The 3D camera and box.
   final double rotationX, rotationZ, panX, panY, rangeX, rangeY, rangeZ;
+
+  /// What u and v are swept over. Part of the view rather than of the
+  /// expression: the sweep is something you dialled in, and swiping to the
+  /// next plot and back used to hand it silently back to the default.
+  final double uMin, uMax, vMin, vMax;
 
   static const PlotViewState initial = PlotViewState();
 
@@ -45,7 +54,11 @@ class PlotViewState {
       panY == initial.panY &&
       rangeX == initial.rangeX &&
       rangeY == initial.rangeY &&
-      rangeZ == initial.rangeZ;
+      rangeZ == initial.rangeZ &&
+      uMin == initial.uMin &&
+      uMax == initial.uMax &&
+      vMin == initial.vMin &&
+      vMax == initial.vMax;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     'show3D': show3D,
@@ -60,6 +73,10 @@ class PlotViewState {
     'rangeX': rangeX,
     'rangeY': rangeY,
     'rangeZ': rangeZ,
+    'uMin': uMin,
+    'uMax': uMax,
+    'vMin': vMin,
+    'vMax': vMax,
   };
 
   /// Restore a view, falling back to the default for anything missing or
@@ -95,6 +112,21 @@ class PlotViewState {
       return v > 0 ? v : fallback;
     }
 
+    // A zero-width sweep draws nothing, so it is rejected the same way a
+    // zero-width window is.
+    double uMin = read('uMin', initial.uMin);
+    double uMax = read('uMax', initial.uMax);
+    double vMin = read('vMin', initial.vMin);
+    double vMax = read('vMax', initial.vMax);
+    if ((uMax - uMin).abs() < 1e-9) {
+      uMin = initial.uMin;
+      uMax = initial.uMax;
+    }
+    if ((vMax - vMin).abs() < 1e-9) {
+      vMin = initial.vMin;
+      vMax = initial.vMax;
+    }
+
     return PlotViewState(
       show3D: json['show3D'] == true,
       xMin: xMin,
@@ -108,6 +140,10 @@ class PlotViewState {
       rangeX: positive('rangeX', initial.rangeX),
       rangeY: positive('rangeY', initial.rangeY),
       rangeZ: positive('rangeZ', initial.rangeZ),
+      uMin: uMin,
+      uMax: uMax,
+      vMin: vMin,
+      vMax: vMax,
     );
   }
 
@@ -124,6 +160,10 @@ class PlotViewState {
     double? rangeX,
     double? rangeY,
     double? rangeZ,
+    double? uMin,
+    double? uMax,
+    double? vMin,
+    double? vMax,
   }) {
     return PlotViewState(
       show3D: show3D ?? this.show3D,
@@ -138,6 +178,10 @@ class PlotViewState {
       rangeX: rangeX ?? this.rangeX,
       rangeY: rangeY ?? this.rangeY,
       rangeZ: rangeZ ?? this.rangeZ,
+      uMin: uMin ?? this.uMin,
+      uMax: uMax ?? this.uMax,
+      vMin: vMin ?? this.vMin,
+      vMax: vMax ?? this.vMax,
     );
   }
 }
