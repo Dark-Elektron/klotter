@@ -328,7 +328,8 @@ class Plot3DPainter extends CustomPainter {
   /// edge to edge and there was no visible scene for the floor plane to sit
   /// in — which reads as the plane not overlaying in 3D, though the depth
   /// order was fine.
-  double _viewExtent = 200.0;
+  double _viewExtentXY = 200.0;
+  double _viewExtentZ = 200.0;
 
   /// Distance from the eye to the projection plane.
   ///
@@ -337,15 +338,67 @@ class Plot3DPainter extends CustomPainter {
   /// put the marker somewhere the surface is not.
   static const double focalLength = 500.0;
 
-  /// Half-extent of the world box for a viewport of [size].
+  /// How far past the box an axis arrow reaches, as a fraction of the range.
   ///
-  /// A rotated box shows its diagonal, and perspective enlarges the near
-  /// corner, so it is fitted to well under half the viewport.
-  static double viewExtentFor(Size size) => min(size.width, size.height) * 0.30;
+  /// The real edge of the drawing: the box corners are not what runs off the
+  /// canvas first, the arrowheads are.
+  static const double axisArrowOvershoot = 1.18;
 
-  double get scaleX => _viewExtent / rangeX;
-  double get scaleY => _viewExtent / rangeY;
-  double get scaleZ => _viewExtent / rangeZ;
+  /// How much of the viewport the drawing is allowed to reach across.
+  ///
+  /// Just under 1 because perspective enlarges the near corner beyond what
+  /// the flat geometry below accounts for.
+  static const double _fitMargin = 0.98;
+
+  /// The tilt the box is fitted at.
+  ///
+  /// A reference angle rather than the live one. Fitting to the current tilt
+  /// would keep the box perfectly framed, but then tilting would also zoom —
+  /// the plot would swell and shrink under a finger that only meant to turn
+  /// it. This is the default view, which is where a plot spends most of its
+  /// life.
+  static const double _fitTilt = 0.6;
+
+  /// Half-extents of the world box for a viewport of [size]: one for the
+  /// horizontal plane, one for the vertical axis.
+  ///
+  /// Two numbers rather than one because the viewport is not square. Fitting
+  /// a cube to `min(width, height)` threw away everything past that on the
+  /// longer side, which on a phone is most of the height — the box floated in
+  /// the middle of the panel with the z axis stopping well short of the top.
+  ///
+  /// Both are fitted to the *arrow tips*, since those are what leaves the
+  /// canvas first. The plan takes the width: a rotated box shows its
+  /// diagonal, so the widest it ever projects is √2 times the half-extent.
+  /// Height is whatever the plan has not already spent, because the plan
+  /// tilts into the vertical too — the silhouette is
+  /// `Ez·cos φ + √2·Exy·sin φ`, all of it scaled by the arrow overshoot.
+  static ({double planar, double vertical}) viewExtentsFor(Size size) {
+    const double reach = axisArrowOvershoot;
+    final double planar = size.width * _fitMargin / (2 * sqrt2 * reach);
+    final double half = size.height * _fitMargin / 2;
+    final double spent = sqrt2 * reach * planar * sin(_fitTilt);
+    final double left = half - spent;
+
+    // On a viewport wide enough that the plan alone fills the height, there
+    // is nothing left over for z, and the height is the binding constraint
+    // for both.
+    if (left <= 0) {
+      final double cube =
+          half / (reach * (cos(_fitTilt) + sqrt2 * sin(_fitTilt)));
+      return (planar: cube, vertical: cube);
+    }
+
+    // Never much flatter than it is wide. A short, wide viewport would
+    // otherwise squash the box into a ribbon, which is worse than letting it
+    // run slightly past the margin.
+    final double vertical = left / (reach * cos(_fitTilt));
+    return (planar: planar, vertical: max(vertical, planar * 0.6));
+  }
+
+  double get scaleX => _viewExtentXY / rangeX;
+  double get scaleY => _viewExtentXY / rangeY;
+  double get scaleZ => _viewExtentZ / rangeZ;
   PlotThemeData get _theme => plotTheme;
 
   /// Every function to draw, falling back to the single [function] so callers
@@ -371,7 +424,9 @@ class Plot3DPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    _viewExtent = viewExtentFor(size);
+    final ({double planar, double vertical}) fit = viewExtentsFor(size);
+    _viewExtentXY = fit.planar;
+    _viewExtentZ = fit.vertical;
 
     final bool showSurface = surfaceMode != SurfaceMode.none;
     canvas.save();
@@ -2049,7 +2104,7 @@ class Plot3DPainter extends CustomPainter {
       // anything. Not at 0.9 of the range, which put the head inside the box
       // with the line running on past it; and not at the line's true end at
       // twice the range, which is off screen for the vertical axis.
-      const double arrowAt = 1.18;
+      const double arrowAt = axisArrowOvershoot;
       final arrowPos = Point3D(
         dir.x * range * arrowAt * scale,
         dir.y * range * arrowAt * scale,
@@ -3035,9 +3090,10 @@ class Plot3DPainter extends CustomPainter {
 
   /// The value scale, laid along the top of the plot.
   ///
-  /// Horizontal and centred to match 2D, and to leave the left edge to the
-  /// parameter panels. Ticks hang below the bar rather than beside it, which
-  /// is the only arrangement that keeps five labels from colliding.
+  /// Horizontal and in the top right corner to match 2D, leaving the left
+  /// edge to the parameter panels and the top left to the mode label. Ticks
+  /// hang below the bar rather than beside it, which is the only arrangement
+  /// that keeps five labels from colliding.
   void _drawColorbar3D(Canvas canvas, Size size, double minVal, double maxVal) {
     const double barHeight = 12.0;
     const double margin = 10.0;
@@ -3045,7 +3101,7 @@ class Plot3DPainter extends CustomPainter {
     final double barWidth = (size.width * 0.45).clamp(80.0, 220.0);
 
     final Rect barRect = Rect.fromLTWH(
-      (size.width - barWidth) / 2,
+      size.width - barWidth - margin,
       margin,
       barWidth,
       barHeight,

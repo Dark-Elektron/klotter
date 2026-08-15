@@ -13,7 +13,7 @@ import 'package:klotter/plotting/utils/plot_theme.dart';
 import 'package:klotter/settings/settings_provider.dart';
 import 'package:klotter/utils/app_colors.dart';
 
-/// The colorbar runs along the top of the plot, low value at the left.
+/// The colorbar runs along the top right of the plot, low value at the left.
 ///
 /// Checked by reading the ramp's own end colours off the canvas, which pins
 /// down both where the bar is and which way round it runs — a bar drawn
@@ -65,12 +65,13 @@ void main() {
   double distance(Color a, Color b) =>
       (a.r - b.r).abs() + (a.g - b.g).abs() + (a.b - b.b).abs();
 
-  // 45% of 400 = 180, inside the 80..220 clamp.
+  // 45% of 400 = 180, inside the 80..220 clamp, pushed against the right
+  // edge with the same 10px margin it has from the top.
   const double barWidth = 180;
-  const double barLeft = (400 - barWidth) / 2;
+  const double barLeft = 400 - barWidth - 10;
   const int mid = 16; // 10px margin + half of a 12px bar
 
-  test('the bar sits across the top centre', () {
+  test('the bar sits across the top right', () {
     // Its left end carries the bottom of the ramp.
     expect(
       distance(at(barLeft.toInt() + 3, mid), plotColormapStops.first),
@@ -97,6 +98,17 @@ void main() {
         distance(at(14, y), plotColormapStops.first),
         greaterThan(0.15),
         reason: 'ramp colour still at (14, $y)',
+      );
+    }
+  });
+
+  test('and so is the top left, which the mode label wants', () {
+    // The bar used to be centred; that half of the top edge is now free.
+    for (int x = 20; x < 150; x += 10) {
+      expect(
+        distance(at(x, mid), plotColormapStops.first),
+        greaterThan(0.15),
+        reason: 'ramp colour still at ($x, $mid)',
       );
     }
   });

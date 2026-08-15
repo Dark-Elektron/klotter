@@ -23,17 +23,17 @@ class PlotCamera {
     required this.rangeX,
     required this.rangeY,
     required this.rangeZ,
-  }) : _viewExtent = Plot3DPainter.viewExtentFor(size);
+  }) : _extents = Plot3DPainter.viewExtentsFor(size);
 
   final Size size;
   final double rotationX, rotationZ;
   final double panX, panY;
   final double rangeX, rangeY, rangeZ;
-  final double _viewExtent;
+  final ({double planar, double vertical}) _extents;
 
-  double get scaleX => _viewExtent / rangeX;
-  double get scaleY => _viewExtent / rangeY;
-  double get scaleZ => _viewExtent / rangeZ;
+  double get scaleX => _extents.planar / rangeX;
+  double get scaleY => _extents.planar / rangeY;
+  double get scaleZ => _extents.vertical / rangeZ;
 
   /// Data point to screen, matching `Point3D.rotateZ().rotateX().project()`.
   Offset project(double x, double y, double z) {

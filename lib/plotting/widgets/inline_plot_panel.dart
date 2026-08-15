@@ -688,13 +688,13 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                 ),
               ),
 
-            // Top right, out of the way of the parameter panels that now own
-            // the bottom left corner. Pushed down when an error banner is
-            // showing, since that spans the full width of the top edge.
+            // Top left, opposite the colorbar and above the parameter panels
+            // that own the bottom left corner. Pushed down when an error
+            // banner is showing, since that spans the full width of the top.
             if (showOverlays)
               Positioned(
                 top: _errorMessage != null ? 32 : 8,
-                right: 8,
+                left: 8,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 8,

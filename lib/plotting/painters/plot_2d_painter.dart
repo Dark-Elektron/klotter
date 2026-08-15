@@ -1334,10 +1334,10 @@ class Plot2DPainter extends CustomPainter {
 
   /// The scale for whatever the colours mean, across the top of the plot.
   ///
-  /// Horizontal and centred rather than a vertical strip down the left edge:
-  /// the left is now the parameter panels' corner, and a plot is wider than it
-  /// is tall, so a bar laid along the width has room for its labels without
-  /// taking a bite out of the drawing area.
+  /// Horizontal, in the top right corner. The left edge belongs to the
+  /// parameter panels and the top left to the mode label, and a plot is wider
+  /// than it is tall, so a bar laid along the width has room for its labels
+  /// without taking a bite out of the drawing area.
   void _drawColorbar(Canvas canvas, Size size, double minVal, double maxVal) {
     final theme = plotTheme;
     const double barHeight = 12.0;
@@ -1347,7 +1347,7 @@ class Plot2DPainter extends CustomPainter {
     final double barWidth = (size.width * 0.45).clamp(80.0, 220.0);
 
     final barRect = Rect.fromLTWH(
-      (size.width - barWidth) / 2,
+      size.width - barWidth - margin,
       margin,
       barWidth,
       barHeight,

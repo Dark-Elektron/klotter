@@ -126,25 +126,35 @@ void main() {
 
   testWidgets('x, y and z colour it differently', (tester) async {
     await tester.runAsync(() async {
-      Future<List<int>> tones(SurfaceMode m) async {
-        final data = (await (await render(m)).toByteData())!;
-        final List<int> hist = List<int>.filled(32, 0);
+      // Compared pixel for pixel rather than by histogram. The saddle is
+      // symmetric in u and v, so Fx and Fz shade it along different
+      // directions — same palette, different picture — and a histogram can
+      // miss that entirely by counting the same colours in the wrong places.
+      int differenceBetween(ByteData a, ByteData b) {
+        int n = 0;
         for (int i = 0; i < 320 * 320; i++) {
           final int o = i * 4;
-          if (data.getUint8(o + 3) > 200) hist[data.getUint8(o) ~/ 8]++;
+          if ((a.getUint8(o) - b.getUint8(o)).abs() > 24 ||
+              (a.getUint8(o + 2) - b.getUint8(o + 2)).abs() > 24) {
+            n++;
+          }
         }
-        return hist;
+        return n;
       }
 
-      // The saddle is symmetric in u and v, so Fx and Fy shade it along
-      // perpendicular directions — same palette, different picture.
-      final byX = await tones(SurfaceMode.x);
-      final byZ = await tones(SurfaceMode.z);
-      int differing = 0;
-      for (int i = 0; i < byX.length; i++) {
-        if ((byX[i] - byZ[i]).abs() > 200) differing++;
-      }
-      expect(differing, greaterThan(2), reason: 'Fx and Fz look alike');
+      final byX = (await (await render(SurfaceMode.x)).toByteData())!;
+      final byZ = (await (await render(SurfaceMode.z)).toByteData())!;
+      final again = (await (await render(SurfaceMode.x)).toByteData())!;
+
+      // The control: the same mode twice is the same picture, so any
+      // difference at all is the mode doing something. Measured at 1,881 px
+      // between Fx and Fz on a 320x320 canvas.
+      expect(differenceBetween(byX, again), 0);
+      expect(
+        differenceBetween(byX, byZ),
+        greaterThan(800),
+        reason: 'Fx and Fz look alike',
+      );
     });
   });
 
