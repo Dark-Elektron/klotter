@@ -67,6 +67,26 @@ void main() {
     );
   }
 
+  /// How tall the z axis alone projects — the segment on the axis itself,
+  /// arrowhead included, with nothing of the floor in it.
+  double zAxisHeight(Size size) {
+    final ViewFit f = Plot3DPainter.viewExtentsFor(size);
+    final double focal = Plot3DPainter.focalLengthFor(size);
+    const double tilt = 0.6;
+    const double reach = Plot3DPainter.axisArrowOvershoot;
+    final double ct = math.cos(tilt);
+    double top = double.negativeInfinity, bottom = double.infinity;
+    for (final double sz in <double>[-1, 1]) {
+      // On the axis, so azimuth cannot move it.
+      final double z = sz * f.vertical * reach;
+      final double k = focal / (focal - z * math.sin(tilt));
+      final double y = -z * ct * k;
+      top = math.max(top, -y);
+      bottom = math.min(bottom, -y);
+    }
+    return top - bottom;
+  }
+
   const List<Size> shapes = <Size>[
     Size(988, 1210), // the phone in portrait, where the waste showed
     Size(400, 400), // square
@@ -82,12 +102,25 @@ void main() {
       expect(footprint(phone).height / phone.height, greaterThan(0.9));
     });
 
-    test('draws its floor across the panel', () {
-      // The floor, not the whole drawing. That distinction is the bug this
-      // replaced: budgeting everything drawn left the visible grid covering
-      // under two thirds of the panel while the box's top corners, which
-      // nobody reads as the width, touched both edges.
-      expect(footprint(phone).floor / phone.width, greaterThan(0.85));
+    test('draws its floor across most of the panel', () {
+      // The floor, not the whole drawing — budgeting everything drawn hid
+      // the fact that the visible grid covered under two thirds while the
+      // box's top corners, which nobody reads as the width, touched both
+      // edges.
+      //
+      // Not all of it: the floor's width and the z axis's height are one
+      // budget, and _zAspect is where the two are traded off. A floor filling
+      // the panel would leave the z axis at little over half the height.
+      expect(footprint(phone).floor / phone.width, greaterThan(0.7));
+    });
+
+    test('and gives the z axis a comparable share of the height', () {
+      // The other side of that trade, so a change to _zAspect that starves
+      // one of them fails here rather than passing quietly.
+      final f = Plot3DPainter.viewExtentsFor(phone);
+      final double zShare = zAxisHeight(phone) / phone.height;
+      expect(zShare, greaterThan(0.6), reason: 'z axis is only $zShare');
+      expect(f.vertical, greaterThan(f.planar));
     });
 
     test('is a cuboid, with z the long axis', () {
