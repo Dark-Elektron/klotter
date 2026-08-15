@@ -6,6 +6,7 @@ import '../../utils/app_colors.dart';
 import '../models/enums.dart';
 import '../models/point_3d.dart';
 import '../parsers/plot_expression.dart';
+import '../utils/parametric.dart';
 import '../parsers/vector_field_parser.dart';
 import '../utils/colormap.dart';
 import '../utils/level_set.dart';
@@ -272,6 +273,13 @@ class Plot3DPainter extends CustomPainter {
   /// colour mode and the theme's series palette.
   final PlotThemeData plotTheme;
 
+  /// True when the cell is a sweep rather than something sampled over space.
+  bool get _isParametric => vectorParser?.isParametric ?? false;
+
+  /// The spans u and v are swept over when the expression is parametric.
+  final ParameterRange uRange;
+  final ParameterRange vRange;
+
   /// Where the trace marker sits, in data coordinates, or null when the plot
   /// is not being traced.
   final SurfaceHit? tracePoint;
@@ -302,6 +310,8 @@ class Plot3DPainter extends CustomPainter {
     required this.surfaceMode,
     required this.colors,
     required this.plotTheme,
+    this.uRange = defaultParameterRange,
+    this.vRange = defaultParameterRange,
     this.tracePoint,
     this.interacting = false,
   });
@@ -376,10 +386,15 @@ class Plot3DPainter extends CustomPainter {
     // _drawHeightSurfaces builds the floor into its own depth scene, for
     // curves as well as sheets, so drawing it here too would put an
     // un-occluded copy underneath.
+    // A parametric sweep goes through the same depth scene as a height
+    // surface, so it owns the floor too — drawing it here as well would leave
+    // an un-occluded copy underneath.
     final bool floorDrawnBySurface =
-        fieldType == FieldType.scalar &&
-        plotMode != PlotMode.field &&
-        (_hasHeightSurface || _curves.any((PlotExpression e) => e.isLevelSet));
+        _isParametric ||
+        (fieldType == FieldType.scalar &&
+            plotMode != PlotMode.field &&
+            (_hasHeightSurface ||
+                _curves.any((PlotExpression e) => e.isLevelSet)));
 
     if (!floorDrawnBySurface) {
       _drawFloorGrid(canvas, size, focalLength);
@@ -388,7 +403,12 @@ class Plot3DPainter extends CustomPainter {
     }
 
     // Handle different visualization modes
-    if (fieldType == FieldType.vector && vectorParser != null) {
+    if (_isParametric) {
+      // Ahead of the field branch for the same reason as in 2D: the notation
+      // is shared, and only the variables say whether this is an arrow at
+      // every point or one point swept into a curve.
+      _drawHeightSurfaces(canvas, size, focalLength);
+    } else if (fieldType == FieldType.vector && vectorParser != null) {
       // Vector field visualization
       if (showSurface && !vectorParser!.is3D) {
         // Show magnitude surface for 2D vector fields
@@ -824,7 +844,7 @@ class Plot3DPainter extends CustomPainter {
   /// none of them ever appeared on screen.
   void _drawHeightSurfaces(Canvas canvas, Size size, double focalLength) {
     final List<PlotExpression> curves = _sheetCurves;
-    if (curves.isEmpty && _lineCurves.isEmpty) return;
+    if (curves.isEmpty && _lineCurves.isEmpty && !_isParametric) return;
 
     // The floor joins the same ordered list as the surfaces, so the two
     // occlude each other instead of the surfaces always winning.
@@ -881,6 +901,7 @@ class Plot3DPainter extends CustomPainter {
     // curve floats in front of geometry it runs through — the same fault the
     // floor grid had against the surface.
     _addStandingCurvesTo(scene, size, focalLength);
+    _addParametricTo(scene, size, focalLength);
 
     scene.paint(canvas);
 
@@ -2257,6 +2278,56 @@ class Plot3DPainter extends CustomPainter {
   /// along x, cos(y) along y. Both are curves, not sheets — see
   /// [PlotExpression.isSurface] for why an extruded cos(y) is the wrong
   /// picture even though it is a legitimate surface.
+  /// Add the path traced by sweeping u, in the same depth order as everything
+  /// else in the scene.
+  ///
+  /// Unlike a standing curve, a parametric one already knows all three of its
+  /// coordinates, so there is no axis to choose and no value to clip against:
+  /// the sweep says where the point is, and the window only decides whether it
+  /// is visible.
+  void _addParametricTo(_DepthScene scene, Size size, double focalLength) {
+    final VectorFieldParser? field = vectorParser;
+    if (field == null || !field.isParametric) return;
+
+    final Color curveColor = _theme.seriesColor(0);
+    final paint =
+        Paint()
+          ..color = curveColor
+          ..strokeWidth = 3
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round;
+
+    Offset? prev;
+    double? prevDepth;
+
+    for (final ParametricPoint? p in sampleParametricCurve(field, u: uRange)) {
+      // A point outside the box breaks the line rather than being clamped
+      // onto the wall, which would draw an edge the curve does not have.
+      if (p == null ||
+          p.x.abs() > rangeX ||
+          p.y.abs() > rangeY ||
+          p.z.abs() > rangeZ) {
+        prev = null;
+        prevDepth = null;
+        continue;
+      }
+
+      final point = Point3D(
+        p.x * scaleX,
+        p.y * scaleY,
+        p.z * scaleZ,
+      ).rotateZ(rotationZ).rotateX(rotationX);
+      final Offset proj = point.project(focalLength, size, panX, panY);
+
+      if (prev != null) {
+        scene.addLine(prev, proj, paint, (prevDepth! + point.y) / 2);
+      }
+      prev = proj;
+      prevDepth = point.y;
+    }
+  }
+
   void _addStandingCurvesTo(_DepthScene scene, Size size, double focalLength) {
     final List<PlotExpression> curves = _lineCurves;
     for (int c = 0; c < curves.length; c++) {
