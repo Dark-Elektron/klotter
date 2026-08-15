@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/enums.dart';
 import '../../utils/app_colors.dart';
 import '../parsers/vector_field_parser.dart';
+import '../utils/parametric.dart';
 import '../parsers/plot_expression.dart';
 import '../painters/plot_2d_painter.dart';
 import '../utils/curve_features.dart';
@@ -17,6 +18,10 @@ class Plot2DScreen extends StatefulWidget {
   final PlotMode plotMode;
   final FieldType fieldType;
   final VectorFieldParser? vectorParser;
+
+  /// The spans u and v are swept over, when the cell is parametric.
+  final ParameterRange uRange;
+  final ParameterRange vRange;
   final bool showContour;
   final SurfaceMode surfaceMode;
   final AppColors colors;
@@ -33,6 +38,8 @@ class Plot2DScreen extends StatefulWidget {
     required this.plotMode,
     required this.fieldType,
     this.vectorParser,
+    this.uRange = defaultParameterRange,
+    this.vRange = defaultParameterRange,
     required this.showContour,
     required this.surfaceMode,
     required this.colors,
@@ -347,6 +354,8 @@ class Plot2DScreenState extends State<Plot2DScreen> {
               child: CustomPaint(
                 size: Size(constraints.maxWidth, constraints.maxHeight),
                 painter: Plot2DPainter(
+                  uRange: widget.uRange,
+                  vRange: widget.vRange,
                   functions: widget.functions,
                   traceX: _traceX,
                   traceFeature: _snappedFeature,

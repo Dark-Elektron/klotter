@@ -11,6 +11,8 @@ import '../../utils/coordinate_system.dart';
 import '../utils/plot_theme.dart';
 import '../parsers/plot_expression.dart';
 import '../parsers/vector_field_parser.dart';
+import '../utils/parametric.dart';
+import 'parameter_range_panel.dart';
 import '../../math_renderer/math_nodes.dart';
 import 'axis_range_sheet.dart';
 import 'plot_2d_screen.dart';
@@ -73,6 +75,11 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   PlotMode _plotMode = PlotMode.function;
   FieldType _fieldType = FieldType.scalar;
   VectorFieldParser? _vectorParser;
+
+  /// What u and v are swept over. Per panel rather than per app: two plots
+  /// open at once are usually two different curves.
+  ParameterRange _uRange = defaultParameterRange;
+  ParameterRange _vRange = defaultParameterRange;
   bool _showContour = false;
   SurfaceMode _surfaceMode = SurfaceMode.none;
   ZoomAxis _zoomAxis = ZoomAxis.free;
@@ -386,6 +393,20 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   /// already does that: `RenderAnimatedOpacity` skips painting its child
   /// entirely at alpha 0. Only layout still runs, which for a `CustomPaint` is
   /// a size calculation and no sampling at all.
+  /// True when [name] is one of the parameters the current cell sweeps.
+  ///
+  /// Read from the compiled components rather than the typed text, so a `u`
+  /// inside a function call counts and one inside a variable name does not.
+  bool _usesParameter(String name) {
+    final VectorFieldParser? field = _vectorParser;
+    if (field == null || !field.isParametric) return false;
+    return <PlotExpression?>[
+      field.xComponent,
+      field.yComponent,
+      field.zComponent,
+    ].any((PlotExpression? c) => c?.variables.contains(name) ?? false);
+  }
+
   Widget _plotLayer({required bool visible, required Widget child}) {
     return IgnorePointer(
       ignoring: !visible,
@@ -531,6 +552,8 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                       plotMode: _plotMode,
                       fieldType: _fieldType,
                       vectorParser: _vectorParser,
+                      uRange: _uRange,
+                      vRange: _vRange,
                       showContour: _showContour,
                       surfaceMode: _surfaceMode,
                       zoomAxis: _zoomAxis,
@@ -548,6 +571,8 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                       plotMode: _plotMode,
                       fieldType: _fieldType,
                       vectorParser: _vectorParser,
+                      uRange: _uRange,
+                      vRange: _vRange,
                       showContour: _showContour,
                       surfaceMode: _surfaceMode,
                       colors: _colorsNoListen(context),
@@ -648,10 +673,13 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                 ),
               ),
 
+            // Top right, out of the way of the parameter panels that now own
+            // the bottom left corner. Pushed down when an error banner is
+            // showing, since that spans the full width of the top edge.
             if (showOverlays)
               Positioned(
-                bottom: _overlayButtonSize + 14,
-                left: 8,
+                top: _errorMessage != null ? 32 : 8,
+                right: 8,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 8,
@@ -665,6 +693,33 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                     _getModeDescription(),
                     style: const TextStyle(color: Colors.white70, fontSize: 11),
                   ),
+                ),
+              ),
+
+            // Bottom left, where the description used to be: one chip per
+            // parameter the expression actually uses, u above v. A curve in u
+            // has nothing to say about v, so showing both would offer a
+            // control that changes nothing.
+            if (showOverlays && _usesParameter('u'))
+              Positioned(
+                left: 8,
+                bottom:
+                    _overlayButtonSize + 14 + (_usesParameter('v') ? 26 : 0),
+                child: ParameterRangeChip(
+                  name: 'u',
+                  range: _uRange,
+                  onChanged: (r) => setState(() => _uRange = r),
+                ),
+              ),
+
+            if (showOverlays && _usesParameter('v'))
+              Positioned(
+                left: 8,
+                bottom: _overlayButtonSize + 14,
+                child: ParameterRangeChip(
+                  name: 'v',
+                  range: _vRange,
+                  onChanged: (r) => setState(() => _vRange = r),
                 ),
               ),
 

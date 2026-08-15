@@ -6,6 +6,7 @@ import 'package:flutter/scheduler.dart';
 import '../models/enums.dart';
 import '../../utils/app_colors.dart';
 import '../parsers/vector_field_parser.dart';
+import '../utils/parametric.dart';
 import '../parsers/plot_expression.dart';
 import '../painters/plot_3d_painter.dart';
 import '../utils/pinch_tracker.dart';
@@ -25,6 +26,10 @@ class Plot3DScreen extends StatefulWidget {
   final PlotMode plotMode;
   final FieldType fieldType;
   final VectorFieldParser? vectorParser;
+
+  /// The spans u and v are swept over, when the cell is parametric.
+  final ParameterRange uRange;
+  final ParameterRange vRange;
   final bool showContour;
   final SurfaceMode surfaceMode;
   final ZoomAxis zoomAxis; // New
@@ -43,6 +48,8 @@ class Plot3DScreen extends StatefulWidget {
     required this.plotMode,
     required this.fieldType,
     this.vectorParser,
+    this.uRange = defaultParameterRange,
+    this.vRange = defaultParameterRange,
     required this.showContour,
     required this.surfaceMode,
     required this.zoomAxis, // New
@@ -577,6 +584,8 @@ class Plot3DScreenState extends State<Plot3DScreen>
               child: CustomPaint(
                 size: Size(constraints.maxWidth, constraints.maxHeight),
                 painter: Plot3DPainter(
+                  uRange: widget.uRange,
+                  vRange: widget.vRange,
                   tracePoint: _tracePoint,
                   interacting: _interacting,
                   plotTheme: widget.plotTheme,
