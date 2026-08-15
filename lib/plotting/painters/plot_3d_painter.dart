@@ -901,6 +901,7 @@ class Plot3DPainter extends CustomPainter {
     // curve floats in front of geometry it runs through — the same fault the
     // floor grid had against the surface.
     _addStandingCurvesTo(scene, size, focalLength);
+    _addParametricSurfaceTo(scene, size, focalLength);
     _addParametricTo(scene, size, focalLength);
 
     scene.paint(canvas);
@@ -2278,6 +2279,121 @@ class Plot3DPainter extends CustomPainter {
   /// along x, cos(y) along y. Both are curves, not sheets — see
   /// [PlotExpression.isSurface] for why an extruded cos(y) is the wrong
   /// picture even though it is a legitimate surface.
+  /// Add the patch swept out by u and v.
+  ///
+  /// Shaded by its own geometry rather than by height: a parametric surface
+  /// is free to fold back over itself, so z says nothing useful about which
+  /// part of it you are looking at. The facing of each cell does, which is
+  /// what makes a sphere read as a sphere rather than as a flat disc.
+  void _addParametricSurfaceTo(
+    _DepthScene scene,
+    Size size,
+    double focalLength,
+  ) {
+    final VectorFieldParser? field = vectorParser;
+    if (field == null || !field.isParametricSurface) return;
+
+    final List<List<ParametricPoint?>> grid = sampleParametricSurface(
+      field,
+      u: uRange,
+      v: vRange,
+      steps: interacting ? 34 : parametricSurfaceSteps,
+    );
+    if (grid.length < 2) return;
+
+    final Color base = _theme.seriesColor(0);
+
+    /// A corner in rotated space, or null where the sweep is undefined or
+    /// leaves the box.
+    Point3D? corner(int i, int j) {
+      final ParametricPoint? p = grid[i][j];
+      if (p == null ||
+          p.x.abs() > rangeX ||
+          p.y.abs() > rangeY ||
+          p.z.abs() > rangeZ) {
+        return null;
+      }
+      return Point3D(
+        p.x * scaleX,
+        p.y * scaleY,
+        p.z * scaleZ,
+      ).rotateZ(rotationZ).rotateX(rotationX);
+    }
+
+    // Cached a row at a time: every corner is shared by up to four cells, and
+    // rotating each one once instead of four times is most of the cost.
+    List<Point3D?> row = <Point3D?>[
+      for (int j = 0; j < grid[0].length; j++) corner(0, j),
+    ];
+
+    for (int i = 1; i < grid.length; i++) {
+      final List<Point3D?> next = <Point3D?>[
+        for (int j = 0; j < grid[i].length; j++) corner(i, j),
+      ];
+
+      for (int j = 1; j < row.length && j < next.length; j++) {
+        final Point3D? a = row[j - 1];
+        final Point3D? b = row[j];
+        final Point3D? c = next[j];
+        final Point3D? d = next[j - 1];
+        // A cell missing a corner is a hole in the surface, and drawing it
+        // would span the gap with a sheet the sweep never covers.
+        if (a == null || b == null || c == null || d == null) continue;
+
+        final int shade = _facingShade(base, a, b, c).toARGB32();
+        final Offset oa = a.project(focalLength, size, panX, panY);
+        final Offset ob = b.project(focalLength, size, panX, panY);
+        final Offset oc = c.project(focalLength, size, panX, panY);
+        final Offset od = d.project(focalLength, size, panX, panY);
+
+        scene.addTriangle(
+          oa,
+          ob,
+          oc,
+          shade,
+          shade,
+          shade,
+          (a.y + b.y + c.y) / 3,
+        );
+        scene.addTriangle(
+          oa,
+          oc,
+          od,
+          shade,
+          shade,
+          shade,
+          (a.y + c.y + d.y) / 3,
+        );
+      }
+      row = next;
+    }
+  }
+
+  /// Lighten or darken [base] by how squarely a cell faces the viewer.
+  ///
+  /// The light sits with the camera, so the shading follows the surface as it
+  /// is turned — which is the whole point of shading it at all.
+  Color _facingShade(Color base, Point3D a, Point3D b, Point3D c) {
+    final double ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
+    final double vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
+    final double nx = uy * vz - uz * vy;
+    final double ny = uz * vx - ux * vz;
+    final double nz = ux * vy - uy * vx;
+    final double len = sqrt(nx * nx + ny * ny + nz * nz);
+    // A degenerate cell has no facing; the mid tone is the honest answer.
+    final double facing = len == 0 ? 0.5 : (ny.abs() / len);
+
+    // Never fully black: a cell seen edge-on is still part of the surface, and
+    // dropping it to nothing punches a hole along every silhouette.
+    final double t = 0.45 + 0.55 * facing;
+    return Color.from(
+      alpha: 0.92,
+      red: base.r * t,
+      green: base.g * t,
+      blue: base.b * t,
+    );
+  }
+
   /// Add the path traced by sweeping u, in the same depth order as everything
   /// else in the scene.
   ///
@@ -2287,7 +2403,11 @@ class Plot3DPainter extends CustomPainter {
   /// is visible.
   void _addParametricTo(_DepthScene scene, Size size, double focalLength) {
     final VectorFieldParser? field = vectorParser;
-    if (field == null || !field.isParametric) return;
+    // A surface is not also a curve: sweeping u alone would trace one edge of
+    // it and draw that line across the mesh.
+    if (field == null || !field.isParametric || field.isParametricSurface) {
+      return;
+    }
 
     final Color curveColor = _theme.seriesColor(0);
     final paint =
