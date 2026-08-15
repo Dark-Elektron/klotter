@@ -374,45 +374,50 @@ class Plot3DPainter extends CustomPainter {
   static const double axisArrowOvershoot = 1.18;
 
   /// How much of the viewport the drawing is allowed to reach across.
-  /// The shape of the world box: how many times taller than wide.
+  /// Half-width of the floor plane, as a fraction of the panel width.
   ///
-  /// **This is the knob for how long the z axis is.** It is one dial and not
-  /// two because the floor's width and the z axis's height are the same
-  /// budget, and raising one lowers the other. At a 0.6 tilt the floor is
-  /// drawn in perspective, so its own depth eats into the panel's height, and
-  /// what is left over is the z axis. Measured on a 988 x 1210 panel:
+  /// **This is the knob for the size of the xy plane.** It sets the plane
+  /// outright — nothing else reads it, so changing it moves the floor and
+  /// leaves the z axis exactly where it was.
   ///
-  ///     aspect   floor width   z axis height
-  ///        1.0          98%             57%
-  ///        1.5          80%             71%
-  ///        2.0          66%             78%
-  ///        3.0          49%             88%
-  ///
-  /// So a box that fills the width has a short z axis, and a tall z axis has
-  /// a narrow floor. There is no setting that gives both; this is where you
-  /// choose between them.
-  static const double _zAspect = 1.6;
+  /// The floor is drawn turned, so it covers rather more of the panel than
+  /// this figure: its diagonal is what faces you, about 2.8 times the
+  /// half-width. At 0.32 the grid spans roughly 90% of the width.
+  static const double _planExtent = 0.32;
 
-  /// How much of the panel the drawing uses, once its shape is settled.
+  /// Half-height of the z axis, as a fraction of the panel height.
   ///
-  /// Bounds both the width of the floor and the height of everything drawn,
-  /// arrowheads included, so 1.0 would put the tip of the z arrow exactly on
-  /// the top edge.
-  static const double _fitFill = 0.98;
-
-  /// How far past the panel edge the top corners of the box may lean.
+  /// **This is the knob for the length of the z axis**, and it is
+  /// independent of [_planExtent] in both directions: neither is fitted
+  /// against the other, and neither is scaled to make room.
   ///
-  /// They reach wider than the floor does, and holding them inside would cost
-  /// size everywhere else. A few percent of the topmost corners is the
-  /// cheapest thing to give up.
-  static const double _widthOverhang = 1.10;
+  /// Nothing shrinks to accommodate a large value here, which also means
+  /// nothing stops it overrunning the panel. Measured on a 988 x 1210 panel,
+  /// with _planExtent at 0.32:
+  ///
+  ///     _zExtent   z axis height   whole drawing
+  ///         0.25             49%             83%
+  ///         0.35             68%             98%
+  ///         0.40             78%            108%   clipped
+  ///         0.55            108%            133%   clipped
+  ///
+  /// So about 0.35 is as long as the axis goes on a panel this shape before
+  /// the top and bottom are cut off.
+  static const double _zExtent = 0.34;
 
   /// The perspective strength, as a multiple of the panel's longer side.
   ///
-  /// Lower is more dramatic. Low enough and the top of the box projects so
-  /// much wider than its base that nothing can be fitted well: at 1.15 the
-  /// height could not pass three quarters of the panel whatever else was set.
-  static const double _perspective = 4.0;
+  /// Lower is more dramatic. It also decides how independent the two extents
+  /// really are on screen: the floor sits at the *bottom* of the box, so a
+  /// longer z axis pushes it further away, and under strong perspective it
+  /// then projects smaller. At 4 the floor lost four points of width as
+  /// _zExtent went from 0.25 to 0.55; at 15 it holds to within one.
+  ///
+  /// The cost of a figure this high is depth: the box is drawn very nearly
+  /// square-on, so near and far edges are close to the same size. Lower it
+  /// for a more three-dimensional look and accept that z and the plan will
+  /// pull on each other again.
+  static const double _perspective = 1.15;
 
   /// The tilt the box is fitted at.
   ///
@@ -472,39 +477,35 @@ class Plot3DPainter extends CustomPainter {
     // Keyed on the knobs as well as the size, so editing one and hot
     // reloading actually re-fits. Keyed on size alone, a changed constant
     // looked like it did nothing at all.
-    final String key =
-        '$size|$_zAspect|$_fitFill|$_widthOverhang|$_perspective|$_fitTilt';
+    final String key = '$size|$_planExtent|$_zExtent|$_perspective|$_fitTilt';
     if (_fitKey == key && _fitResult != null) return _fitResult!;
 
     final double focalLength = focalLengthFor(size);
-    final double floorLimit = size.width * _fitFill;
-    final double widthLimit = size.width * _widthOverhang;
-    final double heightLimit = size.height * _fitFill;
     final double ct = cos(_fitTilt), st = sin(_fitTilt);
 
-    /// Where the drawing lands, over a full turn of azimuth.
-    ///
-    /// [floor] is the span of the base alone, which is what the eye reads as
-    /// the width of the plot — the grid it can see. The full span runs wider,
-    /// because the top corners of the box lean further out than the base.
+    // Set, not solved. Every version of this that searched for a size ended
+    // up tying the two extents together — the panel is one budget, so
+    // whichever was fitted first took it and the other knob did nothing. The
+    // sizes are now simply what they are told to be, and the only thing
+    // computed is where to put the result.
+    final double planar = size.width * _planExtent;
+    final double vertical = size.height * _zExtent;
+
+    /// Where the drawing lands, over a full turn of azimuth, so the centring
+    /// holds at every rotation rather than only the one it was measured at.
     ///
     /// Null when the box reaches the eye, where the projection stops meaning
     /// anything.
-    ({double left, double right, double top, double bottom, double floor})?
-    boundsOf(double planar, double vertical) {
+    ({double left, double right, double top, double bottom})? boundsOf() {
       double left = double.infinity, right = double.negativeInfinity;
       double top = double.negativeInfinity, bottom = double.infinity;
-      double floorLeft = double.infinity, floorRight = double.negativeInfinity;
-      final List<(double, double, double)> points = _fitPoints(
-        planar,
-        vertical,
-      );
-      // Enough azimuths to catch the worst one. Twelve missed it by 8% of the
-      // panel, which showed up as the box running off the bottom.
       for (int a = 0; a < 36; a++) {
         final double az = a * pi / 18;
         final double ca = cos(az), sa = sin(az);
-        for (final (double x, double y, double z) in points) {
+        for (final (double x, double y, double z) in _fitPoints(
+          planar,
+          vertical,
+        )) {
           final double vx = x * ca - y * sa;
           final double planeY = x * sa + y * ca;
           final double depth = planeY * ct - z * st;
@@ -512,51 +513,18 @@ class Plot3DPainter extends CustomPainter {
           final double d = focalLength + depth;
           if (d <= focalLength * 0.05) return null;
           final double k = focalLength / d;
-          final double sx = vx * k;
-          left = min(left, sx);
-          right = max(right, sx);
+          left = min(left, vx * k);
+          right = max(right, vx * k);
           // Screen y runs downwards, so the largest vz is the top.
           top = max(top, vz * k);
           bottom = min(bottom, vz * k);
-          if (z == -vertical) {
-            floorLeft = min(floorLeft, sx);
-            floorRight = max(floorRight, sx);
-          }
         }
       }
-      return (
-        left: left,
-        right: right,
-        top: top,
-        bottom: bottom,
-        floor: floorRight - floorLeft,
-      );
+      return (left: left, right: right, top: top, bottom: bottom);
     }
-
-    // The shape is fixed by _zAspect; all that is searched is how big it can
-    // be. Fitting the two extents separately looked like two knobs but was
-    // really one budget, and whichever was fitted first took all of it — so
-    // the other appeared to do nothing at all.
-    double lo = 1, hi = 6000;
-    for (int i = 0; i < 28; i++) {
-      final double mid = (lo + hi) / 2;
-      final b = boundsOf(mid, mid * _zAspect);
-      final bool ok =
-          b != null &&
-          b.floor <= floorLimit &&
-          b.top - b.bottom <= heightLimit &&
-          b.right - b.left <= widthLimit;
-      if (ok) {
-        lo = mid;
-      } else {
-        hi = mid;
-      }
-    }
-    final double planar = lo;
-    final double vertical = lo * _zAspect;
 
     // Centre what is actually drawn, not the origin it is drawn around.
-    final b = boundsOf(planar, vertical);
+    final b = boundsOf();
     final ViewFit fit = ViewFit(
       planar: planar,
       vertical: vertical,

@@ -139,43 +139,63 @@ void main() {
     });
   });
 
-  group('whatever the panel shape', () {
-    test('nothing meaningful runs off the canvas', () {
+  group('the two extents are independent', () {
+    // The point of the whole arrangement. Every earlier version tied them
+    // together — the panel is one budget, so a joint fit meant that raising
+    // one lowered the other, and whichever was fitted first left the other
+    // knob doing nothing at all.
+
+    test('each is a fixed share of the panel, whatever its shape', () {
+      // If either were fitted against the other, its share would move as the
+      // panel changed shape. Neither does.
+      final Set<String> planShares = <String>{};
+      final Set<String> zShares = <String>{};
       for (final Size s in shapes) {
-        expect(footprint(s).height, lessThan(s.height), reason: 'height on $s');
-        // The floor stays inside. Only the topmost corners of the box lean
-        // past the edge, by the few percent _widthOverhang allows — holding
-        // those in would cost either a narrow floor or a short box.
-        expect(footprint(s).floor, lessThan(s.width), reason: 'floor on $s');
+        final ViewFit f = Plot3DPainter.viewExtentsFor(s);
+        planShares.add((f.planar / s.width).toStringAsFixed(6));
+        zShares.add((f.vertical / s.height).toStringAsFixed(6));
+      }
+      expect(planShares, hasLength(1), reason: 'plan varies: $planShares');
+      expect(zShares, hasLength(1), reason: 'z varies: $zShares');
+    });
+
+    test('neither reads the other', () {
+      // Doubling the panel's height must not touch the plan, and doubling its
+      // width must not touch z. Anything shared between them would show here.
+      const Size base = Size(600, 600);
+      final ViewFit a = Plot3DPainter.viewExtentsFor(base);
+      final ViewFit taller = Plot3DPainter.viewExtentsFor(
+        const Size(600, 1200),
+      );
+      final ViewFit wider = Plot3DPainter.viewExtentsFor(const Size(1200, 600));
+
+      expect(taller.planar, a.planar, reason: 'a taller panel moved the plan');
+      expect(wider.vertical, a.vertical, reason: 'a wider panel moved z');
+    });
+  });
+
+  group('what the panel affords', () {
+    test('the plan covers most of the width', () {
+      // Turned, so the floor spans about 2.8 times its half-width.
+      for (final Size s in shapes) {
         expect(
-          footprint(s).width,
-          lessThan(s.width * 1.06),
-          reason: 'width on $s',
+          footprint(s).floor / s.width,
+          greaterThan(0.75),
+          reason: 'on $s',
         );
       }
     });
 
-    test('one dimension or the other is filled', () {
-      for (final Size s in shapes) {
-        // The box is as big as it can be, so whichever constraint binds is
-        // met almost exactly. Only one of them can be: on a panel much wider
-        // than it is tall the height binds and the width is left largely
-        // empty, which is correct — filling it would push the box off the
-        // top and bottom.
-        final f = footprint(s);
-        final double filled = math.max(f.width / s.width, f.height / s.height);
-        // 0.88 rather than the 0.96 margin because the aspect is searched
-        // over a fixed set of steps, so the best cuboid for a given panel is
-        // not always exactly on one of them.
-        expect(filled, greaterThan(0.88), reason: 'on $s');
-      }
-    });
-
-    test('z is never the short axis', () {
-      for (final Size s in shapes) {
-        final ViewFit f = Plot3DPainter.viewExtentsFor(s);
-        expect(f.vertical, greaterThanOrEqualTo(f.planar), reason: 'on $s');
-      }
+    test('a portrait panel holds both without clipping', () {
+      // The shape the defaults are set for. Independence means nothing
+      // shrinks to make room, so on a squarer panel the box does overrun —
+      // that is the documented cost, and the constants say where it starts.
+      const Size phone = Size(988, 1210);
+      expect(footprint(phone).height, lessThan(phone.height));
+      // The floor stays inside. The box's topmost corners lean past the edge,
+      // which is the cheapest part of the drawing to lose and the price of
+      // not shrinking one extent to make room for the other.
+      expect(footprint(phone).floor, lessThan(phone.width));
     });
   });
 

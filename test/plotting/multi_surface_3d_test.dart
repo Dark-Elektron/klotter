@@ -465,13 +465,41 @@ void main() {
         painterOf(<PlotExpression>[fn('x^2+y^2+z^2=1')], rangeZ: 1.3),
       );
 
-      // Sample a band just below the centre, where the near floor crosses the
-      // sphere, and count how many pixels are the grid's grey rather than the
-      // ramp's saturated colour.
+      // Found rather than assumed. This used to sample a fixed band of
+      // pixels below the centre, which stopped containing the crossing the
+      // moment the box was fitted to the panel differently — the claim was
+      // still true and the test was looking in the wrong place.
+      //
+      // So: locate the sphere by its own saturated colour, then look for grid
+      // grey *inside* that silhouette. Painting the surface last leaves none
+      // there, which is the regression this guards.
       final int w = canvas.width.toInt();
+      final int h = canvas.height.toInt();
+      bool saturated(int o) {
+        final int r = sphereOnly.getUint8(o);
+        final int g = sphereOnly.getUint8(o + 1);
+        final int b = sphereOnly.getUint8(o + 2);
+        final int mx = [r, g, b].reduce((a, c) => a > c ? a : c);
+        final int mn = [r, g, b].reduce((a, c) => a < c ? a : c);
+        return mx - mn >= 60 && mx > 60;
+      }
+
+      int left = w, right = -1, top = h, bottom = -1;
+      for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+          if (saturated((y * w + x) * 4)) {
+            if (x < left) left = x;
+            if (x > right) right = x;
+            if (y < top) top = y;
+            if (y > bottom) bottom = y;
+          }
+        }
+      }
+      expect(right, greaterThan(left), reason: 'the sphere was not drawn');
+
       int greyish = 0;
-      for (int y = 165; y < 200; y++) {
-        for (int x = 120; x < 180; x++) {
+      for (int y = top; y <= bottom; y++) {
+        for (int x = left; x <= right; x++) {
           final int o = (y * w + x) * 4;
           final int r = sphereOnly.getUint8(o);
           final int g = sphereOnly.getUint8(o + 1);
