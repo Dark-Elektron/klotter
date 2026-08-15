@@ -81,17 +81,20 @@ void main() {
   });
 
   group('a flat plane', () {
-    test('picks the origin at the centre of the screen', () {
+    test('picks the origin at the pixel the origin projects to', () {
       // The answer here can be worked out by hand, so it pins the sign
-      // conventions: the ray through the middle of an unpanned view passes
-      // through the origin, and z = 0 contains it.
+      // conventions: the ray through the origin's own pixel passes through
+      // the origin, and z = 0 contains it. Asked for by projection rather
+      // than as the middle of the canvas, because the box is fitted and
+      // centred on what it draws — the origin sits a little off centre.
       //
       // Written as an equation rather than something like `0*x*y`, which the
       // engine simplifies to the constant 0 — losing both variables, so it is
       // no longer a surface at all and nothing is drawn or picked.
-      final SurfaceHit? hit = pickSurface(camera(), <PlotExpression>[
+      final PlotCamera c = camera();
+      final SurfaceHit? hit = pickSurface(c, <PlotExpression>[
         fn('z=0'),
-      ], const Offset(200, 200));
+      ], c.project(0, 0, 0));
       expect(hit, isNotNull);
       expect(hit!.x, closeTo(0, 0.05));
       expect(hit.y, closeTo(0, 0.05));
@@ -163,9 +166,11 @@ void main() {
 
     test('picks the near side, not the far one', () {
       final PlotCamera c = camera();
+      // Through the origin's pixel, so the ray meets the sphere at two
+      // symmetric points and the near one is unambiguous.
       final SurfaceHit? hit = pickSurface(c, <PlotExpression>[
         sphere,
-      ], const Offset(200, 200));
+      ], c.project(0, 0, 0));
       expect(hit, isNotNull);
 
       // On the sphere ...

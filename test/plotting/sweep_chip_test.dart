@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klotter/math_renderer/math_nodes.dart';
 import 'package:klotter/plotting/models/plot_view_state.dart';
 import 'package:klotter/plotting/widgets/inline_plot_panel.dart';
+import 'package:klotter/plotting/models/enums.dart';
 import 'package:klotter/plotting/widgets/plot_2d_screen.dart';
 import 'package:klotter/plotting/widgets/plot_3d_screen.dart';
 import 'package:klotter/settings/settings_provider.dart';
@@ -132,5 +133,29 @@ void main() {
     final Plot3DScreen solid = tester.widget(find.byType(Plot3DScreen));
     expect(solid.uRange.min, 1);
     expect(solid.uRange.max, 4);
+  });
+
+  testWidgets('a parametric plot arrives coloured by magnitude', (
+    tester,
+  ) async {
+    // Its default shading reads the shape but says nothing about the
+    // numbers, and where the curve runs far from the origin is what a
+    // parametric plot is nearly always being looked at for.
+    await tester.pumpWidget(host(curve()));
+    await tester.pumpAndSettle();
+
+    final Plot3DScreen solid = tester.widget(find.byType(Plot3DScreen));
+    expect(solid.surfaceMode, SurfaceMode.magnitude);
+  });
+
+  testWidgets('a plain function is not forced into a colour mode', (
+    tester,
+  ) async {
+    // The default only applies to sweeps; an ordinary curve is left alone.
+    await tester.pumpWidget(host(<MathNode>[LiteralNode(text: 'sin(x)')]));
+    await tester.pumpAndSettle();
+
+    final Plot3DScreen solid = tester.widget(find.byType(Plot3DScreen));
+    expect(solid.surfaceMode, SurfaceMode.none);
   });
 }

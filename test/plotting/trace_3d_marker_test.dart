@@ -177,11 +177,13 @@ void main() {
 
       final SurfaceHit? hit = state.tracePointForTest;
       expect(hit, isNotNull, reason: 'long press should place a marker');
-      // The centre of an unpanned view looks through the origin, and z = x + y
-      // passes through it.
-      expect(hit!.x, closeTo(0, 0.1));
-      expect(hit.y, closeTo(0, 0.1));
-      expect(hit.z, closeTo(0, 0.1));
+      // On the surface, which is the claim — z = x + y at the point found.
+      // Not the origin itself: the box is fitted and centred on what it
+      // draws, so the middle of the widget looks a little to one side of it.
+      expect(hit!.z, closeTo(hit.x + hit.y, 1e-6));
+      // And near the middle of the box rather than out at an edge.
+      expect(hit.x.abs(), lessThan(1.5));
+      expect(hit.y.abs(), lessThan(1.5));
     });
 
     testWidgets('a tap takes it away again', (tester) async {

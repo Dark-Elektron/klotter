@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../utils/app_colors.dart';
 import '../models/enums.dart';
 import '../models/point_3d.dart';
+import '../models/view_fit.dart';
 import '../parsers/plot_expression.dart';
 import '../utils/parametric.dart';
 import '../parsers/vector_field_parser.dart';
@@ -331,12 +332,30 @@ class Plot3DPainter extends CustomPainter {
   double _viewExtentXY = 200.0;
   double _viewExtentZ = 200.0;
 
+  /// Where the fitted drawing has to move to sit in the middle of the panel.
+  /// Added to the user's pan, so panning still works from there.
+  double _fitOffsetX = 0;
+  double _fitOffsetY = 0;
+
+  double get _panX => panX + _fitOffsetX;
+  double get _panY => panY + _fitOffsetY;
+
   /// Distance from the eye to the projection plane.
   ///
   /// Public because picking a point out of the scene has to invert exactly the
   /// projection that drew it. Two copies of this number would drift apart and
   /// put the marker somewhere the surface is not.
-  static const double focalLength = 500.0;
+  /// Scaled with the panel rather than fixed.
+  ///
+  /// It was a flat 500, which on a phone panel is less than the depth of the
+  /// box itself — so the front-top corner sat almost at the eye, projected
+  /// several times its true size, and was the first thing to run off the
+  /// canvas. That corner, not the height, was what capped how big the box
+  /// could be. Tying the focal length to the panel keeps the strength of the
+  /// perspective the same whatever size the plot is drawn at, and leaves the
+  /// near corner somewhere the fit can work with.
+  static double focalLengthFor(Size size) =>
+      max(size.width, size.height) * 1.15;
 
   /// How far past the box an axis arrow reaches, as a fraction of the range.
   ///
@@ -345,10 +364,7 @@ class Plot3DPainter extends CustomPainter {
   static const double axisArrowOvershoot = 1.18;
 
   /// How much of the viewport the drawing is allowed to reach across.
-  ///
-  /// Just under 1 because perspective enlarges the near corner beyond what
-  /// the flat geometry below accounts for.
-  static const double _fitMargin = 0.98;
+  static const double _fitMargin = 0.96;
 
   /// The tilt the box is fitted at.
   ///
@@ -359,41 +375,143 @@ class Plot3DPainter extends CustomPainter {
   /// life.
   static const double _fitTilt = 0.6;
 
-  /// Half-extents of the world box for a viewport of [size]: one for the
-  /// horizontal plane, one for the vertical axis.
-  ///
-  /// Two numbers rather than one because the viewport is not square. Fitting
-  /// a cube to `min(width, height)` threw away everything past that on the
-  /// longer side, which on a phone is most of the height — the box floated in
-  /// the middle of the panel with the z axis stopping well short of the top.
-  ///
-  /// Both are fitted to the *arrow tips*, since those are what leaves the
-  /// canvas first. The plan takes the width: a rotated box shows its
-  /// diagonal, so the widest it ever projects is √2 times the half-extent.
-  /// Height is whatever the plan has not already spent, because the plan
-  /// tilts into the vertical too — the silhouette is
-  /// `Ez·cos φ + √2·Exy·sin φ`, all of it scaled by the arrow overshoot.
-  static ({double planar, double vertical}) viewExtentsFor(Size size) {
+  /// Cached per viewport: the search below is cheap but runs on every paint
+  /// and every pick, and the size rarely changes.
+  /// What the fit has to keep on the canvas: the box corners and the axis
+  /// arrow tips, the latter reaching further than any corner.
+  static List<(double, double, double)> _fitPoints(
+    double planar,
+    double vertical,
+  ) {
     const double reach = axisArrowOvershoot;
-    final double planar = size.width * _fitMargin / (2 * sqrt2 * reach);
-    final double half = size.height * _fitMargin / 2;
-    final double spent = sqrt2 * reach * planar * sin(_fitTilt);
-    final double left = half - spent;
+    return <(double, double, double)>[
+      for (final double sx in <double>[-1, 1])
+        for (final double sy in <double>[-1, 1])
+          for (final double sz in <double>[-1, 1])
+            (sx * planar, sy * planar, sz * vertical),
+      (planar * reach, 0, 0),
+      (-planar * reach, 0, 0),
+      (0, planar * reach, 0),
+      (0, -planar * reach, 0),
+      (0, 0, vertical * reach),
+      (0, 0, -vertical * reach),
+    ];
+  }
 
-    // On a viewport wide enough that the plan alone fills the height, there
-    // is nothing left over for z, and the height is the binding constraint
-    // for both.
-    if (left <= 0) {
-      final double cube =
-          half / (reach * (cos(_fitTilt) + sqrt2 * sin(_fitTilt)));
-      return (planar: cube, vertical: cube);
+  static Size? _fitSize;
+  static ViewFit? _fitResult;
+
+  /// Half-extents of the world box for a viewport of [size], with the shift
+  /// that centres what they draw.
+  ///
+  /// Solved against the real projection rather than in closed form, because
+  /// perspective is what actually decides this and it is not linear in the
+  /// extent. Two things follow from that and neither survives a flat estimate:
+  ///
+  /// The drawing is not centred on the world origin. The near-bottom corner
+  /// projects far below it while the top projects only a little above, so a
+  /// box centred on the origin hangs low in the panel with the z axis
+  /// stopping well short of the top — which is exactly what it looked like.
+  /// The fit measures the real bounding box and returns the offset that
+  /// centres it.
+  ///
+  /// And the shape is worth searching for. Stretching z fills more height,
+  /// but a taller box brings its front-top corner nearer the eye, where
+  /// perspective spreads it sideways until the *width* runs out instead. The
+  /// best cuboid is the one that fills the panel in both directions, so that
+  /// is what is scored.
+  static ViewFit viewExtentsFor(Size size) {
+    if (_fitSize == size && _fitResult != null) return _fitResult!;
+
+    final double focalLength = focalLengthFor(size);
+    final double limitX = size.width * _fitMargin;
+    final double limitY = size.height * _fitMargin;
+    final double ct = cos(_fitTilt), st = sin(_fitTilt);
+
+    /// The projected bounding box of the drawing, over a full turn of azimuth.
+    ///
+    /// Null when the box reaches the eye, where the projection stops meaning
+    /// anything.
+    ({double left, double right, double top, double bottom})? boundsOf(
+      double planar,
+      double vertical,
+    ) {
+      double left = double.infinity, right = double.negativeInfinity;
+      double top = double.negativeInfinity, bottom = double.infinity;
+      final List<(double, double, double)> points = _fitPoints(
+        planar,
+        vertical,
+      );
+      for (int a = 0; a < 12; a++) {
+        final double az = a * pi / 6;
+        final double ca = cos(az), sa = sin(az);
+        for (final (double x, double y, double z) in points) {
+          final double vx = x * ca - y * sa;
+          final double planeY = x * sa + y * ca;
+          final double depth = planeY * ct - z * st;
+          final double vz = planeY * st + z * ct;
+          final double d = focalLength + depth;
+          if (d <= focalLength * 0.05) return null;
+          final double k = focalLength / d;
+          left = min(left, vx * k);
+          right = max(right, vx * k);
+          // Screen y runs downwards, so the largest vz is the top.
+          top = max(top, vz * k);
+          bottom = min(bottom, vz * k);
+        }
+      }
+      return (left: left, right: right, top: top, bottom: bottom);
     }
 
-    // Never much flatter than it is wide. A short, wide viewport would
-    // otherwise squash the box into a ribbon, which is worse than letting it
-    // run slightly past the margin.
-    final double vertical = left / (reach * cos(_fitTilt));
-    return (planar: planar, vertical: max(vertical, planar * 0.6));
+    /// The largest box of a given shape that still fits.
+    double largestAt(double aspect) {
+      double lo = 1, hi = 4000;
+      for (int i = 0; i < 22; i++) {
+        final double mid = (lo + hi) / 2;
+        final b = boundsOf(mid, mid * aspect);
+        final bool ok =
+            b != null &&
+            b.right - b.left <= limitX &&
+            b.top - b.bottom <= limitY;
+        if (ok) {
+          lo = mid;
+        } else {
+          hi = mid;
+        }
+      }
+      return lo;
+    }
+
+    double planar = 1, vertical = 1, best = -1;
+    for (int i = 0; i <= 24; i++) {
+      final double aspect = 1.0 + i * 3.0 / 24;
+      final double p = largestAt(aspect);
+      final b = boundsOf(p, p * aspect);
+      if (b == null) continue;
+      // Scored on the tighter of the two, so a spike that fills the height by
+      // giving up the width does not win.
+      final double score = min(
+        (b.right - b.left) / size.width,
+        (b.top - b.bottom) / size.height,
+      );
+      if (score > best) {
+        best = score;
+        planar = p;
+        vertical = p * aspect;
+      }
+    }
+
+    // Centre what is actually drawn, not the origin it is drawn around.
+    final b = boundsOf(planar, vertical);
+    final ViewFit fit = ViewFit(
+      planar: planar,
+      vertical: vertical,
+      offsetX: b == null ? 0 : -(b.left + b.right) / 2,
+      offsetY: b == null ? 0 : (b.top + b.bottom) / 2,
+    );
+    _fitSize = size;
+    _fitResult = fit;
+    return fit;
   }
 
   double get scaleX => _viewExtentXY / rangeX;
@@ -424,9 +542,12 @@ class Plot3DPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final ({double planar, double vertical}) fit = viewExtentsFor(size);
+    final double focalLength = focalLengthFor(size);
+    final ViewFit fit = viewExtentsFor(size);
     _viewExtentXY = fit.planar;
     _viewExtentZ = fit.vertical;
+    _fitOffsetX = fit.offsetX;
+    _fitOffsetY = fit.offsetY;
 
     final bool showSurface = surfaceMode != SurfaceMode.none;
     canvas.save();
@@ -928,10 +1049,10 @@ class Plot3DPainter extends CustomPainter {
       }
 
       for (final quad in built.quads) {
-        final o1 = quad.p1.project(focalLength, size, panX, panY);
-        final o2 = quad.p2.project(focalLength, size, panX, panY);
-        final o3 = quad.p3.project(focalLength, size, panX, panY);
-        final o4 = quad.p4.project(focalLength, size, panX, panY);
+        final o1 = quad.p1.project(focalLength, size, _panX, _panY);
+        final o2 = quad.p2.project(focalLength, size, _panX, _panY);
+        final o3 = quad.p3.project(focalLength, size, _panX, _panY);
+        final o4 = quad.p4.project(focalLength, size, _panX, _panY);
 
         // Colour per corner, interpolated across the cell. A single colour
         // from the cell average makes each cell a flat block, which reads as
@@ -1145,10 +1266,10 @@ class Plot3DPainter extends CustomPainter {
     // Draw quads
     final _VertexBatch batch = _VertexBatch();
     for (final quad in quads) {
-      final o1 = quad.p1.project(focalLength, size, panX, panY);
-      final o2 = quad.p2.project(focalLength, size, panX, panY);
-      final o3 = quad.p3.project(focalLength, size, panX, panY);
-      final o4 = quad.p4.project(focalLength, size, panX, panY);
+      final o1 = quad.p1.project(focalLength, size, _panX, _panY);
+      final o2 = quad.p2.project(focalLength, size, _panX, _panY);
+      final o3 = quad.p3.project(focalLength, size, _panX, _panY);
+      final o4 = quad.p4.project(focalLength, size, _panX, _panY);
 
       // Colour per corner, interpolated across the cell.
       Color shade(double v) => plotColormap((v / maxMag).clamp(0.0, 1.0));
@@ -1273,10 +1394,10 @@ class Plot3DPainter extends CustomPainter {
 
     final _VertexBatch batch = _VertexBatch();
     for (final quad in quads) {
-      final o1 = quad.p1.project(focalLength, size, panX, panY);
-      final o2 = quad.p2.project(focalLength, size, panX, panY);
-      final o3 = quad.p3.project(focalLength, size, panX, panY);
-      final o4 = quad.p4.project(focalLength, size, panX, panY);
+      final o1 = quad.p1.project(focalLength, size, _panX, _panY);
+      final o2 = quad.p2.project(focalLength, size, _panX, _panY);
+      final o3 = quad.p3.project(focalLength, size, _panX, _panY);
+      final o4 = quad.p4.project(focalLength, size, _panX, _panY);
 
       // Colour per corner, interpolated across the cell.
       Color shade(double v) =>
@@ -1477,15 +1598,15 @@ class Plot3DPainter extends CustomPainter {
         if (points3D.length >= 2) {
           final p1 = points3D[0].rotateZ(rotationZ).rotateX(rotationX);
           final p2 = points3D[1].rotateZ(rotationZ).rotateX(rotationX);
-          final proj1 = p1.project(focalLength, size, panX, panY);
-          final proj2 = p2.project(focalLength, size, panX, panY);
+          final proj1 = p1.project(focalLength, size, _panX, _panY);
+          final proj2 = p2.project(focalLength, size, _panX, _panY);
           canvas.drawLine(proj1, proj2, paint);
         }
         if (points3D.length >= 4) {
           final p3 = points3D[2].rotateZ(rotationZ).rotateX(rotationX);
           final p4 = points3D[3].rotateZ(rotationZ).rotateX(rotationX);
-          final proj3 = p3.project(focalLength, size, panX, panY);
-          final proj4 = p4.project(focalLength, size, panX, panY);
+          final proj3 = p3.project(focalLength, size, _panX, _panY);
+          final proj4 = p4.project(focalLength, size, _panX, _panY);
           canvas.drawLine(proj3, proj4, paint);
         }
       }
@@ -1553,15 +1674,15 @@ class Plot3DPainter extends CustomPainter {
         if (points3D.length >= 2) {
           final p1 = points3D[0].rotateZ(rotationZ).rotateX(rotationX);
           final p2 = points3D[1].rotateZ(rotationZ).rotateX(rotationX);
-          final proj1 = p1.project(focalLength, size, panX, panY);
-          final proj2 = p2.project(focalLength, size, panX, panY);
+          final proj1 = p1.project(focalLength, size, _panX, _panY);
+          final proj2 = p2.project(focalLength, size, _panX, _panY);
           canvas.drawLine(proj1, proj2, paint);
         }
         if (points3D.length >= 4) {
           final p3 = points3D[2].rotateZ(rotationZ).rotateX(rotationX);
           final p4 = points3D[3].rotateZ(rotationZ).rotateX(rotationX);
-          final proj3 = p3.project(focalLength, size, panX, panY);
-          final proj4 = p4.project(focalLength, size, panX, panY);
+          final proj3 = p3.project(focalLength, size, _panX, _panY);
+          final proj4 = p4.project(focalLength, size, _panX, _panY);
           canvas.drawLine(proj3, proj4, paint);
         }
       }
@@ -1747,15 +1868,15 @@ class Plot3DPainter extends CustomPainter {
         if (points3D.length >= 2) {
           final p1 = points3D[0].rotateZ(rotationZ).rotateX(rotationX);
           final p2 = points3D[1].rotateZ(rotationZ).rotateX(rotationX);
-          final proj1 = p1.project(focalLength, size, panX, panY);
-          final proj2 = p2.project(focalLength, size, panX, panY);
+          final proj1 = p1.project(focalLength, size, _panX, _panY);
+          final proj2 = p2.project(focalLength, size, _panX, _panY);
           canvas.drawLine(proj1, proj2, paint);
         }
         if (points3D.length >= 4) {
           final p3 = points3D[2].rotateZ(rotationZ).rotateX(rotationX);
           final p4 = points3D[3].rotateZ(rotationZ).rotateX(rotationX);
-          final proj3 = p3.project(focalLength, size, panX, panY);
-          final proj4 = p4.project(focalLength, size, panX, panY);
+          final proj3 = p3.project(focalLength, size, _panX, _panY);
+          final proj4 = p4.project(focalLength, size, _panX, _panY);
           canvas.drawLine(proj3, proj4, paint);
         }
       }
@@ -1804,8 +1925,8 @@ class Plot3DPainter extends CustomPainter {
       final Point3D p0 = at(t0);
       final Point3D p1 = at(t1);
       final clipped = _clipLineToRect(
-        p0.project(focalLength, size, panX, panY),
-        p1.project(focalLength, size, panX, panY),
+        p0.project(focalLength, size, _panX, _panY),
+        p1.project(focalLength, size, _panX, _panY),
         bounds,
       );
       if (clipped == null) continue;
@@ -2021,8 +2142,8 @@ class Plot3DPainter extends CustomPainter {
     Point3D end,
     Paint paint,
   ) {
-    final startProj = start.project(focalLength, size, panX, panY);
-    final endProj = end.project(focalLength, size, panX, panY);
+    final startProj = start.project(focalLength, size, _panX, _panY);
+    final endProj = end.project(focalLength, size, _panX, _panY);
     final clipped = _clipLineToRect(
       startProj,
       endProj,
@@ -2110,7 +2231,7 @@ class Plot3DPainter extends CustomPainter {
         dir.y * range * arrowAt * scale,
         dir.z * range * arrowAt * scale,
       ).rotateZ(rotationZ).rotateX(rotationX);
-      final arrowProj = arrowPos.project(focalLength, size, panX, panY);
+      final arrowProj = arrowPos.project(focalLength, size, _panX, _panY);
 
       if (_isPointInRect(
         arrowProj,
@@ -2121,7 +2242,7 @@ class Plot3DPainter extends CustomPainter {
           0,
           0,
         ).rotateZ(rotationZ).rotateX(rotationX);
-        final originProj = origin.project(focalLength, size, panX, panY);
+        final originProj = origin.project(focalLength, size, _panX, _panY);
         final direction = Offset(
           arrowProj.dx - originProj.dx,
           arrowProj.dy - originProj.dy,
@@ -2182,7 +2303,7 @@ class Plot3DPainter extends CustomPainter {
           dir.y * t * scale,
           dir.z * t * scale,
         ).rotateZ(rotationZ).rotateX(rotationX);
-        final tickProj = tickPos.project(focalLength, size, panX, panY);
+        final tickProj = tickPos.project(focalLength, size, _panX, _panY);
 
         if (!_isPointInRect(
           tickProj,
@@ -2217,7 +2338,7 @@ class Plot3DPainter extends CustomPainter {
         // One mark straight through the axis. Two marks at right angles read
         // as a small corner sitting beside the line rather than a division
         // of it.
-        final Offset tick1 = tick1End.project(focalLength, size, panX, panY);
+        final Offset tick1 = tick1End.project(focalLength, size, _panX, _panY);
         canvas.drawLine(tickProj + (tickProj - tick1), tick1, tickPaint);
 
         Point3D labelPos;
@@ -2241,7 +2362,7 @@ class Plot3DPainter extends CustomPainter {
           ).rotateZ(rotationZ).rotateX(rotationX);
         }
 
-        final labelProj = labelPos.project(focalLength, size, panX, panY);
+        final labelProj = labelPos.project(focalLength, size, _panX, _panY);
         if (_isPointInRect(
           labelProj,
           Rect.fromLTWH(0, 0, size.width, size.height),
@@ -2496,10 +2617,10 @@ class Plot3DPainter extends CustomPainter {
         final int cc = shadeAt(i, j);
         final int cd = shadeAt(i, j - 1);
 
-        final Offset oa = a.project(focalLength, size, panX, panY);
-        final Offset ob = b.project(focalLength, size, panX, panY);
-        final Offset oc = c.project(focalLength, size, panX, panY);
-        final Offset od = d.project(focalLength, size, panX, panY);
+        final Offset oa = a.project(focalLength, size, _panX, _panY);
+        final Offset ob = b.project(focalLength, size, _panX, _panY);
+        final Offset oc = c.project(focalLength, size, _panX, _panY);
+        final Offset od = d.project(focalLength, size, _panX, _panY);
 
         // Two triangles sharing the a-c diagonal, each with its own depth so
         // a cell can sort against a grid segment passing under it.
@@ -2553,7 +2674,7 @@ class Plot3DPainter extends CustomPainter {
         p.y * scaleY,
         p.z * scaleZ,
       ).rotateZ(rotationZ).rotateX(rotationX);
-      final Offset proj = point.project(focalLength, size, panX, panY);
+      final Offset proj = point.project(focalLength, size, _panX, _panY);
 
       if (prev != null) {
         scene.addLine(prev, proj, paint, (prevDepth! + point.y) / 2);
@@ -2656,8 +2777,8 @@ class Plot3DPainter extends CustomPainter {
         wy,
         alongZ ? wz : 0.0,
       ).rotateZ(rotationZ).rotateX(rotationX);
-      final proj = point.project(focalLength, size, panX, panY);
-      final shadowProj = shadowPoint.project(focalLength, size, panX, panY);
+      final proj = point.project(focalLength, size, _panX, _panY);
+      final shadowProj = shadowPoint.project(focalLength, size, _panX, _panY);
 
       // An asymptote jumps the full width of the box between two samples;
       // joining across it draws a straight line that is not part of the curve.
@@ -2724,7 +2845,7 @@ class Plot3DPainter extends CustomPainter {
     points.sort((a, b) => b.point.y.compareTo(a.point.y));
 
     for (final fp in points) {
-      final proj = fp.point.project(focalLength, size, panX, panY);
+      final proj = fp.point.project(focalLength, size, _panX, _panY);
       if (!_isPointInRect(proj, Rect.fromLTWH(0, 0, size.width, size.height))) {
         continue;
       }
@@ -2884,7 +3005,7 @@ class Plot3DPainter extends CustomPainter {
               ? Point3D(arrow.start.x, arrow.start.y, surfaceZ * scaleZ)
               : arrow.start;
       final startRotated = startPoint.rotateZ(rotationZ).rotateX(rotationX);
-      final startProj = startRotated.project(focalLength, size, panX, panY);
+      final startProj = startRotated.project(focalLength, size, _panX, _panY);
 
       if (!_isPointInRect(
         startProj,
@@ -2899,7 +3020,7 @@ class Plot3DPainter extends CustomPainter {
         startPoint.z + arrow.dz * arrowLength,
       );
       final endRotated = endPoint.rotateZ(rotationZ).rotateX(rotationX);
-      final endProj = endRotated.project(focalLength, size, panX, panY);
+      final endProj = endRotated.project(focalLength, size, _panX, _panY);
 
       final normalized = arrow.magnitude / maxMag;
       final color = plotColormap(normalized);
@@ -3012,7 +3133,7 @@ class Plot3DPainter extends CustomPainter {
     points.sort((a, b) => b.point.y.compareTo(a.point.y));
 
     for (final fp in points) {
-      final proj = fp.point.project(focalLength, size, panX, panY);
+      final proj = fp.point.project(focalLength, size, _panX, _panY);
       if (!_isPointInRect(proj, Rect.fromLTWH(0, 0, size.width, size.height))) {
         continue;
       }
@@ -3059,7 +3180,7 @@ class Plot3DPainter extends CustomPainter {
     final Offset at = Point3D(hit.x * scaleX, hit.y * scaleY, hit.z * scaleZ)
         .rotateZ(rotationZ)
         .rotateX(rotationX)
-        .project(focalLength, size, panX, panY);
+        .project(focalLengthFor(size), size, _panX, _panY);
     if (!at.dx.isFinite || !at.dy.isFinite) return;
 
     // One neutral marker rather than one tinted to the surface's own ramp.

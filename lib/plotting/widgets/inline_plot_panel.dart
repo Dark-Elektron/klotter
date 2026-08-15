@@ -209,7 +209,15 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
         _fieldType = FieldType.vector;
         _is3DFunction = vector.is3D;
         _errorMessage = vector.error;
-        if (_is3DFunction) {
+        if (vector.isParametric) {
+          // A sweep arrives coloured. Its default shading reads the shape but
+          // says nothing about the numbers, and the magnitude is what a
+          // parametric plot is nearly always being looked at for — where the
+          // curve or surface is far from the origin.
+          if (_surfaceMode == SurfaceMode.none) {
+            _surfaceMode = SurfaceMode.magnitude;
+          }
+        } else if (_is3DFunction) {
           _surfaceMode = SurfaceMode.none;
         } else if (_surfaceMode == SurfaceMode.none) {
           _surfaceMode = SurfaceMode.magnitude;

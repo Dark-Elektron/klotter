@@ -2,6 +2,7 @@ import 'dart:math';
 import 'dart:ui';
 
 import '../painters/plot_3d_painter.dart';
+import '../models/view_fit.dart';
 import '../parsers/plot_expression.dart';
 
 /// A point on a surface, in data coordinates, with the line it came from.
@@ -29,7 +30,7 @@ class PlotCamera {
   final double rotationX, rotationZ;
   final double panX, panY;
   final double rangeX, rangeY, rangeZ;
-  final ({double planar, double vertical}) _extents;
+  final ViewFit _extents;
 
   double get scaleX => _extents.planar / rangeX;
   double get scaleY => _extents.planar / rangeY;
@@ -42,11 +43,11 @@ class PlotCamera {
       y * scaleY,
       z * scaleZ,
     );
-    final double scale =
-        Plot3DPainter.focalLength / (Plot3DPainter.focalLength + vy);
+    final double f = Plot3DPainter.focalLengthFor(size);
+    final double scale = f / (f + vy);
     return Offset(
-      size.width / 2 + vx * scale + panX,
-      size.height / 2 - vz * scale + panY,
+      size.width / 2 + vx * scale + panX + _extents.offsetX,
+      size.height / 2 - vz * scale + panY + _extents.offsetY,
     );
   }
 
@@ -75,10 +76,12 @@ class PlotCamera {
   /// [depth] chooses how far along that ray to look. This is the projection
   /// solved for the world point instead of the screen one.
   (double, double, double) unproject(Offset screen, double depth) {
-    final double f = Plot3DPainter.focalLength;
+    final double f = Plot3DPainter.focalLengthFor(size);
     final double inv = (f + depth) / f;
-    final double vx = (screen.dx - size.width / 2 - panX) * inv;
-    final double vz = (size.height / 2 + panY - screen.dy) * inv;
+    final double vx =
+        (screen.dx - size.width / 2 - panX - _extents.offsetX) * inv;
+    final double vz =
+        (size.height / 2 + panY + _extents.offsetY - screen.dy) * inv;
     final (double wx, double wy, double wz) = _toWorld(vx, depth, vz);
     return (wx / scaleX, wy / scaleY, wz / scaleZ);
   }
