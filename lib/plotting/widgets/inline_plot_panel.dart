@@ -589,6 +589,8 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   }
 
   bool _canShowSurface() {
+    // A complex line always has something to colour by, in either view.
+    if (_currentFunction.isComplex) return true;
     if (_fieldType == FieldType.vector) {
       // A parametric surface qualifies whether or not it has a z component:
       // the menu picks what its colours mean, and a flat patch in the plane
@@ -1112,6 +1114,22 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
           const PopupMenuItem(value: SurfaceMode.z, child: Text('Fz')),
         );
       }
+    } else if (_currentFunction.isComplex) {
+      // A complex function has no single height, so "on" is not one thing:
+      // the surface can be coloured by any real reading of it, including the
+      // argument, which goes on the hue wheel rather than a ramp.
+      menuItems.add(
+        const PopupMenuItem(value: SurfaceMode.x, child: Text('Re f')),
+      );
+      menuItems.add(
+        const PopupMenuItem(value: SurfaceMode.y, child: Text('Im f')),
+      );
+      menuItems.add(
+        const PopupMenuItem(value: SurfaceMode.magnitude, child: Text('|f|')),
+      );
+      menuItems.add(
+        const PopupMenuItem(value: SurfaceMode.z, child: Text('arg f')),
+      );
     } else {
       menuItems.add(
         const PopupMenuItem(

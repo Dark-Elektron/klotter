@@ -153,4 +153,42 @@ void main() {
       expect(v.isInitial, isFalse);
     });
   });
+
+  group('colouring by argument', () {
+    testWidgets('uses the hue wheel, not the ramp', (tester) async {
+      await tester.runAsync(() async {
+        // Phase wraps, so a ramp would draw a seam across the surface
+        // everywhere the argument passes pi. On the wheel it comes round, and
+        // z² sweeps the argument twice, so every hue appears on the surface.
+        final data =
+            (await (await render(abs, mode: SurfaceMode.z)).toByteData())!;
+        final Set<int> sectors = <int>{};
+        for (int i = 0; i < 320 * 320; i++) {
+          final int o = i * 4;
+          if (data.getUint8(o + 3) < 200) continue;
+          final HSVColor c = HSVColor.fromColor(
+            Color.fromARGB(
+              255,
+              data.getUint8(o),
+              data.getUint8(o + 1),
+              data.getUint8(o + 2),
+            ),
+          );
+          if (c.saturation < 0.3 || c.value < 0.2) continue;
+          sectors.add((c.hue / 30).floor() % 12);
+        }
+        expect(sectors.length, greaterThan(9), reason: '${sectors.length}');
+      });
+    });
+
+    testWidgets('and is a different picture from colouring by modulus', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final byArg = await render(abs, mode: SurfaceMode.z);
+        final byMod = await render(abs, mode: SurfaceMode.magnitude);
+        expect(await differing(byArg, byMod), greaterThan(3000));
+      });
+    });
+  });
 }

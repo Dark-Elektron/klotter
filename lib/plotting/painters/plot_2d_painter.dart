@@ -122,7 +122,15 @@ class Plot2DPainter extends CustomPainter {
       if (function.isComplex) {
         // Before everything: a complex line is not a curve of x, and sampling
         // it as one gives NaN at every point.
-        if (complexView.showsColouring) _drawDomainColouring(canvas, size);
+        if (complexView.showsColouring) {
+          _drawDomainColouring(canvas, size);
+          // The grid and axes were drawn before this, and domain colouring
+          // fills the window edge to edge, so it painted over them — the plot
+          // came out with no axes at all, only the tick labels that are drawn
+          // later. They go back on top.
+          _drawGrid(canvas, size, toScreenX, toScreenY);
+          _drawAxes(canvas, size, toScreenX, toScreenY);
+        }
         if (complexView.showsPolya) {
           _drawPolyaField(canvas, size, toScreenX, toScreenY);
         }

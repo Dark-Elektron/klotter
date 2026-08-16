@@ -152,12 +152,57 @@ void main() {
       // Just off it, not on it: 1/0 is undefined and the painter leaves a
       // hole there rather than inventing a colour. What has to be bright is
       // the neighbourhood, which is what makes a pole read as a pole.
-      final HSVColor near = await at(image, 0.06, 0.06);
+      // Away from the axes, which are drawn over the colouring and would
+      // otherwise be what got sampled.
+      final HSVColor near = await at(image, 0.3, 0.3);
       expect(near.value, greaterThan(0.75), reason: 'the pole is not bright');
 
       // arg(1/z) = -arg(z), so the colour at i is the one z had at -i.
       final HSVColor up = await at(image, 0, 1);
       expect(hueGap(up.hue, 270), lessThan(25), reason: 'hue ${up.hue}');
+    });
+  });
+
+  testWidgets('the axes survive the colouring', (tester) async {
+    await tester.runAsync(() async {
+      // Domain colouring fills the window edge to edge, and the grid and axes
+      // are drawn before it — so it painted straight over them and the plot
+      // came out with no axes at all, only the tick labels drawn later.
+      final data = (await (await render(identity())).toByteData())!;
+      Color px(int x, int y) {
+        final int o = (y * 240 + x) * 4;
+        return Color.fromARGB(
+          255,
+          data.getUint8(o),
+          data.getUint8(o + 1),
+          data.getUint8(o + 2),
+        );
+      }
+
+      // An axis is a sharp local deviation; the colouring is smooth. So each
+      // point on the axis row is compared against the average of the rows
+      // three pixels either side of it, which cancels the gradient of the
+      // function and leaves only what was drawn on top.
+      //
+      // An earlier version compared the axis row against one ten pixels below
+      // and passed with the redraw removed: for f(z) = z the colour changes
+      // with y, so it was measuring the function rather than the axis.
+      int spikes = 0;
+      for (int x = 20; x < 220; x += 5) {
+        final Color on = px(x, 120);
+        final Color above = px(x, 117);
+        final Color below = px(x, 123);
+        final double gap =
+            (on.r - (above.r + below.r) / 2).abs() +
+            (on.g - (above.g + below.g) / 2).abs() +
+            (on.b - (above.b + below.b) / 2).abs();
+        if (gap > 0.12) spikes++;
+      }
+      expect(
+        spikes,
+        greaterThan(20),
+        reason: 'the axis shows at only $spikes of 40 points',
+      );
     });
   });
 }

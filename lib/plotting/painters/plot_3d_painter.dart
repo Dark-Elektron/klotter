@@ -2647,6 +2647,21 @@ class Plot3DPainter extends CustomPainter {
       for (final Quad quad in built.quads) {
         int shade(Point3D p) {
           if (!byValue) return _quadShade(plain, quad);
+          // Argument goes on the hue wheel, not the ramp. Phase wraps, and a
+          // ramp with different colours at its ends would draw a seam across
+          // the surface everywhere the argument passes pi — the same reason
+          // the 2D colouring uses the wheel. It also means the surface and
+          // the domain colouring of the same function agree.
+          if (surfaceMode == SurfaceMode.z) {
+            final Complex w = function.evaluateComplex(
+              p.x / scaleX,
+              p.y / scaleY,
+            );
+            if (!w.real.isFinite || !w.imag.isFinite) {
+              return _quadShade(plain, quad);
+            }
+            return domainColor(w.phase, 1).toARGB32();
+          }
           final double v = colourAt(p.x / scaleX, p.y / scaleY);
           if (!v.isFinite) return _quadShade(plain, quad);
           return ramp(((v - lowest) / colourSpan).clamp(0.0, 1.0)).toARGB32();
