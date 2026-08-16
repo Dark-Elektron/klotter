@@ -850,11 +850,11 @@ class Plot2DPainter extends CustomPainter {
         final double ux = w.real / mag;
         final double uy = -w.imag / mag;
 
-        // Length carries the modulus, compressed the same way the colouring
-        // compresses it: near a pole an uncompressed arrow would cross the
-        // whole plot and tell you nothing about its neighbours.
-        final double len =
-            arrow * (log(1 + mag) / log(1 + biggest)).clamp(0.25, 1.0);
+        // All the same length. The modulus is already shown by the colouring
+        // underneath and by the spacing of what it flows around; letting it
+        // set the length too made the arrows near a zero too short to read a
+        // direction from, which is the one thing this picture is for.
+        final double len = arrow;
 
         final double sx = toScreenX(xMin + (xMax - xMin) * i / grid);
         final double sy = toScreenY(yMin + (yMax - yMin) * j / grid);

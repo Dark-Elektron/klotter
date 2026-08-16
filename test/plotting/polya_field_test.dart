@@ -204,4 +204,39 @@ void main() {
       expect(divergence.abs(), greaterThan(1), reason: 'div $divergence');
     });
   });
+
+  testWidgets('every arrow is the same length', (tester) async {
+    await tester.runAsync(() async {
+      // The modulus is already shown by the colouring underneath. Letting it
+      // set the length too made the arrows near a zero too short to read a
+      // direction from, which is the one thing the field is for.
+      //
+      // Measured as ink rather than as geometry: for f(z) = z the modulus
+      // runs from nothing at the origin to its largest at the corners, so
+      // length-scaled arrows would put far more of their ink in the outer
+      // half of the plot than in the inner one.
+      final image = await render(
+        identity(),
+        const ComplexView(colouring: false, polya: true),
+      );
+      final data = (await image.toByteData())!;
+
+      int inner = 0, outer = 0;
+      for (int y = 0; y < 240; y++) {
+        for (int x = 0; x < 240; x++) {
+          if (data.getUint8((y * 240 + x) * 4 + 3) < 40) continue;
+          final double dx = (x - 120) / 120, dy = (y - 120) / 120;
+          if (dx * dx + dy * dy < 0.25) {
+            inner++;
+          } else {
+            outer++;
+          }
+        }
+      }
+      // The inner disc is a quarter of the square, so equal-length arrows put
+      // roughly a quarter of the ink there. Scaled ones put almost none.
+      final double share = inner / (inner + outer);
+      expect(share, greaterThan(0.12), reason: 'inner share $share');
+    });
+  });
 }

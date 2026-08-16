@@ -956,6 +956,7 @@ class Plot3DPainter extends CustomPainter {
     PlotExpression parser, {
     int? gridSize,
     double Function(double x, double y)? heightAt,
+    double Function(double x, double y)? valueAt,
   }) {
     gridSize ??= interacting ? _surfaceGridMoving : _surfaceGridStill;
     // Heights are cached: rotating changes where the camera sees the surface
@@ -1004,8 +1005,17 @@ class Plot3DPainter extends CustomPainter {
           continue;
         }
 
-        minZ = min(minZ, z);
-        maxZ = max(maxZ, z);
+        // What the cell is coloured by, which is the height unless told
+        // otherwise. Gathered here, while x and y are still the data point:
+        // the points below are rotated, so nothing downstream can recover
+        // where a corner came from. Colouring a complex surface by reading
+        // the rotated coordinates back gave a smooth wash unrelated to the
+        // function.
+        final double v = valueAt == null ? z : valueAt(x, y);
+        if (v.isFinite) {
+          minZ = min(minZ, v);
+          maxZ = max(maxZ, v);
+        }
 
         row.add(
           Point3D(
@@ -1014,7 +1024,7 @@ class Plot3DPainter extends CustomPainter {
             z * scaleZ,
           ).rotateZ(rotationZ).rotateX(rotationX),
         );
-        zRow.add(z);
+        zRow.add(v);
       }
       points.add(row);
       zValues.add(zRow);
@@ -2598,27 +2608,14 @@ class Plot3DPainter extends CustomPainter {
     if (parts.isEmpty) return;
 
     for (final ({ComplexPart part, int series}) entry in parts) {
-      final built = _surfaceQuads(
-        function,
-        heightAt: (double x, double y) {
-          final Complex w = function.evaluateComplex(x, y);
-          return switch (entry.part) {
-            ComplexPart.real => w.real,
-            ComplexPart.imaginary => w.imag,
-            ComplexPart.modulus => w.magnitude,
-          };
-        },
-      );
-      if (built.quads.isEmpty) continue;
-
       final bool byValue = surfaceMode != SurfaceMode.none;
-      final Color Function(double) ramp = surfaceColormap(entry.series, of: 3);
       final Color plain = _theme.seriesColor(entry.series);
+      final bool byArgument = surfaceMode == SurfaceMode.z;
 
-      // What the colours say, when they say anything: the component chosen in
-      // the surface menu, read at the same point. So the modulus surface can
-      // be coloured by the real part, which is where a zero of Re f sits on
-      // the shape of |f|.
+      // What the colours say: the reading chosen in the surface menu, which
+      // need not be the one the height shows. So |f| can be coloured by the
+      // real part, and where Re f vanishes shows up on the shape of the
+      // modulus — something neither menu says on its own.
       double colourAt(double x, double y) {
         final Complex w = function.evaluateComplex(x, y);
         return switch (surfaceMode) {
@@ -2630,41 +2627,33 @@ class Plot3DPainter extends CustomPainter {
         };
       }
 
-      double lowest = double.infinity, highest = double.negativeInfinity;
-      if (byValue) {
-        for (final Quad q in built.quads) {
-          for (final double v in <double>[
-            colourAt(q.p1.x / scaleX, q.p1.y / scaleY),
-          ]) {
-            if (!v.isFinite) continue;
-            lowest = min(lowest, v);
-            highest = max(highest, v);
-          }
-        }
-      }
-      final double colourSpan = highest > lowest ? highest - lowest : 1.0;
+      final built = _surfaceQuads(
+        function,
+        heightAt: (double x, double y) {
+          final Complex w = function.evaluateComplex(x, y);
+          return switch (entry.part) {
+            ComplexPart.real => w.real,
+            ComplexPart.imaginary => w.imag,
+            ComplexPart.modulus => w.magnitude,
+          };
+        },
+        valueAt: byValue ? colourAt : null,
+      );
+      if (built.quads.isEmpty) continue;
+
+      final Color Function(double) ramp = surfaceColormap(entry.series, of: 3);
+      final double span =
+          built.maxV > built.minV ? built.maxV - built.minV : 1.0;
 
       for (final Quad quad in built.quads) {
-        int shade(Point3D p) {
-          if (!byValue) return _quadShade(plain, quad);
-          // Argument goes on the hue wheel, not the ramp. Phase wraps, and a
+        int shade(double value) {
+          if (!byValue || !value.isFinite) return _quadShade(plain, quad);
+          // Argument goes on the hue wheel, not a ramp. Phase wraps, and a
           // ramp with different colours at its ends would draw a seam across
-          // the surface everywhere the argument passes pi — the same reason
-          // the 2D colouring uses the wheel. It also means the surface and
-          // the domain colouring of the same function agree.
-          if (surfaceMode == SurfaceMode.z) {
-            final Complex w = function.evaluateComplex(
-              p.x / scaleX,
-              p.y / scaleY,
-            );
-            if (!w.real.isFinite || !w.imag.isFinite) {
-              return _quadShade(plain, quad);
-            }
-            return domainColor(w.phase, 1).toARGB32();
-          }
-          final double v = colourAt(p.x / scaleX, p.y / scaleY);
-          if (!v.isFinite) return _quadShade(plain, quad);
-          return ramp(((v - lowest) / colourSpan).clamp(0.0, 1.0)).toARGB32();
+          // the surface everywhere it passes pi — the same reason the 2D
+          // colouring uses the wheel, and it keeps the two views agreeing.
+          if (byArgument) return domainColor(value, 1).toARGB32();
+          return ramp(((value - built.minV) / span).clamp(0.0, 1.0)).toARGB32();
         }
 
         final o1 = quad.p1.project(focalLength, size, _panX, _panY);
@@ -2672,10 +2661,10 @@ class Plot3DPainter extends CustomPainter {
         final o3 = quad.p3.project(focalLength, size, _panX, _panY);
         final o4 = quad.p4.project(focalLength, size, _panX, _panY);
 
-        final int c1 = shade(quad.p1);
-        final int c2 = shade(quad.p2);
-        final int c3 = shade(quad.p3);
-        final int c4 = shade(quad.p4);
+        final int c1 = shade(quad.v1);
+        final int c2 = shade(quad.v2);
+        final int c3 = shade(quad.v3);
+        final int c4 = shade(quad.v4);
 
         scene.addTriangle(
           o1,

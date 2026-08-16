@@ -520,16 +520,16 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
 
   /// One of the complex-view toggles.
   ///
-  /// Deliberately the same shape as the pan and zoom controls beside it: these
-  /// change what is drawn, not how you move around it, but they belong to the
-  /// plot rather than to the expression and read best as part of the same row.
+  /// Square, unrounded and butted against its neighbours, exactly like the
+  /// pan and zoom controls: these were the only overlay buttons with rounded
+  /// corners and gaps between them, which made them read as belonging to
+  /// something else.
   Widget _buildComplexToggle(String label, bool on, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
+        width: _overlayButtonSize,
         height: _overlayButtonSize,
-        constraints: BoxConstraints(minWidth: _overlayButtonSize),
-        padding: const EdgeInsets.symmetric(horizontal: 8),
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color:
@@ -538,15 +538,14 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                   : Colors.black.withValues(alpha: 0.5),
           border: Border.all(
             color: on ? Colors.greenAccent : Colors.white24,
-            width: 1,
+            width: on ? 2 : 1,
           ),
-          borderRadius: BorderRadius.circular(6),
         ),
         child: Text(
           label,
           style: TextStyle(
             color: on ? Colors.greenAccent : Colors.white70,
-            fontSize: 13,
+            fontSize: 12,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -881,12 +880,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                                       ),
                                 ),
                               ])
-                          .map(
-                            (e) => Padding(
-                              padding: const EdgeInsets.only(right: 6),
-                              child: _buildComplexToggle(e.label, e.on, e.tap),
-                            ),
-                          )
+                          .map((e) => _buildComplexToggle(e.label, e.on, e.tap))
                           .toList(),
                 ),
               ),
