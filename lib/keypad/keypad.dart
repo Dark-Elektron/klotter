@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:klotter/help.dart';
+import 'package:klotter/plotting/parsers/plot_expression.dart';
 import 'package:klotter/utils/utils.dart';
 import 'buttons.dart';
 import 'popup_menu_button.dart';
@@ -1503,10 +1504,28 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
 
   List<Widget> _extrasButtons() {
     // ---- pieces, defined once and placed below ----
-    final Widget kI = _extrasAction('i', () {
-      _activeController?.insertCharacter('i');
-      widget.onUpdateMathEditor();
-    });
+    // Long-pressing the imaginary unit reveals z̲ — z with a low line — which
+    // is the complex variable written as one symbol instead of as x + iy.
+    // It belongs on this key because it is the same idea: i is what makes a
+    // line complex, and z̲ is what it is a function of.
+    final Widget kI = _sciMenu(
+      'i',
+      onTap: () {
+        _activeController?.insertCharacter('i');
+        widget.onUpdateMathEditor();
+      },
+      menuItems: [
+        _sciItem(PlotExpression.complexVariable, () {
+          // Inserted a character at a time: the low line is a combining mark
+          // and has to land on the z rather than beside it.
+          _activeController?.insertCharacter('z');
+          _activeController?.insertCharacter(
+            PlotExpression.complexVariableMark,
+          );
+          widget.onUpdateMathEditor();
+        }),
+      ],
+    );
     final Widget kPi = _sciMenu(
       'π',
       menuBackground: Colors.white,

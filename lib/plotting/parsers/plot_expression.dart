@@ -99,6 +99,12 @@ class PlotExpression {
     return false;
   }
 
+  /// The combining low line that turns `z` into the complex variable.
+  static const String complexVariableMark = '̲';
+
+  /// `z̲`, as it is typed and displayed.
+  static const String complexVariable = 'z̲';
+
   /// Words that contain an `i` without meaning the imaginary unit.
   ///
   /// Everything else made of letters is read as a product of single-letter
@@ -127,6 +133,12 @@ class PlotExpression {
   /// ordinary way there is to write a complex number — because the unit there
   /// is followed by the variable it multiplies.
   static bool _textUsesImaginary(String text) {
+    // z with a low line under it: the complex variable written as one symbol
+    // rather than as x + iy. The engine never sees the mark — its tokenizer
+    // drops combining characters, so this arrives as a plain `z`, which in a
+    // complex line is already bound to the point of the plane. All the glyph
+    // has to do is say that the line *is* complex.
+    if (text.contains(complexVariableMark)) return true;
     for (final RegExpMatch m in RegExp(r'[A-Za-z]+').allMatches(text)) {
       final String word = m.group(0)!;
       if (_wordsWithI.contains(word.toLowerCase())) continue;
