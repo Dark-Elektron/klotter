@@ -23,6 +23,7 @@ class PlotViewState {
     this.vMin = 0,
     this.vMax = 1,
     this.surfaceMode,
+    this.complexView,
   });
 
   /// Which view the cell was left showing.
@@ -42,6 +43,12 @@ class PlotViewState {
   /// the user has chosen — including choosing to turn it off — that choice is
   /// theirs and no amount of swiping away and back should overrule it.
   final int? surfaceMode;
+
+  /// Which complex readings are on show, packed, or null if untouched.
+  ///
+  /// Same convention as [surfaceMode]: null means the user has not chosen, so
+  /// a default applies to a newly drawn plot and only to that.
+  final int? complexView;
 
   /// What u and v are swept over. Part of the view rather than of the
   /// expression: the sweep is something you dialled in, and swiping to the
@@ -69,7 +76,8 @@ class PlotViewState {
       uMax == initial.uMax &&
       vMin == initial.vMin &&
       vMax == initial.vMax &&
-      surfaceMode == initial.surfaceMode;
+      surfaceMode == initial.surfaceMode &&
+      complexView == initial.complexView;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     'show3D': show3D,
@@ -89,6 +97,7 @@ class PlotViewState {
     'vMin': vMin,
     'vMax': vMax,
     'surfaceMode': surfaceMode,
+    'complexView': complexView,
   };
 
   /// Restore a view, falling back to the default for anything missing or
@@ -160,6 +169,10 @@ class PlotViewState {
         final int i when i >= 0 => i,
         _ => null,
       },
+      complexView: switch (json['complexView']) {
+        final int i when i >= 0 => i,
+        _ => null,
+      },
     );
   }
 
@@ -181,6 +194,7 @@ class PlotViewState {
     double? vMin,
     double? vMax,
     int? surfaceMode,
+    int? complexView,
   }) {
     return PlotViewState(
       show3D: show3D ?? this.show3D,
@@ -200,6 +214,7 @@ class PlotViewState {
       vMin: vMin ?? this.vMin,
       vMax: vMax ?? this.vMax,
       surfaceMode: surfaceMode ?? this.surfaceMode,
+      complexView: complexView ?? this.complexView,
     );
   }
 }

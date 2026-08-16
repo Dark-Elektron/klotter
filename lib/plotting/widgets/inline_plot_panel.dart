@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import '../models/complex_view.dart';
 import '../models/enums.dart';
 import '../models/plot_view_state.dart';
 import 'package:provider/provider.dart';
@@ -93,6 +94,11 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   /// rebuild is not a default — it is an override that quietly undid turning
   /// the colours off.
   bool _surfaceModeChosen = false;
+
+  /// Which complex readings are showing, and whether that was the user's
+  /// choice rather than the default.
+  ComplexView _complexView = ComplexView.initial;
+  bool _complexViewChosen = false;
   ZoomAxis _zoomAxis = ZoomAxis.free;
 
   final GlobalKey<Plot2DScreenState> _plot2DKey = GlobalKey();
@@ -115,6 +121,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
       vMin: _vRange.min,
       vMax: _vRange.max,
       surfaceMode: _surfaceModeChosen ? _surfaceMode.index : null,
+      complexView: _complexViewChosen ? _complexView.bits : null,
     );
     if (p2 != null) {
       final (xMin, xMax, yMin, yMax) = p2.ranges;
@@ -176,6 +183,11 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     if (savedMode != null && savedMode < SurfaceMode.values.length) {
       _surfaceMode = SurfaceMode.values[savedMode];
       _surfaceModeChosen = true;
+    }
+    final int? savedComplex = widget.initialView.complexView;
+    if (savedComplex != null) {
+      _complexView = ComplexView.fromBits(savedComplex);
+      _complexViewChosen = true;
     }
     _uRange = (min: widget.initialView.uMin, max: widget.initialView.uMax);
     _vRange = (min: widget.initialView.vMin, max: widget.initialView.vMax);
@@ -480,6 +492,62 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     setState(() => _showContour = !_showContour);
   }
 
+  void _toggleComplex({
+    bool? colouring,
+    bool? polya,
+    bool? real,
+    bool? imaginary,
+    bool? modulus,
+  }) {
+    setState(() {
+      _complexView = _complexView.copyWith(
+        colouring: colouring,
+        polya: polya,
+        real: real,
+        imaginary: imaginary,
+        modulus: modulus,
+      );
+      _complexViewChosen = true;
+    });
+    _publishView();
+  }
+
+  /// One of the complex-view toggles.
+  ///
+  /// Deliberately the same shape as the pan and zoom controls beside it: these
+  /// change what is drawn, not how you move around it, but they belong to the
+  /// plot rather than to the expression and read best as part of the same row.
+  Widget _buildComplexToggle(String label, bool on, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: _overlayButtonSize,
+        constraints: BoxConstraints(minWidth: _overlayButtonSize),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color:
+              on
+                  ? Colors.greenAccent.withValues(alpha: 0.3)
+                  : Colors.black.withValues(alpha: 0.5),
+          border: Border.all(
+            color: on ? Colors.greenAccent : Colors.white24,
+            width: 1,
+          ),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: on ? Colors.greenAccent : Colors.white70,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+
   void _setSurfaceMode(SurfaceMode mode) {
     setState(() {
       _surfaceMode = mode;
@@ -605,6 +673,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                       vectorParser: _vectorParser,
                       uRange: _uRange,
                       vRange: _vRange,
+                      complexView: _complexView,
                       showContour: _showContour,
                       surfaceMode: _surfaceMode,
                       zoomAxis: _zoomAxis,
@@ -624,6 +693,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                       vectorParser: _vectorParser,
                       uRange: _uRange,
                       vRange: _vRange,
+                      complexView: _complexView,
                       showContour: _showContour,
                       surfaceMode: _surfaceMode,
                       colors: _colorsNoListen(context),
@@ -744,6 +814,72 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                     _getModeDescription(),
                     style: const TextStyle(color: Colors.white70, fontSize: 11),
                   ),
+                ),
+              ),
+
+            // Bottom left: which readings of a complex function are showing.
+            // Two at once is the useful case — the colouring says what f is
+            // and the arrows say where it is going — so these are toggles
+            // rather than a menu.
+            if (showOverlays && _currentFunction.isComplex)
+              Positioned(
+                left: 8,
+                bottom: _overlayButtonSize + 14,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children:
+                      (_show3D
+                              ? <({String label, bool on, VoidCallback tap})>[
+                                (
+                                  label: 'Re',
+                                  on: _complexView.real,
+                                  tap:
+                                      () => _toggleComplex(
+                                        real: !_complexView.real,
+                                      ),
+                                ),
+                                (
+                                  label: 'Im',
+                                  on: _complexView.imaginary,
+                                  tap:
+                                      () => _toggleComplex(
+                                        imaginary: !_complexView.imaginary,
+                                      ),
+                                ),
+                                (
+                                  label: '|f|',
+                                  on: _complexView.modulus,
+                                  tap:
+                                      () => _toggleComplex(
+                                        modulus: !_complexView.modulus,
+                                      ),
+                                ),
+                              ]
+                              : <({String label, bool on, VoidCallback tap})>[
+                                (
+                                  label: 'arg',
+                                  on: _complexView.colouring,
+                                  tap:
+                                      () => _toggleComplex(
+                                        colouring: !_complexView.colouring,
+                                      ),
+                                ),
+                                (
+                                  label: '↗',
+                                  on: _complexView.polya,
+                                  tap:
+                                      () => _toggleComplex(
+                                        polya: !_complexView.polya,
+                                      ),
+                                ),
+                              ])
+                          .map(
+                            (e) => Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: _buildComplexToggle(e.label, e.on, e.tap),
+                            ),
+                          )
+                          .toList(),
                 ),
               ),
 

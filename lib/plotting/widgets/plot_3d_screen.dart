@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import '../models/complex_view.dart';
 import '../models/enums.dart';
 import '../../utils/app_colors.dart';
 import '../parsers/vector_field_parser.dart';
@@ -28,6 +29,9 @@ class Plot3DScreen extends StatefulWidget {
   final VectorFieldParser? vectorParser;
 
   /// The spans u and v are swept over, when the cell is parametric.
+  /// Which readings of a complex function are on show.
+  final ComplexView complexView;
+
   final ParameterRange uRange;
   final ParameterRange vRange;
   final bool showContour;
@@ -48,6 +52,7 @@ class Plot3DScreen extends StatefulWidget {
     required this.plotMode,
     required this.fieldType,
     this.vectorParser,
+    this.complexView = ComplexView.initial,
     this.uRange = defaultParameterRange,
     this.vRange = defaultParameterRange,
     required this.showContour,
@@ -584,6 +589,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
               child: CustomPaint(
                 size: Size(constraints.maxWidth, constraints.maxHeight),
                 painter: Plot3DPainter(
+                  complexView: widget.complexView,
                   uRange: widget.uRange,
                   vRange: widget.vRange,
                   tracePoint: _tracePoint,

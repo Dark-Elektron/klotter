@@ -3,6 +3,8 @@ import 'dart:ui' show Vertices, VertexMode;
 import 'dart:math';
 import 'package:flutter/material.dart';
 import '../../utils/app_colors.dart';
+import '../../math_engine/math_engine.dart';
+import '../models/complex_view.dart';
 import '../models/enums.dart';
 import '../models/point_3d.dart';
 import '../models/view_fit.dart';
@@ -277,6 +279,9 @@ class Plot3DPainter extends CustomPainter {
   /// True when the cell is a sweep rather than something sampled over space.
   bool get _isParametric => vectorParser?.isParametric ?? false;
 
+  /// Which components of a complex line are on show.
+  final ComplexView complexView;
+
   /// The spans u and v are swept over when the expression is parametric.
   final ParameterRange uRange;
   final ParameterRange vRange;
@@ -313,6 +318,7 @@ class Plot3DPainter extends CustomPainter {
     required this.plotTheme,
     this.uRange = defaultParameterRange,
     this.vRange = defaultParameterRange,
+    this.complexView = ComplexView.initial,
     this.tracePoint,
     this.interacting = false,
   });
@@ -588,6 +594,7 @@ class Plot3DPainter extends CustomPainter {
     // surface, so it owns the floor too — drawing it here as well would leave
     // an un-occluded copy underneath.
     final bool floorDrawnBySurface =
+        function.isComplex ||
         _isParametric ||
         (fieldType == FieldType.scalar &&
             plotMode != PlotMode.field &&
@@ -601,7 +608,11 @@ class Plot3DPainter extends CustomPainter {
     }
 
     // Handle different visualization modes
-    if (_isParametric) {
+    if (function.isComplex) {
+      // Sampled as a complex function over the plane, not as a height of x
+      // and y — which would be NaN everywhere.
+      _drawHeightSurfaces(canvas, size, focalLength);
+    } else if (_isParametric) {
       // Ahead of the field branch for the same reason as in 2D: the notation
       // is shared, and only the variables say whether this is an arrow at
       // every point or one point swept into a curve.
@@ -944,17 +955,29 @@ class Plot3DPainter extends CustomPainter {
   ({List<Quad> quads, double minV, double maxV}) _surfaceQuads(
     PlotExpression parser, {
     int? gridSize,
+    double Function(double x, double y)? heightAt,
   }) {
     gridSize ??= interacting ? _surfaceGridMoving : _surfaceGridStill;
     // Heights are cached: rotating changes where the camera sees the surface
     // from, not the surface, so re-walking the expression tree every frame was
     // wasted work.
-    final List<List<double>> sampled = cachedHeightGrid(
-      parser,
-      rangeX,
-      rangeY,
-      gridSize,
-    );
+    //
+    // [heightAt] steps around the cache as well as around `evaluate`, for the
+    // complex surfaces: the cache is keyed on the expression, and one complex
+    // line yields up to three different surfaces from it.
+    final List<List<double>> sampled =
+        heightAt == null
+            ? cachedHeightGrid(parser, rangeX, rangeY, gridSize)
+            : <List<double>>[
+              for (int i = 0; i <= gridSize; i++)
+                <double>[
+                  for (int j = 0; j <= gridSize; j++)
+                    heightAt(
+                      -rangeX + (2 * rangeX * i / gridSize),
+                      -rangeY + (2 * rangeY * j / gridSize),
+                    ),
+                ],
+            ];
 
     final List<List<Point3D?>> points = <List<Point3D?>>[];
     final List<List<double>> zValues = <List<double>>[];
@@ -1054,7 +1077,12 @@ class Plot3DPainter extends CustomPainter {
   /// none of them ever appeared on screen.
   void _drawHeightSurfaces(Canvas canvas, Size size, double focalLength) {
     final List<PlotExpression> curves = _sheetCurves;
-    if (curves.isEmpty && _lineCurves.isEmpty && !_isParametric) return;
+    if (curves.isEmpty &&
+        _lineCurves.isEmpty &&
+        !_isParametric &&
+        !function.isComplex) {
+      return;
+    }
 
     // The floor joins the same ordered list as the surfaces, so the two
     // occlude each other instead of the surfaces always winning.
@@ -1125,6 +1153,7 @@ class Plot3DPainter extends CustomPainter {
     // curve floats in front of geometry it runs through — the same fault the
     // floor grid had against the surface.
     _addStandingCurvesTo(scene, size, focalLength);
+    _addComplexSurfacesTo(scene, size, focalLength);
     _addParametricSurfaceTo(scene, size, focalLength);
     _addParametricTo(scene, size, focalLength);
 
@@ -2539,6 +2568,125 @@ class Plot3DPainter extends CustomPainter {
       green: base.g * t,
       blue: base.b * t,
     ).toARGB32();
+  }
+
+  /// Which components of a complex line are drawn, and in which order.
+  ///
+  /// Ordered so the palette is stable: turning the real part off must not
+  /// recolour the imaginary one, which is what a list built by filtering would
+  /// do.
+  List<({ComplexPart part, int series})> get _complexSurfaces {
+    final List<({ComplexPart part, int series})> out =
+        <({ComplexPart part, int series})>[];
+    if (complexView.real) out.add((part: ComplexPart.real, series: 0));
+    if (complexView.imaginary) {
+      out.add((part: ComplexPart.imaginary, series: 1));
+    }
+    if (complexView.modulus) out.add((part: ComplexPart.modulus, series: 2));
+    return out;
+  }
+
+  /// Add a height surface for each selected component of a complex line.
+  ///
+  /// One complex function makes up to three surfaces on the same axes — the
+  /// real part, the imaginary part and the modulus — which is why they go
+  /// through the depth scene rather than being drawn one after another: with
+  /// two of them showing, each has to be able to pass through the other.
+  void _addComplexSurfacesTo(_DepthScene scene, Size size, double focalLength) {
+    if (!function.isComplex) return;
+    final List<({ComplexPart part, int series})> parts = _complexSurfaces;
+    if (parts.isEmpty) return;
+
+    for (final ({ComplexPart part, int series}) entry in parts) {
+      final built = _surfaceQuads(
+        function,
+        heightAt: (double x, double y) {
+          final Complex w = function.evaluateComplex(x, y);
+          return switch (entry.part) {
+            ComplexPart.real => w.real,
+            ComplexPart.imaginary => w.imag,
+            ComplexPart.modulus => w.magnitude,
+          };
+        },
+      );
+      if (built.quads.isEmpty) continue;
+
+      final bool byValue = surfaceMode != SurfaceMode.none;
+      final Color Function(double) ramp = surfaceColormap(entry.series, of: 3);
+      final Color plain = _theme.seriesColor(entry.series);
+
+      // What the colours say, when they say anything: the component chosen in
+      // the surface menu, read at the same point. So the modulus surface can
+      // be coloured by the real part, which is where a zero of Re f sits on
+      // the shape of |f|.
+      double colourAt(double x, double y) {
+        final Complex w = function.evaluateComplex(x, y);
+        return switch (surfaceMode) {
+          SurfaceMode.x => w.real,
+          SurfaceMode.y => w.imag,
+          SurfaceMode.magnitude => w.magnitude,
+          SurfaceMode.z => w.phase,
+          SurfaceMode.none => 0,
+        };
+      }
+
+      double lowest = double.infinity, highest = double.negativeInfinity;
+      if (byValue) {
+        for (final Quad q in built.quads) {
+          for (final double v in <double>[
+            colourAt(q.p1.x / scaleX, q.p1.y / scaleY),
+          ]) {
+            if (!v.isFinite) continue;
+            lowest = min(lowest, v);
+            highest = max(highest, v);
+          }
+        }
+      }
+      final double colourSpan = highest > lowest ? highest - lowest : 1.0;
+
+      for (final Quad quad in built.quads) {
+        int shade(Point3D p) {
+          if (!byValue) return _quadShade(plain, quad);
+          final double v = colourAt(p.x / scaleX, p.y / scaleY);
+          if (!v.isFinite) return _quadShade(plain, quad);
+          return ramp(((v - lowest) / colourSpan).clamp(0.0, 1.0)).toARGB32();
+        }
+
+        final o1 = quad.p1.project(focalLength, size, _panX, _panY);
+        final o2 = quad.p2.project(focalLength, size, _panX, _panY);
+        final o3 = quad.p3.project(focalLength, size, _panX, _panY);
+        final o4 = quad.p4.project(focalLength, size, _panX, _panY);
+
+        final int c1 = shade(quad.p1);
+        final int c2 = shade(quad.p2);
+        final int c3 = shade(quad.p3);
+        final int c4 = shade(quad.p4);
+
+        scene.addTriangle(
+          o1,
+          o2,
+          o3,
+          c1,
+          c2,
+          c3,
+          (quad.p1.y + quad.p2.y + quad.p3.y) / 3,
+        );
+        scene.addTriangle(
+          o1,
+          o3,
+          o4,
+          c1,
+          c3,
+          c4,
+          (quad.p1.y + quad.p3.y + quad.p4.y) / 3,
+        );
+      }
+    }
+
+    // The span the colour ramp was built over is not the height span, so the
+    // bar the height surfaces would key is wrong here; suppressed rather than
+    // shown with the wrong numbers.
+    _parametricValueRange = null;
   }
 
   /// Add the patch swept out by u and v.
