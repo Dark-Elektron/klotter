@@ -210,6 +210,11 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   /// cheap readout and the plot is drawn once, on release.
   int? _scrubTarget;
 
+  /// Where the finger went down on the strip, and the timer that decides
+  /// whether staying there means "scrub".
+  double _scrubOrigin = 0;
+  Timer? _holdTimer;
+
   SettingsProvider? _settingsProvider;
   bool _listenerAdded = false;
   Timer? _deleteTimer;
@@ -580,26 +585,47 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
         return GestureDetector(
           key: const ValueKey<String>('plot-swipe-strip'),
           behavior: HitTestBehavior.opaque,
+          // Both behaviours come out of one recogniser rather than two. A
+          // long press and a horizontal drag on the same detector compete in
+          // the gesture arena, and a swipe that begins with even a moment of
+          // stillness loses it: the press timer fires first, the drag is
+          // rejected, and the flick does nothing. Which is exactly what a
+          // real thumb does on a strip this thin — and why flinging it in a
+          // test, where the pointer moves at once, looked fine.
+          //
+          // So the drag owns the gesture throughout, and holding still is
+          // detected here rather than by a rival recogniser.
+          onHorizontalDragStart: (details) {
+            _scrubOrigin = details.localPosition.dx;
+            _holdTimer?.cancel();
+            if (keys.length < 2) return;
+            _holdTimer = Timer(const Duration(milliseconds: 320), () {
+              if (mounted) setState(() => _scrubTarget = current);
+            });
+          },
+          onHorizontalDragUpdate: (details) {
+            final double dx = details.localPosition.dx - _scrubOrigin;
+            if (_scrubTarget != null) {
+              _scrubTo(dx, current, stripWidth, keys.length);
+              return;
+            }
+            // Moved before the hold landed, so this is a swipe after all.
+            if (dx.abs() > 8) _holdTimer?.cancel();
+          },
           onHorizontalDragEnd: (details) {
+            _holdTimer?.cancel();
+            if (_scrubTarget != null) {
+              _commitScrub();
+              return;
+            }
             final v = details.primaryVelocity ?? 0;
             if (v.abs() < 100) return;
             _goToPage(forward: v < 0);
           },
-          onLongPressStart: (_) {
-            if (keys.length < 2) return;
-            setState(() => _scrubTarget = current);
+          onHorizontalDragCancel: () {
+            _holdTimer?.cancel();
+            if (_scrubTarget != null) setState(() => _scrubTarget = null);
           },
-          onLongPressMoveUpdate: (details) {
-            if (_scrubTarget == null) return;
-            _scrubTo(
-              details.localOffsetFromOrigin.dx,
-              current,
-              stripWidth,
-              keys.length,
-            );
-          },
-          onLongPressEnd: (_) => _commitScrub(),
-          onLongPressCancel: () => setState(() => _scrubTarget = null),
           child: Stack(
             // The readout sits above the strip, over the plot it is choosing.
             clipBehavior: Clip.none,

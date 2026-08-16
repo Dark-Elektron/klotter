@@ -97,6 +97,60 @@ void main() {
     expect(state.activeIndex, 0);
   });
 
+  testWidgets('a swipe that starts with a pause still swipes', (tester) async {
+    // The case a fling cannot reach, and the one that was broken. A real
+    // thumb rests on the strip for a moment before moving; a long press
+    // recogniser sharing the detector would claim the gesture in that moment
+    // and the swipe would do nothing. tester.fling moves the pointer at once,
+    // so it never saw this.
+    final settings = await seed(4);
+    addTearDown(settings.dispose);
+    final state = await pump(tester, settings);
+
+    final TestGesture gesture = await tester.startGesture(strip(tester));
+    await tester.pump(const Duration(milliseconds: 120)); // the hesitation
+    // Timestamped, or every move carries the same instant and the velocity
+    // tracker sees a gesture that took no time — which reads as no velocity
+    // at all. moveBy defaults to Duration.zero, and a test written without
+    // this reported a working swipe as broken.
+    Duration t = const Duration(milliseconds: 120);
+    for (int i = 0; i < 6; i++) {
+      t += const Duration(milliseconds: 12);
+      await gesture.moveBy(const Offset(-24, 0), timeStamp: t);
+      await tester.pump(const Duration(milliseconds: 12));
+    }
+    await gesture.up();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(state.activeIndex, 1, reason: 'landed on ${state.activeIndex}');
+  });
+
+  testWidgets('a slow drag with no flick does not change the plot', (
+    tester,
+  ) async {
+    // Below the velocity threshold and never held long enough to scrub, so
+    // it is neither gesture and must do nothing rather than guess.
+    final settings = await seed(4);
+    addTearDown(settings.dispose);
+    final state = await pump(tester, settings);
+
+    final TestGesture gesture = await tester.startGesture(strip(tester));
+    await gesture.moveBy(
+      const Offset(-20, 0),
+      timeStamp: const Duration(milliseconds: 200),
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    await gesture.moveBy(
+      const Offset(-20, 0),
+      timeStamp: const Duration(milliseconds: 400),
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    await gesture.up();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(state.activeIndex, 0);
+  });
+
   testWidgets('holding and dragging runs several plots at once', (
     tester,
   ) async {
@@ -107,8 +161,11 @@ void main() {
     final state = await pump(tester, settings);
 
     final TestGesture gesture = await tester.startGesture(strip(tester));
-    await tester.pump(const Duration(milliseconds: 700)); // long press fires
-    await gesture.moveBy(const Offset(90, 0));
+    await tester.pump(const Duration(milliseconds: 500)); // the hold lands
+    await gesture.moveBy(
+      const Offset(90, 0),
+      timeStamp: const Duration(milliseconds: 520),
+    );
     await tester.pump();
     await gesture.up();
     await tester.pump(const Duration(milliseconds: 500));
@@ -128,8 +185,11 @@ void main() {
     final state = await pump(tester, settings);
 
     final TestGesture gesture = await tester.startGesture(strip(tester));
-    await tester.pump(const Duration(milliseconds: 700));
-    await gesture.moveBy(const Offset(90, 0));
+    await tester.pump(const Duration(milliseconds: 500));
+    await gesture.moveBy(
+      const Offset(90, 0),
+      timeStamp: const Duration(milliseconds: 520),
+    );
     await tester.pump();
 
     expect(state.activeIndex, 0, reason: 'the page moved mid-scrub');
