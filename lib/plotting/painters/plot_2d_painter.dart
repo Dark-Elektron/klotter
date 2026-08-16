@@ -2,6 +2,7 @@ import 'dart:ui' show Vertices, VertexMode;
 import 'dart:math';
 import '../../utils/app_colors.dart';
 import 'package:flutter/material.dart';
+import '../models/complex_view.dart';
 import '../models/enums.dart';
 import '../parsers/plot_expression.dart';
 import '../utils/parametric.dart';
@@ -42,6 +43,10 @@ class Plot2DPainter extends CustomPainter {
   /// colour mode and the theme's series palette.
   final PlotThemeData plotTheme;
 
+  /// Which of the complex views are showing. Ignored unless the line is a
+  /// function of a complex variable.
+  final ComplexView complexView;
+
   /// The spans u and v are swept over when the expression is parametric.
   ///
   /// Unused otherwise — a field is sampled over the window, so it has no
@@ -68,6 +73,7 @@ class Plot2DPainter extends CustomPainter {
     required this.plotTheme,
     this.uRange = defaultParameterRange,
     this.vRange = defaultParameterRange,
+    this.complexView = ComplexView.initial,
   });
 
   @override
@@ -116,7 +122,10 @@ class Plot2DPainter extends CustomPainter {
       if (function.isComplex) {
         // Before everything: a complex line is not a curve of x, and sampling
         // it as one gives NaN at every point.
-        _drawDomainColouring(canvas, size);
+        if (complexView.showsColouring) _drawDomainColouring(canvas, size);
+        if (complexView.showsPolya) {
+          _drawPolyaField(canvas, size, toScreenX, toScreenY);
+        }
       } else if (vectorParser != null && vectorParser!.isParametric) {
         _drawParametric(canvas, toScreenX, toScreenY);
       } else if (fieldType == FieldType.vector && vectorParser != null) {
@@ -777,6 +786,104 @@ class Plot2DPainter extends CustomPainter {
     );
     canvas.drawVertices(vertices, BlendMode.srcOver, Paint());
     vertices.dispose();
+  }
+
+  /// The Pólya vector field of f: the arrows of the *conjugate*, (Re f, −Im f).
+  ///
+  /// The conjugate rather than f itself, which looks like a detail and is the
+  /// entire point. Where f is holomorphic, that field has zero divergence and
+  /// zero curl — so the arrows visibly neither spread out nor swirl, and a
+  /// contour integral of f is the flux and circulation of these arrows. Drawn
+  /// from f directly, the picture has no such reading.
+  ///
+  /// Around a simple zero the arrows converge like a sink; around a pole they
+  /// stream outward. Between them the flow is what a fluid with no sources
+  /// looks like, which is where the picture earns its keep next to the
+  /// colouring: it shows where the function is *going*, not just what it is.
+  void _drawPolyaField(
+    Canvas canvas,
+    Size size,
+    double Function(double) toScreenX,
+    double Function(double) toScreenY,
+  ) {
+    const int grid = 22;
+    final double arrow = min(size.width, size.height) / grid * 0.9;
+
+    // Two passes: the longest arrow sets the scale, so a field is drawn the
+    // same way whatever units it happens to be in.
+    double biggest = 0;
+    final List<List<Complex>> sample = <List<Complex>>[
+      for (int i = 0; i <= grid; i++)
+        <Complex>[
+          for (int j = 0; j <= grid; j++)
+            function.evaluateComplex(
+              xMin + (xMax - xMin) * i / grid,
+              yMin + (yMax - yMin) * j / grid,
+            ),
+        ],
+    ];
+    for (final List<Complex> row in sample) {
+      for (final Complex w in row) {
+        if (w.magnitude.isFinite) {
+          biggest = max(biggest, w.magnitude);
+        }
+      }
+    }
+    if (biggest <= 0) return;
+
+    for (int i = 0; i <= grid; i++) {
+      for (int j = 0; j <= grid; j++) {
+        final Complex w = sample[i][j];
+        final double mag = w.magnitude;
+        if (!mag.isFinite || mag < 1e-12) continue;
+
+        // The conjugate. Screen y already runs the other way from the
+        // imaginary axis, so the sign flip is in the data, not the drawing.
+        final double ux = w.real / mag;
+        final double uy = -w.imag / mag;
+
+        // Length carries the modulus, compressed the same way the colouring
+        // compresses it: near a pole an uncompressed arrow would cross the
+        // whole plot and tell you nothing about its neighbours.
+        final double len =
+            arrow * (log(1 + mag) / log(1 + biggest)).clamp(0.25, 1.0);
+
+        final double sx = toScreenX(xMin + (xMax - xMin) * i / grid);
+        final double sy = toScreenY(yMin + (yMax - yMin) * j / grid);
+        final double ex = sx + ux * len;
+        final double ey = sy - uy * len;
+
+        // Coloured by argument, so an arrow agrees with the colouring
+        // underneath it rather than competing with it.
+        final Paint paint =
+            Paint()
+              ..color = domainColor(w.phase, mag).withValues(alpha: 0.9)
+              ..strokeWidth = 1.6
+              ..strokeCap = StrokeCap.round;
+
+        canvas.drawLine(Offset(sx, sy), Offset(ex, ey), paint);
+
+        final double angle = atan2(-(ey - sy), ex - sx);
+        const double head = 5.0;
+        const double spread = 0.5;
+        canvas.drawLine(
+          Offset(ex, ey),
+          Offset(
+            ex - head * cos(angle - spread),
+            ey + head * sin(angle - spread),
+          ),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(ex, ey),
+          Offset(
+            ex - head * cos(angle + spread),
+            ey + head * sin(angle + spread),
+          ),
+          paint,
+        );
+      }
+    }
   }
 
   /// Cells across the window for domain colouring.
