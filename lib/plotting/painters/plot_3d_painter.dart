@@ -1065,6 +1065,13 @@ class Plot3DPainter extends CustomPainter {
       int shade(double v) =>
           ramp(((v - built.minV) / span).clamp(0.0, 1.0)).toARGB32();
 
+      // Off means one colour, not one ramp. The menu had offered this all
+      // along and the painter ignored it, so a surface was always coloured by
+      // its own height — which the shape already shows.
+      final bool solid = surfaceMode == SurfaceMode.none;
+      final Color plain =
+          curves.length == 1 ? colors.accent : _theme.seriesColor(c);
+
       if (curves.length == 1) {
         soleMin = built.minV;
         soleMax = built.maxV;
@@ -1079,10 +1086,14 @@ class Plot3DPainter extends CustomPainter {
         // Colour per corner, interpolated across the cell. A single colour
         // from the cell average makes each cell a flat block, which reads as
         // banding however fine the grid.
-        final int c1 = shade(quad.v1);
-        final int c2 = shade(quad.v2);
-        final int c3 = shade(quad.v3);
-        final int c4 = shade(quad.v4);
+        // Shaded by facing when solid, so the form still reads. Flat across
+        // the cell rather than averaged at its corners: a height grid hands
+        // its quads over one at a time, with no neighbours to average.
+        final int flat = solid ? _quadShade(plain, quad) : 0;
+        final int c1 = solid ? flat : shade(quad.v1);
+        final int c2 = solid ? flat : shade(quad.v2);
+        final int c3 = solid ? flat : shade(quad.v3);
+        final int c4 = solid ? flat : shade(quad.v4);
 
         // Two triangles sharing the p1-p3 diagonal, each carrying its own
         // depth so a cell can be sorted against a grid segment passing under
@@ -1120,7 +1131,11 @@ class Plot3DPainter extends CustomPainter {
     // A parametric mesh coloured by a value owns the bar: it is the only
     // surface on the axes, and its ramp is the one the numbers belong to.
     final (double, double)? parametric = _parametricValueRange;
-    if (parametric != null) {
+    // A solid surface has no ramp, so a bar of numbers beside it would be
+    // labelling nothing.
+    if (surfaceMode == SurfaceMode.none && parametric == null) {
+      // Nothing to key.
+    } else if (parametric != null) {
       _drawColorbar3D(canvas, size, parametric.$1, parametric.$2);
     } else if (curves.length == 1) {
       if (soleMin != null && soleMax != null) {
@@ -2485,6 +2500,31 @@ class Plot3DPainter extends CustomPainter {
   /// The value range the parametric mesh was coloured over, or null when it
   /// is shaded by its own geometry instead. Read by the colorbar.
   static (double, double)? _parametricValueRange;
+
+  /// [base], lightened or darkened by how squarely a quad faces the viewer.
+  int _quadShade(Color base, Quad quad) {
+    final double ux = quad.p2.x - quad.p1.x;
+    final double uy = quad.p2.y - quad.p1.y;
+    final double uz = quad.p2.z - quad.p1.z;
+    final double vx = quad.p3.x - quad.p1.x;
+    final double vy = quad.p3.y - quad.p1.y;
+    final double vz = quad.p3.z - quad.p1.z;
+    final double nx = uy * vz - uz * vy;
+    final double ny = uz * vx - ux * vz;
+    final double nz = ux * vy - uy * vx;
+    final double len = sqrt(nx * nx + ny * ny + nz * nz);
+    // A degenerate cell has no facing; the mid tone is the honest answer.
+    final double facing = len == 0 ? 0.5 : ny.abs() / len;
+    // Never fully dark: a cell seen edge-on is still surface, and dropping it
+    // to nothing punches a hole along every silhouette.
+    final double t = 0.45 + 0.55 * facing;
+    return Color.from(
+      alpha: 0.95,
+      red: base.r * t,
+      green: base.g * t,
+      blue: base.b * t,
+    ).toARGB32();
+  }
 
   /// Add the patch swept out by u and v.
   ///
