@@ -2,7 +2,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:klotter/help.dart';
-import 'package:klotter/plotting/parsers/plot_expression.dart';
 import 'package:klotter/utils/utils.dart';
 import 'buttons.dart';
 import 'popup_menu_button.dart';
@@ -1504,28 +1503,26 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
 
   List<Widget> _extrasButtons() {
     // ---- pieces, defined once and placed below ----
-    // Long-pressing the imaginary unit reveals z̲ — z with a low line — which
-    // is the complex variable written as one symbol instead of as x + iy.
-    // It belongs on this key because it is the same idea: i is what makes a
-    // line complex, and z̲ is what it is a function of.
-    final Widget kI = _sciMenu(
-      'i',
-      onTap: () {
-        _activeController?.insertCharacter('i');
-        widget.onUpdateMathEditor();
-      },
-      menuItems: [
-        _sciItem(PlotExpression.complexVariable, () {
-          // Inserted a character at a time: the low line is a combining mark
-          // and has to land on the z rather than beside it.
-          _activeController?.insertCharacter('z');
-          _activeController?.insertCharacter(
-            PlotExpression.complexVariableMark,
-          );
-          widget.onUpdateMathEditor();
-        }),
-      ],
-    );
+    // z̲ — z with a low line, for the complex variable — was offered here on
+    // a long press. It is withdrawn until it can be its own node.
+    //
+    // It is two characters inside a literal, so the editor treats it as such:
+    // backspace takes the line off and leaves a bare z, and deleting the
+    // exponent of z̲² takes the whole expression with it. The engine side
+    // stays — a line containing the mark is still read as complex — so this
+    // is one menu away from coming back once the node exists.
+    //
+    // The node is the real fix: a class in math_nodes, a case in the
+    // renderer, the serializer and MathNodeToExpr, and insert/delete handling
+    // in the editor. A single precomposed codepoint (U+1E95, ẕ) would solve
+    // the atomicity on its own, but the tokenizer does not recognise it as a
+    // variable — it comes back with no free variables at all — so that route
+    // needs the same tokenizer work either way.
+    final Widget kI = _extrasAction('i', () {
+      _activeController?.insertCharacter('i');
+      widget.onUpdateMathEditor();
+    });
+
     final Widget kPi = _sciMenu(
       'π',
       menuBackground: Colors.white,

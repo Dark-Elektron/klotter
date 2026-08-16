@@ -1,17 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'dart:ui' as ui;
 
-import 'package:klotter/main.dart';
 import 'package:klotter/plotting/models/complex_view.dart';
+import 'package:klotter/settings/settings_provider.dart';
 import 'package:klotter/plotting/models/enums.dart';
 import 'package:klotter/plotting/painters/plot_3d_painter.dart';
 import 'package:klotter/plotting/utils/plot_theme.dart';
 import 'package:klotter/utils/app_colors.dart';
-import 'package:klotter/settings/settings_provider.dart';
 
 import 'package:klotter/math_renderer/math_nodes.dart';
 import 'package:klotter/plotting/parsers/plot_expression.dart';
@@ -90,45 +87,11 @@ void main() {
     });
   });
 
-  group('on the keypad', () {
-    testWidgets('it is revealed by long-pressing i', (tester) async {
-      // It belongs on that key because it is the same idea: i is what makes a
-      // line complex, and z̲ is what such a line is a function of.
-      SharedPreferences.setMockInitialValues({
-        'walkthrough_completed_v2': true,
-      });
-      final settings = await SettingsProvider.create();
-      addTearDown(settings.dispose);
-
-      tester.view.physicalSize = const Size(400, 900);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-      await tester.pumpWidget(
-        ChangeNotifierProvider<SettingsProvider>.value(
-          value: settings,
-          child: const MaterialApp(home: HomePage()),
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 800));
-
-      // The extras page, where i lives.
-      await tester.fling(
-        find.byType(PageView).last,
-        const Offset(-400, 0),
-        1000,
-      );
-      await tester.pump(const Duration(milliseconds: 600));
-      expect(find.text('i'), findsOneWidget);
-
-      await tester.longPress(find.text('i'));
-      await tester.pump(const Duration(milliseconds: 600));
-      expect(
-        find.text(PlotExpression.complexVariable),
-        findsOneWidget,
-        reason: 'long-pressing i does not offer the complex variable',
-      );
-    });
-  });
+  // NOT ON THE KEYPAD. The long-press that offered z̲ is withdrawn until the
+  // symbol can be its own node: as two characters in a literal it deletes a
+  // character at a time, and removing the exponent of z̲² took the whole
+  // expression. Everything below still holds — the engine reads the mark and
+  // plots it correctly — so this is one menu entry away from returning.
 
   group('it is drawn once', () {
     testWidgets('a complex line is a surface, not also a standing curve', (
