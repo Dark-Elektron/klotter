@@ -27,8 +27,17 @@ void main() {
   PlotExpression saddle() =>
       PlotExpression.compile(<MathNode>[LiteralNode(text: 'x*y')]);
 
-  Future<ui.Image> render(SurfaceMode mode, {int surfaces = 1}) async {
-    final expr = saddle();
+  /// A sphere: an implicit surface, where every point satisfies the same
+  /// equation and so the colouring can only ever come from position.
+  PlotExpression sphere() =>
+      PlotExpression.compile(<MathNode>[LiteralNode(text: 'x^2+y^2+z^2=9')]);
+
+  Future<ui.Image> render(
+    SurfaceMode mode, {
+    int surfaces = 1,
+    PlotExpression? of,
+  }) async {
+    final expr = of ?? saddle();
     final painter = Plot3DPainter(
       function: expr,
       functions: <PlotExpression>[for (int i = 0; i < surfaces; i++) expr],
@@ -167,6 +176,76 @@ void main() {
         if (d < 25 || d > 335) matching++;
       }
       expect(matching, greaterThan(8000), reason: 'only $matching px match');
+    });
+  });
+
+  group('an implicit surface', () {
+    test('is a level set, and plots', () {
+      final e = sphere();
+      expect(e.isValid, isTrue, reason: e.error);
+      expect(e.isLevelSet, isTrue);
+    });
+
+    testWidgets('turning it off changes what is drawn', (tester) async {
+      await tester.runAsync(() async {
+        final a =
+            (await (await render(
+              SurfaceMode.magnitude,
+              of: sphere(),
+            )).toByteData())!;
+        final b =
+            (await (await render(
+              SurfaceMode.none,
+              of: sphere(),
+            )).toByteData())!;
+        int n = 0;
+        for (int i = 0; i < 320 * 320; i++) {
+          final int o = i * 4;
+          if ((a.getUint8(o) - b.getUint8(o)).abs() > 24 ||
+              (a.getUint8(o + 2) - b.getUint8(o + 2)).abs() > 24) {
+            n++;
+          }
+        }
+        // The mesh carries its colours and is cached, so this also proves the
+        // mode reaches the cache key — without that the second render would
+        // reuse the first's triangles, colours and all.
+        expect(n, greaterThan(2000), reason: 'only $n px differ');
+      });
+    });
+
+    testWidgets('off is the series palette, as a height surface is', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        // Counting hues does not transfer here: a sphere spans only part of
+        // the z ramp, so the coloured version already uses few. What matters
+        // is that the solid one is the palette colour every other plot uses.
+        final Color first = PlotThemeData.fromColors(colors).seriesColor(0);
+        final double want = HSVColor.fromColor(first).hue;
+
+        final data =
+            (await (await render(
+              SurfaceMode.none,
+              of: sphere(),
+            )).toByteData())!;
+        int matching = 0;
+        for (int i = 0; i < 320 * 320; i++) {
+          final int o = i * 4;
+          if (data.getUint8(o + 3) < 200) continue;
+          final HSVColor hsv = HSVColor.fromColor(
+            Color.fromARGB(
+              255,
+              data.getUint8(o),
+              data.getUint8(o + 1),
+              data.getUint8(o + 2),
+            ),
+          );
+          if (hsv.saturation < 0.25) continue;
+          final double d = (hsv.hue - want).abs();
+          if (d < 25 || d > 335) matching++;
+        }
+        expect(matching, greaterThan(2000), reason: 'only $matching px match');
+      });
     });
   });
 }

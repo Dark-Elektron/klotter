@@ -279,11 +279,23 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
         (PlotExpression e) => e.usesY || e.isImplicitSurface,
       );
       if (valid.first.isLevelSet) {
-        // Nothing to shade: F only locates the curve or surface, so a heatmap
-        // of it would colour the plot by distance from the answer.
-        _surfaceMode = SurfaceMode.none;
+        // Never F itself: it only locates the curve or surface, so a heatmap
+        // of it would colour the plot by distance from the answer. In 3D
+        // there is height to shade instead, which is what the coloured
+        // setting means for an implicit surface; in 2D there is nothing, so
+        // it stays off. Left alone once the user has picked, either way, so
+        // choosing a solid colour survives the next keystroke.
+        // Keyed on whether the equation reaches into z, not on whether it
+        // mentions y: `x² + y² = 1` is a circle drawn on the floor, and
+        // shading it by height would be shading a line.
+        if (!_surfaceModeChosen) {
+          _surfaceMode =
+              valid.first.isImplicitSurface
+                  ? SurfaceMode.magnitude
+                  : SurfaceMode.none;
+        }
       } else if (!_is3DFunction) {
-        _surfaceMode = SurfaceMode.none;
+        if (!_surfaceModeChosen) _surfaceMode = SurfaceMode.none;
       } else if (_surfaceMode == SurfaceMode.x ||
           _surfaceMode == SurfaceMode.y ||
           _surfaceMode == SurfaceMode.z) {

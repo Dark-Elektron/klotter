@@ -133,9 +133,16 @@ LevelMesh cachedLevelMesh(
   double scaleY,
   double scaleZ,
   int Function(double dataZ) shade,
+  int colouring,
 ) {
   return _meshCache.resolve(
-    plotCacheKey(f, <double>[...bounds, scaleX, scaleY, scaleZ], resolution),
+    plotCacheKey(
+      f,
+      <double>[...bounds, scaleX, scaleY, scaleZ],
+      // The colours are baked into the mesh, so what they were made from is
+      // part of its identity.
+      resolution * 16 + colouring,
+    ),
     () {
       final tris = march();
       final Float32List world = Float32List(tris.length * 9);

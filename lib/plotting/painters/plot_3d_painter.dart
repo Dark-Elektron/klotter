@@ -861,6 +861,7 @@ class Plot3DPainter extends CustomPainter {
   /// whole cost of a drag.
   LevelMesh _levelMeshFor(PlotExpression equation, int index, int of) {
     final Color Function(double) ramp = surfaceColormap(index, of: of);
+    final Color plain = _theme.seriesColor(index);
     return cachedLevelMesh(
       equation,
       <double>[-rangeX, rangeX, -rangeY, rangeY, -rangeZ, rangeZ],
@@ -911,13 +912,24 @@ class Plot3DPainter extends CustomPainter {
       // wall shows through the near one and the shape reads as a body with an
       // inside. A strict inequality, whose own boundary is excluded, is
       // fainter still — the 3D counterpart of the dashed edge in 2D.
+      //
+      // Off means one colour instead, from the same series palette as every
+      // other plot, so an implicit surface sits alongside a height surface
+      // without changing scheme.
       (double z) {
-        final Color base = ramp(((z + rangeZ) / (2 * rangeZ)).clamp(0.0, 1.0));
+        final Color base =
+            surfaceMode == SurfaceMode.none
+                ? plain
+                : ramp(((z + rangeZ) / (2 * rangeZ)).clamp(0.0, 1.0));
         if (!equation.relation.isRegion) return base.toARGB32();
         return base
             .withValues(alpha: equation.relation.includesBoundary ? 0.55 : 0.34)
             .toARGB32();
       },
+      // The mesh is cached, and its colours are baked into it, so the mode
+      // has to be part of what identifies it. Without this, switching the
+      // colouring redrew the same triangles in the colours they already had.
+      surfaceMode.index,
     );
   }
 
