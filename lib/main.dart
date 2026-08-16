@@ -507,7 +507,9 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     // Same feel as the keypad's page transition.
     _pageViewController.animateToPage(
       position,
-      duration: const Duration(milliseconds: 300),
+      // Brisk. This is a step between two plots, not a journey, and at
+      // 300 ms it read as the app thinking rather than as a page moving.
+      duration: const Duration(milliseconds: 180),
       curve: Curves.easeOutCubic,
     );
   }
@@ -556,7 +558,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   /// not written.
   Widget _scrubReadout(AppColors colors, List<int> keys, int target) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.78),
         borderRadius: BorderRadius.circular(10),
@@ -565,7 +567,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
         '${target + 1} / ${keys.length}',
         style: TextStyle(
           color: colors.accent,
-          fontSize: 22,
+          fontSize: 14,
           fontWeight: FontWeight.w600,
         ),
       ),
@@ -599,7 +601,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
             _scrubOrigin = details.localPosition.dx;
             _holdTimer?.cancel();
             if (keys.length < 2) return;
-            _holdTimer = Timer(const Duration(milliseconds: 320), () {
+            _holdTimer = Timer(const Duration(milliseconds: 420), () {
               if (mounted) setState(() => _scrubTarget = current);
             });
           },
@@ -610,6 +612,9 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
               return;
             }
             // Moved before the hold landed, so this is a swipe after all.
+            // Generous on both counts: a thumb rarely holds perfectly still,
+            // and a slow swipe turning into a scrub is the more annoying of
+            // the two mistakes — the page then waits for the finger to lift.
             if (dx.abs() > 8) _holdTimer?.cancel();
           },
           onHorizontalDragEnd: (details) {
