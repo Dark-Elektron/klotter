@@ -91,7 +91,7 @@ class PlotExpression {
   static bool usesImaginaryUnit(List<MathNode> nodes) {
     for (final MathNode n in nodes) {
       if (n is ComplexNode) return true;
-      if (n is LiteralNode && _bareImaginary.hasMatch(n.text)) return true;
+      if (n is LiteralNode && _textUsesImaginary(n.text)) return true;
       for (final List<MathNode> child in _childrenOf(n)) {
         if (usesImaginaryUnit(child)) return true;
       }
@@ -99,8 +99,41 @@ class PlotExpression {
     return false;
   }
 
-  /// `i` as its own symbol, not the i in `sin` or `pi`.
-  static final RegExp _bareImaginary = RegExp(r'(?<![A-Za-z])i(?![A-Za-z])');
+  /// Words that contain an `i` without meaning the imaginary unit.
+  ///
+  /// Everything else made of letters is read as a product of single-letter
+  /// variables, which is how the calculator itself reads it: `iy` is i times
+  /// y, and `xiy` is x times i times y.
+  static const Set<String> _wordsWithI = <String>{
+    'sin',
+    'sinh',
+    'asin',
+    'asinh',
+    'ain',
+    'min',
+    'ans',
+    'pi',
+    'ceil',
+    'sign',
+    'li',
+    'ln',
+    'lim',
+  };
+
+  /// Whether [text] uses `i` as the imaginary unit.
+  ///
+  /// Read a word at a time rather than by looking either side of the letter.
+  /// A lookahead for "not followed by a letter" rejected `x + iy` — the most
+  /// ordinary way there is to write a complex number — because the unit there
+  /// is followed by the variable it multiplies.
+  static bool _textUsesImaginary(String text) {
+    for (final RegExpMatch m in RegExp(r'[A-Za-z]+').allMatches(text)) {
+      final String word = m.group(0)!;
+      if (_wordsWithI.contains(word.toLowerCase())) continue;
+      if (word.contains('i')) return true;
+    }
+    return false;
+  }
 
   /// The node lists hanging off [n], for walking a tree of unknown shape.
   static Iterable<List<MathNode>> _childrenOf(MathNode n) sync* {
@@ -261,6 +294,12 @@ class PlotExpression {
     system = inferred;
 
     final Set<String> unknown = free.difference(system.variables.toSet());
+    // `i` is the imaginary unit, not something to sample over. It reaches the
+    // compiler as a variable in some forms — `x+iy` splits into an `i` times a
+    // `y` — and was then rejected as unknown before the complex path could
+    // run, so the most ordinary way of writing a complex number would not
+    // plot at all.
+    if (complex) unknown.remove('i');
     if (unknown.isNotEmpty) {
       final List<String> sorted = unknown.toList()..sort();
       return PlotExpression._(
@@ -522,15 +561,22 @@ class PlotExpression {
 
   /// This line at the point `x + iy` of the complex plane.
   ///
-  /// `z` is the complex variable. `x` and `y` stay bound to the real and
-  /// imaginary parts, so `z·x` means what it looks like rather than failing
-  /// on an unbound name.
+  /// The point of the plane is bound three ways, because there are three
+  /// ordinary ways to write it: `z` for the whole complex number, and `x` and
+  /// `y` for its real and imaginary parts, so `z`, `x+iy` and `x+yi` all mean
+  /// the identity.
+  ///
+  /// This `z` is the complex variable and not the third coordinate. A complex
+  /// line has no third coordinate — the plane is its whole domain.
   Complex evaluateComplex(double x, double y) {
     final Expr? c = _compiled;
     if (c == null) return const Complex(double.nan, double.nan);
     _complexBindings['z'] = Complex(x, y);
     _complexBindings['x'] = Complex(x, 0);
     _complexBindings['y'] = Complex(y, 0);
+    // Bound rather than special-cased, because the compiler hands `i` over as
+    // a variable when it sits against another symbol.
+    _complexBindings['i'] = const Complex(0, 1);
     try {
       return c.evalComplexWith(_complexBindings);
     } catch (_) {
