@@ -70,6 +70,7 @@ class SettingsProvider extends ChangeNotifier {
   bool _isRadians = false;
   bool _hapticFeedback = true;
   bool _soundEffects = false;
+  bool _confirmClearAll = true;
   String _multiplicationSign = '\u00D7'; // Default: ×
   NumberFormat _numberFormat = NumberFormat.automatic;
   bool _useScientificNotationButton = false;
@@ -92,6 +93,14 @@ class SettingsProvider extends ChangeNotifier {
   bool get isRadians => _isRadians;
   bool get hapticFeedback => _hapticFeedback;
   bool get soundEffects => _soundEffects;
+
+  /// Whether ⌧ asks before wiping every cell.
+  ///
+  /// On by default, because the key sits beside undo and redo and looks like
+  /// any other glyph, so the first press is usually an accident. Off is a
+  /// reasonable choice once you know the press is undoable — which is what
+  /// the dialog exists to say.
+  bool get confirmClearAll => _confirmClearAll;
   String get multiplicationSign => _multiplicationSign;
   NumberFormat get numberFormat => _numberFormat;
   bool get useScientificNotationButton => _useScientificNotationButton;
@@ -169,6 +178,7 @@ class SettingsProvider extends ChangeNotifier {
     _isRadians = prefs.getBool('isRadians') ?? false;
     _hapticFeedback = prefs.getBool('hapticFeedback') ?? true;
     _soundEffects = prefs.getBool('soundEffects') ?? false;
+    _confirmClearAll = prefs.getBool('confirmClearAll') ?? true;
     _multiplicationSign = prefs.getString('multiplicationSign') ?? '\u00D7';
     _useScientificNotationButton =
         prefs.getBool('useScientificNotationButton') ?? false;
@@ -266,6 +276,13 @@ class SettingsProvider extends ChangeNotifier {
     _hapticFeedback = value;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('hapticFeedback', value);
+    notifyListeners();
+  }
+
+  Future<void> toggleConfirmClearAll(bool value) async {
+    _confirmClearAll = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('confirmClearAll', value);
     notifyListeners();
   }
 

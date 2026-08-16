@@ -3,6 +3,7 @@ import 'dart:math' show exp;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:klotter/utils/constants.dart';
+import 'package:klotter/widgets/confirm_clear_dialog.dart';
 import 'package:klotter/utils/texture_generator.dart';
 import 'package:provider/provider.dart';
 import 'settings/settings_provider.dart';
@@ -1340,6 +1341,26 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
+  /// Ask first, unless the user has said not to.
+  ///
+  /// The gate is kept separate from [_clearAllDisplays] so the clearing itself
+  /// is untouched — including the `_saveAppStateForUndo()` on its first line,
+  /// which is what makes the dialog's promise true.
+  Future<void> _confirmClearAllDisplays() async {
+    final SettingsProvider settings = context.read<SettingsProvider>();
+    if (!settings.confirmClearAll) {
+      _clearAllDisplays();
+      return;
+    }
+    final ClearAllChoice? choice = await showConfirmClearDialog(context);
+    if (choice == null || !choice.confirmed) return;
+    // Only once they have gone through with it: ticking the box and then
+    // cancelling is not an instruction to stop warning them.
+    if (choice.dontAskAgain) await settings.toggleConfirmClearAll(false);
+    if (!mounted) return;
+    _clearAllDisplays();
+  }
+
   void _clearAllDisplays() {
     _saveAppStateForUndo();
 
@@ -1795,7 +1816,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               _variableSystem = system;
                             });
                           },
-                          onClearAllDisplays: _clearAllDisplays,
+                          onClearAllDisplays: _confirmClearAllDisplays,
                           onSetState: () => setState(() {}),
                           onClearSelectionOverlay: _clearAllSelectionOverlays,
                           canUndoAppState: canUndoAppState,

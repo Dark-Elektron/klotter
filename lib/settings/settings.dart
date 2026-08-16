@@ -143,6 +143,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       activeColor: activeColor,
                       activeTrackColor: activeTrackColor,
                     ),
+                    const SizedBox(height: 12),
+                    // The way back from ticking "Don't ask again" in the
+                    // clear-all dialog. Without it that tick is permanent.
+                    _buildSwitchRow(
+                      label: 'Confirm before clearing all',
+                      colors: colors,
+                      activeColor: activeColor,
+                      activeTrackColor: activeTrackColor,
+                      value: settings.confirmClearAll,
+                      onChanged: settings.toggleConfirmClearAll,
+                    ),
                   ],
                 ),
               ],
@@ -750,13 +761,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required AppColors colors,
     required Color activeColor,
     required Color activeTrackColor,
+  }) => _buildSwitchRow(
+    label: 'Haptic Feedback',
+    colors: colors,
+    activeColor: activeColor,
+    activeTrackColor: activeTrackColor,
+    value: settings.hapticFeedback,
+    onChanged: settings.toggleHapticFeedback,
+  );
+
+  /// One labelled switch, styled like the rest of the settings rows.
+  Widget _buildSwitchRow({
+    required String label,
+    required AppColors colors,
+    required Color activeColor,
+    required Color activeTrackColor,
+    required bool value,
+    required ValueChanged<bool> onChanged,
   }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Expanded(
           child: Text(
-            'Haptic Feedback',
+            label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(color: colors.textPrimary, fontSize: 16),
@@ -767,8 +795,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           activeTrackColor: activeTrackColor,
           inactiveThumbColor: colors.textSecondary.withValues(alpha: 0.5),
           inactiveTrackColor: colors.divider.withValues(alpha: 0.3),
-          value: settings.hapticFeedback,
-          onChanged: settings.toggleHapticFeedback,
+          value: value,
+          onChanged: onChanged,
         ),
       ],
     );
