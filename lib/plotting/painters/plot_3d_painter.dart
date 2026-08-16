@@ -980,13 +980,17 @@ class Plot3DPainter extends CustomPainter {
                 ],
             ];
 
-    final List<List<Point3D?>> points = <List<Point3D?>>[];
+    // Held in data coordinates until the cell is cut, because the cut is
+    // against a plane in z and rotating first would hide where that is.
+    final List<List<({double x, double y, double z, double v})?>> points =
+        <List<({double x, double y, double z, double v})?>>[];
     final List<List<double>> zValues = <List<double>>[];
     double minZ = double.infinity;
     double maxZ = double.negativeInfinity;
 
     for (int i = 0; i <= gridSize; i++) {
-      final List<Point3D?> row = <Point3D?>[];
+      final List<({double x, double y, double z, double v})?> row =
+          <({double x, double y, double z, double v})?>[];
       final List<double> zRow = <double>[];
       for (int j = 0; j <= gridSize; j++) {
         final x = -rangeX + (2 * rangeX * i / gridSize);
@@ -997,12 +1001,12 @@ class Plot3DPainter extends CustomPainter {
           zRow.add(double.nan);
           continue;
         }
-        // Outside the z window the surface is held at the wall rather than
-        // dropped. Dropping it left the cells straddling the boundary with
-        // some corners and not others, and the edge came out as a row of
-        // teeth whose size was the grid spacing — an artefact of where the
-        // samples happened to fall, not anything about the function.
-        final double drawnZ = z.clamp(-rangeZ, rangeZ);
+        // The true height is kept, however far outside the window it is.
+        // Where the surface leaves the box is decided per cell below, by
+        // cutting it at the crossing — dropping whole cells left teeth the
+        // size of the grid, and holding them at the wall turned the overflow
+        // into a flat lid, which is worse: a cone came out with its point cut
+        // off square.
 
         // What the cell is coloured by, which is the height unless told
         // otherwise. Gathered here, while x and y are still the data point:
@@ -1016,13 +1020,7 @@ class Plot3DPainter extends CustomPainter {
           maxZ = max(maxZ, v);
         }
 
-        row.add(
-          Point3D(
-            x * scaleX,
-            y * scaleY,
-            drawnZ * scaleZ,
-          ).rotateZ(rotationZ).rotateX(rotationX),
-        );
+        row.add((x: x, y: y, z: z, v: v));
         zRow.add(v);
       }
       points.add(row);
@@ -1036,36 +1034,102 @@ class Plot3DPainter extends CustomPainter {
     if (minZ == maxZ) maxZ = minZ + 1;
 
     final List<Quad> quads = <Quad>[];
+
+    /// One corner, ready to be cut against the walls.
+    Point3D world(({double x, double y, double z, double v}) c) => Point3D(
+      c.x * scaleX,
+      c.y * scaleY,
+      c.z * scaleZ,
+    ).rotateZ(rotationZ).rotateX(rotationX);
+
+    /// Sutherland–Hodgman against one wall, in data space.
+    ///
+    /// A corner outside is replaced by the point where its edge crosses, so
+    /// the surface ends exactly where it leaves the box: no teeth, and no lid
+    /// either. A convex cell stays convex, so the result fans safely.
+    List<({double x, double y, double z, double v})> clip(
+      List<({double x, double y, double z, double v})> poly,
+      bool keepBelow,
+      double limit,
+    ) {
+      if (poly.isEmpty) return poly;
+      bool inside(({double x, double y, double z, double v}) c) =>
+          keepBelow ? c.z <= limit : c.z >= limit;
+
+      final List<({double x, double y, double z, double v})> out =
+          <({double x, double y, double z, double v})>[];
+      for (int k = 0; k < poly.length; k++) {
+        final a = poly[k];
+        final b = poly[(k + 1) % poly.length];
+        final bool aIn = inside(a);
+        final bool bIn = inside(b);
+        if (aIn) out.add(a);
+        if (aIn != bIn) {
+          final double t = (limit - a.z) / (b.z - a.z);
+          out.add((
+            x: a.x + (b.x - a.x) * t,
+            y: a.y + (b.y - a.y) * t,
+            z: limit,
+            v: a.v + (b.v - a.v) * t,
+          ));
+        }
+      }
+      return out;
+    }
+
     for (int i = 0; i < gridSize; i++) {
       for (int j = 0; j < gridSize; j++) {
-        final p1 = points[i][j];
-        final p2 = points[i + 1][j];
-        final p3 = points[i + 1][j + 1];
-        final p4 = points[i][j + 1];
+        final c1 = points[i][j];
+        final c2 = points[i + 1][j];
+        final c3 = points[i + 1][j + 1];
+        final c4 = points[i][j + 1];
 
-        if (p1 == null || p2 == null || p3 == null || p4 == null) continue;
+        // A missing corner is undefined, not merely out of view, so the cell
+        // is dropped rather than cut — there is nothing to cut it against.
+        if (c1 == null || c2 == null || c3 == null || c4 == null) continue;
 
-        final avgY = (p1.y + p2.y + p3.y + p4.y) / 4;
-        final avgValue =
-            (zValues[i][j] +
-                zValues[i + 1][j] +
-                zValues[i + 1][j + 1] +
-                zValues[i][j + 1]) /
-            4;
-        quads.add(
-          Quad(
-            p1,
-            p2,
-            p3,
-            p4,
-            avgY,
-            avgValue,
-            v1: zValues[i][j],
-            v2: zValues[i + 1][j],
-            v3: zValues[i + 1][j + 1],
-            v4: zValues[i][j + 1],
-          ),
-        );
+        List<({double x, double y, double z, double v})> poly =
+            <({double x, double y, double z, double v})>[c1, c2, c3, c4];
+
+        // Only cut cells that actually straddle a wall; the vast majority do
+        // not, and this keeps them on the cheap path.
+        final bool straddles =
+            poly.any((c) => c.z > rangeZ || c.z < -rangeZ) &&
+            poly.any((c) => c.z <= rangeZ && c.z >= -rangeZ);
+        if (poly.every((c) => c.z > rangeZ) ||
+            poly.every((c) => c.z < -rangeZ)) {
+          continue;
+        }
+        if (straddles) {
+          poly = clip(poly, true, rangeZ);
+          poly = clip(poly, false, -rangeZ);
+          if (poly.length < 3) continue;
+        }
+
+        // Fanned from the first corner. A clipped cell has three to six
+        // corners and is still convex, so a fan covers it without overlap.
+        for (int k = 1; k + 1 < poly.length; k++) {
+          final a = poly[0];
+          final b = poly[k];
+          final d = poly[k + 1];
+          final Point3D pa = world(a);
+          final Point3D pb = world(b);
+          final Point3D pd = world(d);
+          quads.add(
+            Quad(
+              pa,
+              pb,
+              pd,
+              pd,
+              (pa.y + pb.y + pd.y) / 3,
+              (a.v + b.v + d.v) / 3,
+              v1: a.v,
+              v2: b.v,
+              v3: d.v,
+              v4: d.v,
+            ),
+          );
+        }
       }
     }
 
