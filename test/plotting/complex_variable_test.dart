@@ -3,7 +3,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'dart:ui' as ui;
+
 import 'package:klotter/main.dart';
+import 'package:klotter/plotting/models/complex_view.dart';
+import 'package:klotter/plotting/models/enums.dart';
+import 'package:klotter/plotting/painters/plot_3d_painter.dart';
+import 'package:klotter/plotting/utils/plot_theme.dart';
+import 'package:klotter/utils/app_colors.dart';
 import 'package:klotter/settings/settings_provider.dart';
 
 import 'package:klotter/math_renderer/math_nodes.dart';
@@ -120,6 +127,108 @@ void main() {
         findsOneWidget,
         reason: 'long-pressing i does not offer the complex variable',
       );
+    });
+  });
+
+  group('it is drawn once', () {
+    testWidgets('a complex line is a surface, not also a standing curve', (
+      tester,
+    ) async {
+      // Its free variable is z, which every other path reads as the third
+      // coordinate — so z̲ came out drawn twice, once correctly as a surface
+      // and once as a yellow line up the z axis.
+      await tester.runAsync(() async {
+        final AppColors colors = AppColors.fromType(ThemeType.classic);
+        final e = compile(zc);
+
+        Future<int> inked(bool complexView) async {
+          final painter = Plot3DPainter(
+            function: e,
+            functions: <PlotExpression>[e],
+            is3DFunction: true,
+            rotationX: 0.6,
+            rotationZ: 0.8,
+            rangeX: 5,
+            rangeY: 5,
+            rangeZ: 5,
+            panX: 0,
+            panY: 0,
+            plotMode: PlotMode.function,
+            fieldType: FieldType.scalar,
+            showContour: false,
+            surfaceMode: SurfaceMode.none,
+            colors: colors,
+            plotTheme: PlotThemeData.fromColors(colors),
+            complexView:
+                complexView
+                    ? const ComplexView()
+                    : const ComplexView(modulus: false),
+          );
+          final r = ui.PictureRecorder();
+          painter.paint(Canvas(r), const Size(320, 320));
+          final img = await r.endRecording().toImage(320, 320);
+          final data = (await img.toByteData())!;
+          int n = 0;
+          for (int i = 0; i < 320 * 320; i++) {
+            if (data.getUint8(i * 4 + 3) > 200) n++;
+          }
+          return n;
+        }
+
+        // With every component switched off there is nothing of the function
+        // left to draw...
+        final int bare = await inked(false);
+        final int withSurface = await inked(true);
+        expect(
+          withSurface,
+          greaterThan(bare + 3000),
+          reason: 'the surface is not drawn: $withSurface vs $bare',
+        );
+
+        // ...and in particular no standing curve. Counted by its own colour
+        // rather than by total ink: a 3px line is a few hundred pixels and
+        // disappears into the floor grid, so an ink comparison passed with
+        // the guard removed.
+        final Color accent = colors.accent;
+        final painter = Plot3DPainter(
+          function: e,
+          functions: <PlotExpression>[e],
+          is3DFunction: true,
+          rotationX: 0.6,
+          rotationZ: 0.8,
+          rangeX: 5,
+          rangeY: 5,
+          rangeZ: 5,
+          panX: 0,
+          panY: 0,
+          plotMode: PlotMode.function,
+          fieldType: FieldType.scalar,
+          showContour: false,
+          surfaceMode: SurfaceMode.none,
+          colors: colors,
+          plotTheme: PlotThemeData.fromColors(colors),
+          complexView: const ComplexView(modulus: false),
+        );
+        final r = ui.PictureRecorder();
+        painter.paint(Canvas(r), const Size(320, 320));
+        final data =
+            (await (await r.endRecording().toImage(320, 320)).toByteData())!;
+        int curveish = 0;
+        for (int i = 0; i < 320 * 320; i++) {
+          final int o = i * 4;
+          if (data.getUint8(o + 3) < 200) continue;
+          if ((data.getUint8(o) - accent.r * 255).abs() < 40 &&
+              (data.getUint8(o + 1) - accent.g * 255).abs() < 40 &&
+              (data.getUint8(o + 2) - accent.b * 255).abs() < 40) {
+            curveish++;
+          }
+        }
+        expect(
+          curveish,
+          lessThan(60),
+          reason: '$curveish px of standing curve remain',
+        );
+      });
     });
   });
 }

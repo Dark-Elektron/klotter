@@ -3018,6 +3018,10 @@ class Plot3DPainter extends CustomPainter {
   }
 
   void _addStandingCurvesTo(_DepthScene scene, Size size, double focalLength) {
+    // A complex line is drawn as its component surfaces, not as a curve. Its
+    // free variable is z, which every other path reads as the third
+    // coordinate — so z̲ was drawn twice, once correctly as a surface and once
+    // as a standing line up the z axis.
     final List<PlotExpression> curves = _lineCurves;
     for (int c = 0; c < curves.length; c++) {
       _addOneStandingCurveTo(scene, size, focalLength, curves[c], c, curves);
