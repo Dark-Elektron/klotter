@@ -1015,7 +1015,13 @@ class Plot3DPainter extends CustomPainter {
         // the rotated coordinates back gave a smooth wash unrelated to the
         // function.
         final double v = valueAt == null ? z : valueAt(x, y);
-        if (v.isFinite) {
+        // Only what is on screen counts toward the colour range, which is the
+        // invariant this method's own doc states and which the clipping broke
+        // by taking the range before the window was applied. |f| of (x+yi)²
+        // reaches 50 at the corners of a ±5 floor while only the first 5 of
+        // that is inside the box, so the whole visible surface landed in the
+        // bottom tenth of the ramp and came out uniformly blue.
+        if (v.isFinite && z >= -rangeZ && z <= rangeZ) {
           minZ = min(minZ, v);
           maxZ = max(maxZ, v);
         }
