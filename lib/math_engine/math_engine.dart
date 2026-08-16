@@ -1980,7 +1980,7 @@ class Complex {
   final double real;
   final double imag;
 
-  Complex(this.real, this.imag);
+  const Complex(this.real, this.imag);
 
   Complex operator +(Complex other) =>
       Complex(real + other.real, imag + other.imag);

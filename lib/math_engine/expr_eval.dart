@@ -36,6 +36,23 @@ extension ExprNumericEval on Expr {
     return out;
   }
 
+  /// True when this expression involves the imaginary unit anywhere.
+  ///
+  /// How a line is recognised as a complex function: [evalWith] returns NaN
+  /// for [ImaginaryExpr] because it has nowhere to put the imaginary part, so
+  /// an expression this is true of cannot be sampled as a real one at all.
+  bool get usesImaginaryUnit => _usesImaginary(this);
+
+  /// This expression over the complex numbers.
+  ///
+  /// The same walk as [evalWith] in [Complex] arithmetic. Kept as a separate
+  /// traversal rather than making the real one generic: the real path is the
+  /// hot one — marching squares alone asks for tens of thousands of values a
+  /// frame — and boxing every intermediate to carry an imaginary part that is
+  /// always zero would be paid on every one of them.
+  Complex evalComplexWith(Map<String, Complex> bindings) =>
+      _evalComplexWith(this, bindings);
+
   /// Numeric value of this expression with [bindings] substituted for its free
   /// variables.
   ///
@@ -242,4 +259,226 @@ bool _collectedFreeVarsEmpty(Expr expr) {
   final Set<String> out = <String>{};
   _collectFreeVars(expr, out);
   return out.isEmpty;
+}
+
+// ============================================================
+// COMPLEX EVALUATION
+//
+// Mirrors _evalWith case for case. Where the two differ it is because the
+// complex answer is the more general one — `sqrt(-1)` is `i` here and NaN
+// there, and `log` of a negative number has a value rather than none.
+// ============================================================
+
+bool _usesImaginary(Expr expr) {
+  if (expr is ImaginaryExpr) return true;
+  if (expr is SumExpr) return expr.terms.any(_usesImaginary);
+  if (expr is ProdExpr) return expr.factors.any(_usesImaginary);
+  if (expr is PowExpr) {
+    return _usesImaginary(expr.base) || _usesImaginary(expr.exponent);
+  }
+  if (expr is DivExpr) {
+    return _usesImaginary(expr.numerator) || _usesImaginary(expr.denominator);
+  }
+  if (expr is RootExpr) {
+    return _usesImaginary(expr.radicand) || _usesImaginary(expr.index);
+  }
+  if (expr is LogExpr) {
+    return _usesImaginary(expr.argument) ||
+        (!expr.isNaturalLog && _usesImaginary(expr.base));
+  }
+  if (expr is AbsExpr) return _usesImaginary(expr.operand);
+  if (expr is TrigExpr) return _usesImaginary(expr.argument);
+  return false;
+}
+
+const Complex _zero = Complex(0, 0);
+const Complex _one = Complex(1, 0);
+
+Complex _evalComplexWith(Expr expr, Map<String, Complex> b) {
+  if (expr is IntExpr) return Complex(expr.value.toDouble(), 0);
+  if (expr is FracExpr) {
+    return Complex(expr.numerator.value / expr.denominator.value, 0);
+  }
+  if (expr is ImaginaryExpr) return const Complex(0, 1);
+  if (expr is ConstExpr) return Complex(expr.toDouble(), 0);
+
+  if (expr is VarExpr) {
+    final Complex? v = b[expr.name];
+    if (v == null) throw UnboundVariableError(expr.name);
+    return v;
+  }
+
+  if (expr is SumExpr) {
+    Complex sum = _zero;
+    for (final Expr t in expr.terms) {
+      sum = sum + _evalComplexWith(t, b);
+    }
+    return sum;
+  }
+
+  if (expr is ProdExpr) {
+    Complex prod = _one;
+    for (final Expr f in expr.factors) {
+      prod = prod * _evalComplexWith(f, b);
+    }
+    return prod;
+  }
+
+  if (expr is PowExpr) {
+    return complexPow(
+      _evalComplexWith(expr.base, b),
+      _evalComplexWith(expr.exponent, b),
+    );
+  }
+
+  if (expr is RootExpr) {
+    final Complex r = _evalComplexWith(expr.radicand, b);
+    final Complex n = _evalComplexWith(expr.index, b);
+    if (n.imag == 0 && n.real == 2) return complexSqrt(r);
+    return complexPow(r, _one / n);
+  }
+
+  if (expr is LogExpr) {
+    final Complex a = complexLog(_evalComplexWith(expr.argument, b));
+    if (expr.isNaturalLog) return a;
+    return a / complexLog(_evalComplexWith(expr.base, b));
+  }
+
+  if (expr is DivExpr) {
+    return _evalComplexWith(expr.numerator, b) /
+        _evalComplexWith(expr.denominator, b);
+  }
+
+  // |z| is real, so it comes back with a zero imaginary part rather than
+  // dropping out of the complex world entirely.
+  if (expr is AbsExpr) {
+    return Complex(_evalComplexWith(expr.operand, b).magnitude, 0);
+  }
+
+  if (expr is TrigExpr) return _evalComplexTrig(expr, b);
+
+  // Anything else — permutations, sums over an index, a derivative — has no
+  // complex meaning here. NaN rather than a wrong number.
+  return const Complex(double.nan, double.nan);
+}
+
+Complex _evalComplexTrig(TrigExpr expr, Map<String, Complex> b) {
+  final Complex z = _evalComplexWith(expr.argument, b);
+  switch (expr.func) {
+    case TrigFunc.sin:
+      // sin(x + iy) = sin x cosh y + i cos x sinh y
+      return Complex(
+        math.sin(z.real) * _cosh(z.imag),
+        math.cos(z.real) * _sinh(z.imag),
+      );
+    case TrigFunc.cos:
+      return Complex(
+        math.cos(z.real) * _cosh(z.imag),
+        -math.sin(z.real) * _sinh(z.imag),
+      );
+    case TrigFunc.tan:
+      return _evalComplexTrigOf(TrigFunc.sin, z) /
+          _evalComplexTrigOf(TrigFunc.cos, z);
+    case TrigFunc.sinh:
+      return Complex(
+        _sinh(z.real) * math.cos(z.imag),
+        _cosh(z.real) * math.sin(z.imag),
+      );
+    case TrigFunc.cosh:
+      return Complex(
+        _cosh(z.real) * math.cos(z.imag),
+        _sinh(z.real) * math.sin(z.imag),
+      );
+    case TrigFunc.tanh:
+      return _evalComplexTrigOf(TrigFunc.sinh, z) /
+          _evalComplexTrigOf(TrigFunc.cosh, z);
+    // Real-valued readings of a complex number, so each returns a real.
+    case TrigFunc.arg:
+      return Complex(z.phase, 0);
+    case TrigFunc.re:
+      return Complex(z.real, 0);
+    case TrigFunc.im:
+      return Complex(z.imag, 0);
+    case TrigFunc.sgn:
+      final double m = z.magnitude;
+      return m == 0 ? _zero : Complex(z.real / m, z.imag / m);
+    // The inverse functions have branch cuts that want more care than a
+    // formula each; until they are done properly they say so rather than
+    // returning something plausible and wrong.
+    case TrigFunc.asin:
+    case TrigFunc.acos:
+    case TrigFunc.atan:
+    case TrigFunc.asinh:
+    case TrigFunc.acosh:
+    case TrigFunc.atanh:
+      return const Complex(double.nan, double.nan);
+  }
+}
+
+/// [_evalComplexTrig] for an argument already evaluated.
+Complex _evalComplexTrigOf(TrigFunc func, Complex z) {
+  switch (func) {
+    case TrigFunc.sin:
+      return Complex(
+        math.sin(z.real) * _cosh(z.imag),
+        math.cos(z.real) * _sinh(z.imag),
+      );
+    case TrigFunc.cos:
+      return Complex(
+        math.cos(z.real) * _cosh(z.imag),
+        -math.sin(z.real) * _sinh(z.imag),
+      );
+    case TrigFunc.sinh:
+      return Complex(
+        _sinh(z.real) * math.cos(z.imag),
+        _cosh(z.real) * math.sin(z.imag),
+      );
+    case TrigFunc.cosh:
+      return Complex(
+        _cosh(z.real) * math.cos(z.imag),
+        _sinh(z.real) * math.sin(z.imag),
+      );
+    default:
+      return const Complex(double.nan, double.nan);
+  }
+}
+
+double _sinh(double x) => (math.exp(x) - math.exp(-x)) / 2;
+double _cosh(double x) => (math.exp(x) + math.exp(-x)) / 2;
+
+/// The principal logarithm: `ln|z| + i·arg z`, with `arg` in (-π, π].
+///
+/// Undefined at zero, where the modulus has no logarithm and the argument has
+/// no value.
+Complex complexLog(Complex z) {
+  if (z.real == 0 && z.imag == 0) {
+    return const Complex(double.negativeInfinity, 0);
+  }
+  return Complex(math.log(z.magnitude), z.phase);
+}
+
+/// `e^z`.
+Complex complexExp(Complex z) {
+  final double m = math.exp(z.real);
+  return Complex(m * math.cos(z.imag), m * math.sin(z.imag));
+}
+
+/// The principal square root.
+Complex complexSqrt(Complex z) {
+  if (z.real == 0 && z.imag == 0) return _zero;
+  final double m = math.sqrt(z.magnitude);
+  final double half = z.phase / 2;
+  return Complex(m * math.cos(half), m * math.sin(half));
+}
+
+/// `base^exponent`, by way of `exp(exponent · log base)`.
+///
+/// Zero is special-cased: `log 0` is not finite, so the general formula would
+/// give NaN for `0^2`, which has a perfectly good answer.
+Complex complexPow(Complex base, Complex exponent) {
+  if (base.real == 0 && base.imag == 0) {
+    if (exponent.real == 0 && exponent.imag == 0) return _one;
+    return _zero;
+  }
+  return complexExp(exponent * complexLog(base));
 }
