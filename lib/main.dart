@@ -1,3 +1,5 @@
+import 'dart:math' show exp, max;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:klotter/utils/constants.dart';
@@ -195,6 +197,28 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   /// false and the jump is silently dropped — which is why the app always
   /// opened on the first cell.
   PageController _pageViewController = PageController();
+
+  /// Which plot a hold-and-drag on the strip is currently pointing at, or
+  /// null when nobody is scrubbing.
+  ///
+  /// The page itself does not move while this is set. Rendering each plot as
+  /// the finger passes over it is not affordable: a plot's geometry is cached
+  /// against its own expression, so every plot scrubbed past is a cold cache
+  /// — measured at 67 ms for a level surface against 5 ms once warm. Half a
+  /// dozen of those in a second is a locked-up screen, and none of those
+  /// frames is on screen long enough to read anyway. So the scrub moves a
+  /// cheap readout and the plot is drawn once, on release.
+  int? _scrubTarget;
+
+  /// Opacity of the page area, for the cross-fade between plots.
+  double _pageOpacity = 1;
+
+  /// True while a fade is running, so a second swipe cannot start one on top
+  /// of it and leave the page stuck half faded.
+  bool _fading = false;
+
+  /// Half of the cross-fade. Short: this is covering a jump, not narrating it.
+  static const Duration _pageFade = Duration(milliseconds: 130);
 
   SettingsProvider? _settingsProvider;
   bool _listenerAdded = false;
@@ -440,14 +464,14 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     if (forward) {
       if (current < keys.length - 1) {
-        _animateToPage(current + 1);
+        _fadeToPage(current + 1);
       } else if (_canAddPage) {
         _addDisplay();
       }
       return;
     }
     if (current > 0) {
-      _animateToPage(current - 1);
+      _fadeToPage(current - 1);
     }
   }
 
@@ -470,80 +494,215 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (live != null) _restoredViews[index] = live;
   }
 
-  void _animateToPage(int position) {
+  /// Move to [position], carrying the focus and the saved view with it.
+  ///
+  /// [jump] skips the scroll, for when a genie is covering the swap: sliding
+  /// the pages as well would show the change twice.
+  void _animateToPage(int position, {bool jump = false}) {
     final keys = _pageKeys;
     if (position < 0 || position >= keys.length) return;
     _captureView(_currentPageIndex);
     setState(() => activeIndex = keys[position]);
     focusNodes[keys[position]]?.requestFocus();
-    if (_pageViewController.hasClients) {
-      // Same feel as the keypad's page transition.
-      _pageViewController.animateToPage(
-        position,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOutCubic,
-      );
+    if (!_pageViewController.hasClients) return;
+    if (jump) {
+      _pageViewController.jumpToPage(position);
+      return;
     }
+    // Same feel as the keypad's page transition.
+    _pageViewController.animateToPage(
+      position,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOutCubic,
+    );
   }
 
   /// Horizontal swipe target between the expression and the keypad.
   ///
   /// The plot itself owns pan and pinch, so page navigation needs its own
   /// surface rather than competing with those gestures.
-  Widget _buildPageSwipeStrip(AppColors colors) {
-    final keys = _pageKeys;
-    final current = keys.indexOf(_currentPageIndex);
+  /// How far the finger travels for one plot while scrubbing.
+  ///
+  /// The whole strip covers the whole set, so a long list is one sweep rather
+  /// than a hundred flicks — but never finer than a comfortable thumb's width,
+  /// or two plots would be indistinguishable when there are only three.
+  /// How big the dot for plot [i] is, given the finger is over [focus].
+  ///
+  /// The dock's magnification: not one dot picked out and the rest left flat,
+  /// but a bump that falls away over its neighbours, so the row swells under
+  /// the finger and settles either side of it. Only while scrubbing — at rest
+  /// the strip is a row of dots and should look like one.
+  double _dotSize(int i, int focus) {
+    const double resting = 5, current = 7, peak = 14;
+    if (_scrubTarget == null) return i == focus ? current : resting;
+    // Gaussian falloff over about two dots each way, which is close to the
+    // dock's own reach and wide enough to read as a swell rather than a blip.
+    final double d = (i - focus).toDouble();
+    final double bump = exp(-(d * d) / 2.0);
+    return resting + (peak - resting) * bump;
+  }
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onHorizontalDragEnd: (details) {
-        final v = details.primaryVelocity ?? 0;
-        if (v.abs() < 100) return;
-        _goToPage(forward: v < 0);
-      },
-      child: Container(
-        height: 26,
-        width: double.infinity,
-        color: colors.containerBackground,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.chevron_left,
-              size: 16,
-              color:
-                  current > 0
-                      ? colors.textSecondary
-                      : colors.textSecondary.withValues(alpha: 0.2),
-            ),
-            const SizedBox(width: 10),
-            for (int i = 0; i < keys.length; i++) ...[
-              Container(
-                width: i == current ? 7 : 5,
-                height: i == current ? 7 : 5,
-                margin: const EdgeInsets.symmetric(horizontal: 3),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color:
-                      i == current
-                          ? colors.accent
-                          : colors.textSecondary.withValues(alpha: 0.35),
-                ),
-              ),
-            ],
-            const SizedBox(width: 10),
-            Icon(
-              Icons.chevron_right,
-              size: 16,
-              color:
-                  (current < keys.length - 1 || _canAddPage)
-                      ? colors.textSecondary
-                      : colors.textSecondary.withValues(alpha: 0.2),
-            ),
-          ],
+  double _scrubPitch(double stripWidth, int count) =>
+      count <= 1 ? stripWidth : max(28.0, stripWidth / count);
+
+  void _scrubTo(double dx, int from, double stripWidth, int count) {
+    final int target = (from + dx / _scrubPitch(stripWidth, count)).round();
+    final int clamped = target.clamp(0, count - 1);
+    if (clamped != _scrubTarget) setState(() => _scrubTarget = clamped);
+  }
+
+  /// The readout that floats over the plot while scrubbing.
+  ///
+  /// The number only. The expression was here too, but it was the serialized
+  /// form rather than the typeset one, so it read as something the user had
+  /// not written.
+  Widget _scrubReadout(AppColors colors, List<int> keys, int target) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.78),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        '${target + 1} / ${keys.length}',
+        style: TextStyle(
+          color: colors.accent,
+          fontSize: 22,
+          fontWeight: FontWeight.w600,
         ),
       ),
     );
+  }
+
+  Widget _buildPageSwipeStrip(AppColors colors) {
+    final keys = _pageKeys;
+    final current = keys.indexOf(_currentPageIndex);
+    // The dots follow the finger during a scrub even though the page does not,
+    // so the strip is still the thing being operated.
+    final int shown = _scrubTarget ?? current;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final double stripWidth = constraints.maxWidth;
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onHorizontalDragEnd: (details) {
+            final v = details.primaryVelocity ?? 0;
+            if (v.abs() < 100) return;
+            _goToPage(forward: v < 0);
+          },
+          onLongPressStart: (_) {
+            if (keys.length < 2) return;
+            setState(() => _scrubTarget = current);
+          },
+          onLongPressMoveUpdate: (details) {
+            if (_scrubTarget == null) return;
+            _scrubTo(
+              details.localOffsetFromOrigin.dx,
+              current,
+              stripWidth,
+              keys.length,
+            );
+          },
+          onLongPressEnd: (_) => _commitScrub(),
+          onLongPressCancel: () => setState(() => _scrubTarget = null),
+          child: Stack(
+            // The readout sits above the strip, over the plot it is choosing.
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
+            children: <Widget>[
+              Container(
+                height: 26,
+                width: double.infinity,
+                color: colors.containerBackground,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.chevron_left,
+                      size: 16,
+                      color:
+                          shown > 0
+                              ? colors.textSecondary
+                              : colors.textSecondary.withValues(alpha: 0.2),
+                    ),
+                    const SizedBox(width: 10),
+                    for (int i = 0; i < keys.length; i++) ...[
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 90),
+                        curve: Curves.easeOut,
+                        width: _dotSize(i, shown),
+                        height: _dotSize(i, shown),
+                        margin: const EdgeInsets.symmetric(horizontal: 3),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color:
+                              i == shown
+                                  ? colors.accent
+                                  : colors.textSecondary.withValues(
+                                    alpha: 0.35,
+                                  ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(width: 10),
+                    Icon(
+                      Icons.chevron_right,
+                      size: 16,
+                      color:
+                          (shown < keys.length - 1 || _canAddPage)
+                              ? colors.textSecondary
+                              : colors.textSecondary.withValues(alpha: 0.2),
+                    ),
+                  ],
+                ),
+              ),
+              if (_scrubTarget != null)
+                Positioned(
+                  bottom: 34,
+                  child: _scrubReadout(colors, keys, _scrubTarget!),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// Land on whatever the scrub was pointing at.
+  void _commitScrub() {
+    final int? target = _scrubTarget;
+    setState(() => _scrubTarget = null);
+    if (target == null) return;
+    _fadeToPage(target);
+  }
+
+  /// Change page behind a cross-fade.
+  ///
+  /// The page is jumped rather than scrolled. A scroll would slide every plot
+  /// between here and there across the screen, and each one is a cold geometry
+  /// cache — the cost of arriving somewhere would depend on how far away it
+  /// was. The fade covers the swap and costs the same however far the jump.
+  Future<void> _fadeToPage(int target) async {
+    final keys = _pageKeys;
+    if (target < 0 || target >= keys.length) return;
+    if (!_pageViewController.hasClients) return;
+    if (target == keys.indexOf(_currentPageIndex)) return;
+
+    if (_fading) {
+      _animateToPage(target, jump: true);
+      return;
+    }
+    _fading = true;
+    try {
+      setState(() => _pageOpacity = 0);
+      await Future<void>.delayed(_pageFade);
+      if (!mounted) return;
+      _animateToPage(target, jump: true);
+      setState(() => _pageOpacity = 1);
+    } finally {
+      _fading = false;
+    }
   }
 
   Widget _buildPlotArea(
@@ -1569,24 +1728,32 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   // above its expression. Other cells are reached by the swipe
                   // strip below rather than by scrolling.
                   Expanded(
-                    child: PageView.builder(
-                      controller: _pageViewController,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _pageKeys.length,
-                      onPageChanged: (position) {
-                        final keys = _pageKeys;
-                        if (position >= 0 && position < keys.length) {
-                          _captureView(_currentPageIndex);
-                          setState(() => activeIndex = keys[position]);
-                        }
-                      },
-                      itemBuilder: (context, position) {
-                        final keys = _pageKeys;
-                        if (position >= keys.length) {
-                          return const SizedBox.shrink();
-                        }
-                        return _buildExpressionDisplay(keys[position], colors);
-                      },
+                    child: AnimatedOpacity(
+                      opacity: _pageOpacity,
+                      duration: _pageFade,
+                      curve: Curves.easeInOut,
+                      child: PageView.builder(
+                        controller: _pageViewController,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: _pageKeys.length,
+                        onPageChanged: (position) {
+                          final keys = _pageKeys;
+                          if (position >= 0 && position < keys.length) {
+                            _captureView(_currentPageIndex);
+                            setState(() => activeIndex = keys[position]);
+                          }
+                        },
+                        itemBuilder: (context, position) {
+                          final keys = _pageKeys;
+                          if (position >= keys.length) {
+                            return const SizedBox.shrink();
+                          }
+                          return _buildExpressionDisplay(
+                            keys[position],
+                            colors,
+                          );
+                        },
+                      ),
                     ),
                   ),
                   // A hairline between the expression and the strip below it,
