@@ -3022,6 +3022,7 @@ class Plot3DPainter extends CustomPainter {
     // free variable is z, which every other path reads as the third
     // coordinate — so z̲ was drawn twice, once correctly as a surface and once
     // as a standing line up the z axis.
+    if (function.isComplex) return;
     final List<PlotExpression> curves = _lineCurves;
     for (int c = 0; c < curves.length; c++) {
       _addOneStandingCurveTo(scene, size, focalLength, curves[c], c, curves);
