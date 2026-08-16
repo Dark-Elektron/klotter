@@ -403,7 +403,7 @@ class Plot3DPainter extends CustomPainter {
   ///
   /// So about 0.35 is as long as the axis goes on a panel this shape before
   /// the top and bottom are cut off.
-  static const double _zExtent = 0.34;
+  static const double _zExtent = 0.35;
 
   /// The perspective strength, as a multiple of the panel's longer side.
   ///
@@ -2502,12 +2502,16 @@ class Plot3DPainter extends CustomPainter {
     final VectorFieldParser? field = vectorParser;
     if (field == null || !field.isParametricSurface) return;
 
-    final List<List<ParametricPoint?>> grid = sampleParametricSurface(
+    // One resolution, moving or still. Thinning the mesh under a finger left
+    // the surface coarse for as long as a spin carried on, which reads as the
+    // plot degrading rather than as a frame rate being protected.
+    //
+    // Cached so that turning the plot re-projects the same points instead of
+    // re-evaluating the expression 4,225 times a frame.
+    final List<List<ParametricPoint?>> grid = cachedParametricSurface(
       field,
       u: uRange,
       v: vRange,
-      steps:
-          interacting ? parametricSurfaceStepsMoving : parametricSurfaceSteps,
     );
     if (grid.length < 2 || grid.first.length < 2) return;
     final int rows = grid.length;
@@ -2679,7 +2683,7 @@ class Plot3DPainter extends CustomPainter {
     Offset? prev;
     double? prevDepth;
 
-    for (final ParametricPoint? p in sampleParametricCurve(field, u: uRange)) {
+    for (final ParametricPoint? p in cachedParametricCurve(field, u: uRange)) {
       // A point outside the box breaks the line rather than being clamped
       // onto the wall, which would draw an edge the curve does not have.
       if (p == null ||

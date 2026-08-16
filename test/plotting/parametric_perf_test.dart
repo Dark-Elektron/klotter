@@ -13,14 +13,11 @@ import 'package:klotter/plotting/utils/plot_theme.dart';
 import 'package:klotter/settings/settings_provider.dart';
 import 'package:klotter/utils/app_colors.dart';
 
-/// The parametric mesh has no cache behind it — a drag re-sweeps the whole
-/// grid every frame — so raising the still-frame resolution has to be paid for
-/// by dropping it again while a finger is down.
+/// The parametric mesh is drawn at one resolution whether the plot is moving
+/// or not, so a spin does not visibly coarsen it.
 ///
 /// These are debug-build timings on a CPU canvas, not device timings. They
-/// exist to catch an order-of-magnitude regression, so the limits are loose;
-/// the tight guarantee is the grid-size assertion at the bottom, which is
-/// deterministic.
+/// exist to catch an order-of-magnitude regression, so the limits are loose.
 void main() {
   const Size canvas = Size(400, 400);
   final AppColors colors = AppColors.fromType(ThemeType.classic);
@@ -36,16 +33,22 @@ void main() {
     UnitVectorNode('z'),
   ];
 
+  // Compiled once and reused, which is what the app does: a cell parses on
+  // edit, not per frame. It also matters for what is measured — the sweep is
+  // cached against the parser's identity, so a fresh one each frame would
+  // time the sampler rather than the painter.
+  final nodes = torusish();
+  final expr = PlotExpression.compile(nodes);
+  final field = VectorFieldParser.fromNodes(nodes);
+
   Plot3DPainter painterFor({
     required bool interacting,
     required double rotation,
   }) {
-    final nodes = torusish();
-    final expr = PlotExpression.compile(nodes);
     return Plot3DPainter(
       function: expr,
       functions: <PlotExpression>[expr],
-      vectorParser: VectorFieldParser.fromNodes(nodes),
+      vectorParser: field,
       is3DFunction: true,
       rotationX: 0.6,
       rotationZ: rotation,
@@ -99,28 +102,35 @@ void main() {
     final double t = await medianFrame(tester, moving: false);
     expect(
       t,
-      lessThan(120),
+      lessThan(60),
       reason: 'median frame was ${t.toStringAsFixed(1)} ms',
     );
   });
 
-  testWidgets('dragging one costs less than holding it still', (tester) async {
-    // The whole point of the coarser moving grid. Measured together in one
-    // test so both numbers come from the same machine under the same load.
+  testWidgets('moving and still cost the same', (tester) async {
+    // They are the same mesh. The surface used to thin out under a finger,
+    // which is the usual bargain for geometry with no cache behind it — but a
+    // spin outlives the finger, so the plot visibly degraded and stayed that
+    // way until it stopped. One resolution, sized to be affordable while
+    // moving, is the price of not doing that.
     final double still = await medianFrame(tester, moving: false);
     final double moving = await medianFrame(tester, moving: true);
     expect(
-      moving,
-      lessThan(still),
+      (moving - still).abs(),
+      lessThan(still * 0.75 + 5),
       reason:
           'still ${still.toStringAsFixed(1)} ms, '
           'moving ${moving.toStringAsFixed(1)} ms',
     );
   });
 
-  test('the moving grid is the coarser of the two', () {
-    // The deterministic half of this file: whatever the timings do on a
-    // loaded machine, dragging must never sweep more finely than resting.
-    expect(parametricSurfaceStepsMoving, lessThan(parametricSurfaceSteps));
+  test('the sweep is cached, so turning the plot does not re-sample it', () {
+    // Sampling was never the cost of a frame — projecting and sorting is —
+    // but re-walking the expression 4,225 times per frame is still waste.
+    final nodes = torusish();
+    final field = VectorFieldParser.fromNodes(nodes)!;
+    final a = cachedParametricSurface(field);
+    final b = cachedParametricSurface(field);
+    expect(identical(a, b), isTrue);
   });
 }

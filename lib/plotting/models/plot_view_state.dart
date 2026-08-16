@@ -22,6 +22,7 @@ class PlotViewState {
     this.uMax = 1,
     this.vMin = 0,
     this.vMax = 1,
+    this.surfaceMode,
   });
 
   /// Which view the cell was left showing.
@@ -32,6 +33,15 @@ class PlotViewState {
 
   /// The 3D camera and box.
   final double rotationX, rotationZ, panX, panY, rangeX, rangeY, rangeZ;
+
+  /// Which colouring the user picked, by enum index, or null if they never
+  /// touched it.
+  ///
+  /// Null is the whole point of storing it: a plot type can have a sensible
+  /// default colouring, but only for a plot that has just been drawn. Once
+  /// the user has chosen — including choosing to turn it off — that choice is
+  /// theirs and no amount of swiping away and back should overrule it.
+  final int? surfaceMode;
 
   /// What u and v are swept over. Part of the view rather than of the
   /// expression: the sweep is something you dialled in, and swiping to the
@@ -58,7 +68,8 @@ class PlotViewState {
       uMin == initial.uMin &&
       uMax == initial.uMax &&
       vMin == initial.vMin &&
-      vMax == initial.vMax;
+      vMax == initial.vMax &&
+      surfaceMode == initial.surfaceMode;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     'show3D': show3D,
@@ -77,6 +88,7 @@ class PlotViewState {
     'uMax': uMax,
     'vMin': vMin,
     'vMax': vMax,
+    'surfaceMode': surfaceMode,
   };
 
   /// Restore a view, falling back to the default for anything missing or
@@ -144,6 +156,10 @@ class PlotViewState {
       uMax: uMax,
       vMin: vMin,
       vMax: vMax,
+      surfaceMode: switch (json['surfaceMode']) {
+        final int i when i >= 0 => i,
+        _ => null,
+      },
     );
   }
 
@@ -164,6 +180,7 @@ class PlotViewState {
     double? uMax,
     double? vMin,
     double? vMax,
+    int? surfaceMode,
   }) {
     return PlotViewState(
       show3D: show3D ?? this.show3D,
@@ -182,6 +199,7 @@ class PlotViewState {
       uMax: uMax ?? this.uMax,
       vMin: vMin ?? this.vMin,
       vMax: vMax ?? this.vMax,
+      surfaceMode: surfaceMode ?? this.surfaceMode,
     );
   }
 }

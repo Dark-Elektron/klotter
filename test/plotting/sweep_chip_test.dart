@@ -158,4 +158,40 @@ void main() {
     final Plot3DScreen solid = tester.widget(find.byType(Plot3DScreen));
     expect(solid.surfaceMode, SurfaceMode.none);
   });
+
+  testWidgets('but a colouring the user turned off stays off', (tester) async {
+    // "Default" means on first plot only. Swiping away and back rebuilds the
+    // panel from the saved view, and re-applying the default there is not a
+    // default — it silently undoes having turned the colours off.
+    await tester.pumpWidget(
+      host(curve(), view: PlotViewState(surfaceMode: SurfaceMode.none.index)),
+    );
+    await tester.pumpAndSettle();
+
+    final Plot3DScreen solid = tester.widget(find.byType(Plot3DScreen));
+    expect(solid.surfaceMode, SurfaceMode.none);
+  });
+
+  testWidgets('and one they picked comes back as they left it', (tester) async {
+    await tester.pumpWidget(
+      host(curve(), view: PlotViewState(surfaceMode: SurfaceMode.z.index)),
+    );
+    await tester.pumpAndSettle();
+
+    final Plot3DScreen solid = tester.widget(find.byType(Plot3DScreen));
+    expect(solid.surfaceMode, SurfaceMode.z);
+  });
+
+  testWidgets('a view that was never touched still gets the default', (
+    tester,
+  ) async {
+    // The other half: null means the user has not chosen, so the plot is new
+    // and the default applies.
+    expect(PlotViewState.initial.surfaceMode, isNull);
+    await tester.pumpWidget(host(curve()));
+    await tester.pumpAndSettle();
+
+    final Plot3DScreen solid = tester.widget(find.byType(Plot3DScreen));
+    expect(solid.surfaceMode, SurfaceMode.magnitude);
+  });
 }

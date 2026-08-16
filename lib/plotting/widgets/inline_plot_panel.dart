@@ -85,6 +85,14 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   late ParameterRange _vRange;
   bool _showContour = false;
   SurfaceMode _surfaceMode = SurfaceMode.none;
+
+  /// Whether the colouring is the user's choice rather than a default.
+  ///
+  /// Once it is, re-parsing must leave it alone. Editing the expression and
+  /// swiping away both rebuild the plot, and a default applied on every
+  /// rebuild is not a default — it is an override that quietly undid turning
+  /// the colours off.
+  bool _surfaceModeChosen = false;
   ZoomAxis _zoomAxis = ZoomAxis.free;
 
   final GlobalKey<Plot2DScreenState> _plot2DKey = GlobalKey();
@@ -106,6 +114,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
       uMax: _uRange.max,
       vMin: _vRange.min,
       vMax: _vRange.max,
+      surfaceMode: _surfaceModeChosen ? _surfaceMode.index : null,
     );
     if (p2 != null) {
       final (xMin, xMax, yMin, yMax) = p2.ranges;
@@ -163,6 +172,11 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   void initState() {
     super.initState();
     _show3D = widget.initialView.show3D;
+    final int? savedMode = widget.initialView.surfaceMode;
+    if (savedMode != null && savedMode < SurfaceMode.values.length) {
+      _surfaceMode = SurfaceMode.values[savedMode];
+      _surfaceModeChosen = true;
+    }
     _uRange = (min: widget.initialView.uMin, max: widget.initialView.uMax);
     _vRange = (min: widget.initialView.vMin, max: widget.initialView.vMax);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -210,13 +224,11 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
         _is3DFunction = vector.is3D;
         _errorMessage = vector.error;
         if (vector.isParametric) {
-          // A sweep arrives coloured. Its default shading reads the shape but
-          // says nothing about the numbers, and the magnitude is what a
-          // parametric plot is nearly always being looked at for — where the
-          // curve or surface is far from the origin.
-          if (_surfaceMode == SurfaceMode.none) {
-            _surfaceMode = SurfaceMode.magnitude;
-          }
+          // A sweep arrives coloured, but only on arrival. Its default
+          // shading reads the shape and says nothing about the numbers, and
+          // the magnitude is what a parametric plot is nearly always being
+          // looked at for. Once the user has said otherwise, that stands.
+          if (!_surfaceModeChosen) _surfaceMode = SurfaceMode.magnitude;
         } else if (_is3DFunction) {
           _surfaceMode = SurfaceMode.none;
         } else if (_surfaceMode == SurfaceMode.none) {
@@ -457,7 +469,11 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   }
 
   void _setSurfaceMode(SurfaceMode mode) {
-    setState(() => _surfaceMode = mode);
+    setState(() {
+      _surfaceMode = mode;
+      _surfaceModeChosen = true;
+    });
+    _publishView();
   }
 
   String _getModeDescription() {
