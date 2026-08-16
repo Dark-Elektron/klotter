@@ -24,23 +24,36 @@ const ParameterRange fullTurn = (min: 0.0, max: 2 * math.pi);
 /// the surface grids do.
 const int parametricCurveSteps = 400;
 
-/// How many steps each way a parametric surface is swept at.
+/// How many cells a parametric surface is drawn with, all directions
+/// together.
+///
+/// A budget rather than a resolution, because the two parameters rarely
+/// deserve the same treatment — see [parametricGridFor], which spends this on
+/// whichever direction the surface actually moves in.
 ///
 /// One figure, used whether the plot is moving or still. It used to drop to a
 /// coarser grid under a finger, which is the usual bargain for a mesh with no
 /// cache behind it — but a spin carries on after the finger has gone, so the
 /// surface visibly thinned out and stayed thin until it came to rest.
 ///
-/// Caching the sweep did not buy the finer grid back: sampling was never the
-/// cost. Projecting the corners and sorting the triangles is, and that happens
-/// every frame whatever is cached. So the resolution is set where a moving
-/// frame is affordable and left there. Measured per frame on a CPU canvas:
-/// 48 steps 12.5 ms, 64 steps 14.7 ms, 80 steps 25.1 ms, 96 steps 36.7 ms.
-///
-/// Losing the old still-frame 96 costs less than it sounds. What smooths a
-/// parametric surface is shading it from averaged corner normals, not the
-/// number of cells; the grid only decides how round the silhouette is.
-const int parametricSurfaceSteps = 64;
+/// Caching the sweep did not buy a finer grid: sampling was never the cost.
+/// Projecting the corners and sorting the triangles is, and that happens every
+/// frame whatever is cached. What did buy it was shading and projecting each
+/// vertex once instead of once per cell that touches it — every interior
+/// corner belongs to four. Measured per frame on a CPU canvas, after that:
+/// 4,096 cells 12.0 ms, 9,216 cells 23.1 ms, 16,384 cells 40.6 ms.
+const int parametricCellBudget = 8100;
+
+/// Fallback resolution when the surface gives nothing to measure.
+const int parametricSurfaceCells = 90;
+
+/// A direction never gets fewer steps than this, however little it moves: two
+/// steps is not a surface, and the shading needs neighbours to average.
+const int parametricMinSteps = 12;
+
+/// Nor more than this, however much it moves. Past here the cells are smaller
+/// than a pixel and the only thing still growing is the frame time.
+const int parametricMaxSteps = 400;
 
 /// Sweep [field] over its parameter and return the path.
 ///
@@ -69,20 +82,90 @@ List<List<ParametricPoint?>> sampleParametricSurface(
   VectorFieldParser field, {
   ParameterRange u = defaultParameterRange,
   ParameterRange v = defaultParameterRange,
-  int steps = parametricSurfaceSteps,
+  int steps = 0,
+  int? uSteps,
+  int? vSteps,
 }) {
-  if (!field.isParametric || steps < 1) return const <List<ParametricPoint?>>[];
+  final int rows = uSteps ?? (steps > 0 ? steps : parametricSurfaceCells);
+  final int cols = vSteps ?? (steps > 0 ? steps : parametricSurfaceCells);
+  if (!field.isParametric || rows < 1 || cols < 1) {
+    return const <List<ParametricPoint?>>[];
+  }
   return <List<ParametricPoint?>>[
-    for (int i = 0; i <= steps; i++)
+    for (int i = 0; i <= rows; i++)
       <ParametricPoint?>[
-        for (int j = 0; j <= steps; j++)
+        for (int j = 0; j <= cols; j++)
           _pointAt(
             field,
-            u.min + (u.max - u.min) * i / steps,
-            v.min + (v.max - v.min) * j / steps,
+            u.min + (u.max - u.min) * i / rows,
+            v.min + (v.max - v.min) * j / cols,
           ),
       ],
   ];
+}
+
+/// How many steps to give each parameter, in proportion to how far the
+/// surface actually travels along it.
+///
+/// One count for both was what made a spiral look like a stack of plates.
+/// `sin(u)/v x̂ + cos(u)/v ŷ + √(u²+v²) ẑ` over `u ∈ [0, 35]` is five and a
+/// half turns; sharing 64 steps between the two directions left eleven
+/// samples per revolution, and eleven-sided circles are what you saw. The v
+/// direction, meanwhile, barely moves and was being sampled just as finely.
+///
+/// The two are chosen so their product is [budget] and their ratio matches
+/// the ratio of the distances travelled, which is the allocation that
+/// minimises the worst gap for a fixed number of cells.
+({int u, int v}) parametricGridFor(
+  VectorFieldParser field, {
+  ParameterRange u = defaultParameterRange,
+  ParameterRange v = defaultParameterRange,
+  int budget = parametricCellBudget,
+}) {
+  // A coarse probe first. Its own resolution hardly matters — this is
+  // measuring which direction moves more, not how much.
+  const int probe = 12;
+  final List<List<ParametricPoint?>> sample = sampleParametricSurface(
+    field,
+    u: u,
+    v: v,
+    steps: probe,
+  );
+  if (sample.length < 2) {
+    final int side = math.sqrt(budget).round();
+    return (u: side, v: side);
+  }
+
+  double along(bool inU) {
+    double total = 0;
+    for (int a = 0; a <= probe; a++) {
+      for (int b = 0; b < probe; b++) {
+        final ParametricPoint? p = inU ? sample[b][a] : sample[a][b];
+        final ParametricPoint? q = inU ? sample[b + 1][a] : sample[a][b + 1];
+        if (p == null || q == null) continue;
+        final double dx = q.x - p.x, dy = q.y - p.y, dz = q.z - p.z;
+        total += math.sqrt(dx * dx + dy * dy + dz * dz);
+      }
+    }
+    return total;
+  }
+
+  final double lu = along(true), lv = along(false);
+  // A degenerate direction still needs enough steps to be a surface.
+  if (lu <= 0 || lv <= 0) {
+    final int side = math.sqrt(budget).round();
+    return (u: side, v: side);
+  }
+
+  final double ratio = lu / lv;
+  final int uSteps = (math.sqrt(
+    budget * ratio,
+  )).round().clamp(parametricMinSteps, parametricMaxSteps);
+  final int vSteps = (budget / uSteps).round().clamp(
+    parametricMinSteps,
+    parametricMaxSteps,
+  );
+  return (u: uSteps, v: vSteps);
 }
 
 /// The position at one parameter pair, or null where it is undefined.
@@ -143,19 +226,26 @@ List<List<ParametricPoint?>> cachedParametricSurface(
   VectorFieldParser field, {
   ParameterRange u = defaultParameterRange,
   ParameterRange v = defaultParameterRange,
-  int steps = parametricSurfaceSteps,
 }) {
+  final ({int u, int v}) grid = parametricGridFor(field, u: u, v: v);
   final Object key = Object.hash(
     identityHashCode(field),
     u.min,
     u.max,
     v.min,
     v.max,
-    steps,
+    grid.u,
+    grid.v,
   );
   return _surfaceCache.resolve(
     key,
-    () => sampleParametricSurface(field, u: u, v: v, steps: steps),
+    () => sampleParametricSurface(
+      field,
+      u: u,
+      v: v,
+      uSteps: grid.u,
+      vSteps: grid.v,
+    ),
   );
 }
 

@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -96,9 +97,8 @@ void main() {
   }
 
   testWidgets('a still parametric surface repaints in range', (tester) async {
-    // Measured at 32 ms for the 96-step grid, against 5 ms while dragging.
-    // A still frame is only repainted when something changes, so 32 ms buys
-    // the resolution without costing anyone a gesture.
+    // The budget is spent to land near 8,100 cells however it is split, so
+    // this is close to the 9,216-cell figure of 23 ms measured while tuning.
     final double t = await medianFrame(tester, moving: false);
     expect(
       t,
@@ -122,6 +122,62 @@ void main() {
           'still ${still.toStringAsFixed(1)} ms, '
           'moving ${moving.toStringAsFixed(1)} ms',
     );
+  });
+
+  test('the two parameters are given steps in proportion to their travel', () {
+    // The fix for the faceting: one count for both directions gave a spiral
+    // over u in [0, 35] only eleven samples per revolution, while v — which
+    // barely moves — got just as many. The budget now follows the geometry.
+    final field = VectorFieldParser.fromNodes(torusish())!;
+    final spiral =
+        VectorFieldParser.fromNodes(<MathNode>[
+          TrigNode(
+            function: 'sin',
+            argument: <MathNode>[LiteralNode(text: 'u')],
+          ),
+          UnitVectorNode('x'),
+          LiteralNode(text: '+'),
+          TrigNode(
+            function: 'cos',
+            argument: <MathNode>[LiteralNode(text: 'u')],
+          ),
+          UnitVectorNode('y'),
+          LiteralNode(text: '+v'),
+          UnitVectorNode('z'),
+        ])!;
+
+    final wide = parametricGridFor(
+      spiral,
+      u: (min: 0.0, max: 35.0),
+      v: (min: 1.0, max: 7.0),
+    );
+    // Five and a half turns in u against almost nothing in v.
+    expect(wide.u, greaterThan(wide.v * 2), reason: 'u ${wide.u} v ${wide.v}');
+    // Enough per revolution that the circle is not a polygon. At the old
+    // shared count of 64 this was eleven.
+    expect(wide.u / (35 / (2 * pi)), greaterThan(25));
+
+    // Whatever the split, the cost stays put.
+    for (final f in <VectorFieldParser>[field, spiral]) {
+      final g = parametricGridFor(f);
+      expect(g.u * g.v, lessThan(parametricCellBudget * 1.3));
+      expect(g.u * g.v, greaterThan(parametricCellBudget * 0.7));
+    }
+  });
+
+  test('a direction that never moves still gets enough steps to shade', () {
+    // A flat patch travels the same distance either way, so neither runs to
+    // the floor of the clamp — but the clamp is what stops one collapsing.
+    final flat =
+        VectorFieldParser.fromNodes(<MathNode>[
+          LiteralNode(text: 'u'),
+          UnitVectorNode('x'),
+          LiteralNode(text: '+v'),
+          UnitVectorNode('y'),
+        ])!;
+    final g = parametricGridFor(flat);
+    expect(g.u, greaterThanOrEqualTo(parametricMinSteps));
+    expect(g.v, greaterThanOrEqualTo(parametricMinSteps));
   });
 
   test('the sweep is cached, so turning the plot does not re-sample it', () {

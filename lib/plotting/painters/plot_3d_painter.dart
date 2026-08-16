@@ -2628,6 +2628,26 @@ class Plot3DPainter extends CustomPainter {
       ).toARGB32();
     }
 
+    // Each vertex is shaded and projected once, not once per cell that
+    // touches it. Every interior corner belongs to four cells, and doing this
+    // work inside the cell loop did all of it four times over — on the two
+    // most expensive operations there are here, a normal with its square root
+    // and a colour lookup with its pack. Hoisting them is what pays for the
+    // grid being fine enough not to show its corners.
+    final List<List<Offset?>> screen = <List<Offset?>>[
+      for (int i = 0; i < rows; i++)
+        <Offset?>[
+          for (int j = 0; j < cols; j++)
+            pts[i][j]?.project(focalLength, size, _panX, _panY),
+        ],
+    ];
+    final List<List<int>> shades = <List<int>>[
+      for (int i = 0; i < rows; i++)
+        <int>[
+          for (int j = 0; j < cols; j++) pts[i][j] == null ? 0 : shadeAt(i, j),
+        ],
+    ];
+
     for (int i = 1; i < rows; i++) {
       for (int j = 1; j < cols; j++) {
         final Point3D? a = pts[i - 1][j - 1];
@@ -2638,20 +2658,26 @@ class Plot3DPainter extends CustomPainter {
         // would span the gap with a sheet the sweep never covers.
         if (a == null || b == null || c == null || d == null) continue;
 
-        final int ca = shadeAt(i - 1, j - 1);
-        final int cb = shadeAt(i - 1, j);
-        final int cc = shadeAt(i, j);
-        final int cd = shadeAt(i, j - 1);
-
-        final Offset oa = a.project(focalLength, size, _panX, _panY);
-        final Offset ob = b.project(focalLength, size, _panX, _panY);
-        final Offset oc = c.project(focalLength, size, _panX, _panY);
-        final Offset od = d.project(focalLength, size, _panX, _panY);
-
         // Two triangles sharing the a-c diagonal, each with its own depth so
         // a cell can sort against a grid segment passing under it.
-        scene.addTriangle(oa, ob, oc, ca, cb, cc, (a.y + b.y + c.y) / 3);
-        scene.addTriangle(oa, oc, od, ca, cc, cd, (a.y + c.y + d.y) / 3);
+        scene.addTriangle(
+          screen[i - 1][j - 1]!,
+          screen[i - 1][j]!,
+          screen[i][j]!,
+          shades[i - 1][j - 1],
+          shades[i - 1][j],
+          shades[i][j],
+          (a.y + b.y + c.y) / 3,
+        );
+        scene.addTriangle(
+          screen[i - 1][j - 1]!,
+          screen[i][j]!,
+          screen[i][j - 1]!,
+          shades[i - 1][j - 1],
+          shades[i][j],
+          shades[i][j - 1],
+          (a.y + c.y + d.y) / 3,
+        );
       }
     }
   }
