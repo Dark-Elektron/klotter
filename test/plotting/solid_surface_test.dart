@@ -66,9 +66,19 @@ void main() {
   /// A surface coloured by value runs through a ramp, so it has many. One
   /// coloured solid and shaded has a single hue at many brightnesses, so it
   /// has few — the difference the mode makes, whatever the ramp happens to be.
-  Future<int> hueCount(ui.Image image) async {
+  /// How concentrated the picture's colour is: the share of coloured pixels
+  /// falling in whichever hue is commonest.
+  ///
+  /// Counting *distinct* hues does not separate these — a solid surface still
+  /// picks up the coloured axes and, since surfaces are now held at the box
+  /// wall instead of dropped there, enough extra area to reach the same bucket
+  /// count as a ramp. What differs is the shape of the distribution: one hue
+  /// at many brightnesses piles into a single bucket, a ramp spreads across
+  /// them.
+  Future<double> hueConcentration(ui.Image image) async {
     final data = (await image.toByteData())!;
-    final Set<int> hues = <int>{};
+    final List<int> buckets = List<int>.filled(18, 0);
+    int total = 0;
     for (int i = 0; i < 320 * 320; i++) {
       final int o = i * 4;
       if (data.getUint8(o + 3) < 200) continue;
@@ -80,11 +90,12 @@ void main() {
           data.getUint8(o + 2),
         ),
       );
-      // Grey has no hue worth counting — that is the box and the grid.
       if (hsv.saturation < 0.25 || hsv.value < 0.15) continue;
-      hues.add((hsv.hue / 20).floor());
+      buckets[(hsv.hue / 20).floor() % 18]++;
+      total++;
     }
-    return hues.length;
+    if (total == 0) return 0;
+    return buckets.reduce((a, b) => a > b ? a : b) / total;
   }
 
   test('the expression under test actually plots', () {
@@ -111,20 +122,21 @@ void main() {
     });
   });
 
-  testWidgets('off uses far fewer hues than by value', (tester) async {
+  testWidgets('off puts its colour in one place, by value spreads it', (
+    tester,
+  ) async {
     await tester.runAsync(() async {
-      // Compared rather than counted against a threshold: the three axes are
-      // themselves red, green and blue, so a picture is never down to one hue
-      // however solid the surface is.
-      final int byValue = await hueCount(await render(SurfaceMode.magnitude));
-      final int off = await hueCount(await render(SurfaceMode.none));
-      // Measured at 17 against 13. Not down to one, because a solid surface
-      // still has the axes and the shading's own tint around it, and the hue
-      // buckets are coarse.
+      final double byValue = await hueConcentration(
+        await render(SurfaceMode.magnitude),
+      );
+      final double off = await hueConcentration(await render(SurfaceMode.none));
+      // A solid surface is one hue at many brightnesses, so nearly all of its
+      // colour lands in a single bucket. A ramp cannot.
+      expect(off, greaterThan(0.7), reason: 'off concentration $off');
       expect(
-        off,
-        lessThan(byValue - 2),
-        reason: 'by value $byValue hues, off $off',
+        byValue,
+        lessThan(off - 0.15),
+        reason: 'by value $byValue against off $off',
       );
     });
   });

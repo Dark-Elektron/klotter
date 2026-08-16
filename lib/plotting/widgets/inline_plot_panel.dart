@@ -832,7 +832,9 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
               Positioned(
                 left: 8,
                 bottom: _overlayButtonSize + 14,
-                child: Row(
+                // Stacked, like the mode buttons on the right. Three of them
+                // side by side reached most of the way across the plot.
+                child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children:
                       (_show3D

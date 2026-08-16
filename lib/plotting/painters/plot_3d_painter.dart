@@ -997,13 +997,12 @@ class Plot3DPainter extends CustomPainter {
           zRow.add(double.nan);
           continue;
         }
-        // Outside the z window: keep the value so neighbouring cells still
-        // know which way the surface left, but draw nothing here.
-        if (z < -rangeZ || z > rangeZ) {
-          row.add(null);
-          zRow.add(z);
-          continue;
-        }
+        // Outside the z window the surface is held at the wall rather than
+        // dropped. Dropping it left the cells straddling the boundary with
+        // some corners and not others, and the edge came out as a row of
+        // teeth whose size was the grid spacing — an artefact of where the
+        // samples happened to fall, not anything about the function.
+        final double drawnZ = z.clamp(-rangeZ, rangeZ);
 
         // What the cell is coloured by, which is the height unless told
         // otherwise. Gathered here, while x and y are still the data point:
@@ -1021,7 +1020,7 @@ class Plot3DPainter extends CustomPainter {
           Point3D(
             x * scaleX,
             y * scaleY,
-            z * scaleZ,
+            drawnZ * scaleZ,
           ).rotateZ(rotationZ).rotateX(rotationX),
         );
         zRow.add(v);
@@ -2641,7 +2640,12 @@ class Plot3DPainter extends CustomPainter {
       );
       if (built.quads.isEmpty) continue;
 
-      final Color Function(double) ramp = surfaceColormap(entry.series, of: 3);
+      // The full colormap, not the per-series ramp the height surfaces use.
+      // That ramp runs one hue light to dark, which is how a surface says
+      // "I am the second one" — fine when the colour is an identity and
+      // useless when it is a measurement. Coloured by |f| it came out as a
+      // sheet of blue with no reading in it.
+      const Color Function(double) ramp = plotColormap;
       final double span =
           built.maxV > built.minV ? built.maxV - built.minV : 1.0;
 
