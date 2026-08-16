@@ -4711,6 +4711,12 @@ class MathNodeToExpr {
       return [_Token.fromExpr(_doubleToExpr(result).simplify())];
     }
 
+    // Plain `z`: in a complex line that name is already bound to the point of
+    // the plane, so the glyph needs no separate identity in the engine. What
+    // it adds is upstream — a line containing it is read as complex.
+    if (node is ComplexVariableNode) {
+      return [_Token.fromExpr(VarExpr('z'))];
+    }
     if (node is UnitVectorNode) {
       return [_Token.fromExpr(VarExpr('e_${node.axis}'))];
     }
@@ -5668,6 +5674,9 @@ class ExactMathEngine {
     if (node is ConstantNode) {
       return ConstantNode(node.constant);
     }
+    if (node is ComplexVariableNode) {
+      return ComplexVariableNode();
+    }
     if (node is UnitVectorNode) {
       return UnitVectorNode(node.axis);
     }
@@ -6502,6 +6511,8 @@ class ExactMathEngine {
     for (MathNode node in nodes) {
       if (node is LiteralNode) {
         buffer.write(node.text);
+      } else if (node is ComplexVariableNode) {
+        buffer.write('z');
       } else if (node is UnitVectorNode) {
         buffer.write('e_${node.axis}');
       } else if (node is ConstantNode) {

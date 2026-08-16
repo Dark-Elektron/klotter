@@ -133,6 +133,8 @@ class EditorState {
       copy = AnsNode(index: _deepCopyNodes(node.index, idMap));
     } else if (node is ConstantNode) {
       copy = ConstantNode(node.constant);
+    } else if (node is ComplexVariableNode) {
+      copy = ComplexVariableNode();
     } else if (node is UnitVectorNode) {
       copy = UnitVectorNode(node.axis);
     } else if (node is ComplexNode) {

@@ -193,6 +193,24 @@ class ConstantNode extends MathNode {
 }
 
 /// A unit vector node (e_x, e_y, e_z) treated as an atomic unit.
+/// `z̲` — z with a low line — the complex variable as one symbol.
+///
+/// Extends [UnitVectorNode] rather than standing alone because everything the
+/// editor does with it is the same: it is a single indivisible glyph that the
+/// caret steps over, backspace removes whole, and an exponent attaches to. All
+/// of that is already written for unit vectors, in a dozen files, and every
+/// `is UnitVectorNode` test picks this up unchanged.
+///
+/// What differs is only what it draws and what it means, which is a handful of
+/// branches placed ahead of the unit-vector ones.
+///
+/// It was two characters in a literal before, and the editor treated it as
+/// two: backspace left a bare z, and deleting the exponent of z̲² took the
+/// whole expression.
+class ComplexVariableNode extends UnitVectorNode {
+  ComplexVariableNode() : super('z');
+}
+
 class UnitVectorNode extends MathNode {
   final String axis; // x, y, z
   UnitVectorNode(this.axis);

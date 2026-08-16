@@ -91,6 +91,7 @@ class PlotExpression {
   static bool usesImaginaryUnit(List<MathNode> nodes) {
     for (final MathNode n in nodes) {
       if (n is ComplexNode) return true;
+      if (n is ComplexVariableNode) return true;
       if (n is LiteralNode && _textUsesImaginary(n.text)) return true;
       for (final List<MathNode> child in _childrenOf(n)) {
         if (usesImaginaryUnit(child)) return true;

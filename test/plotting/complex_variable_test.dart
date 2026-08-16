@@ -3,7 +3,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'dart:ui' as ui;
 
+import 'package:klotter/math_engine/math_expression_serializer.dart';
 import 'package:klotter/plotting/models/complex_view.dart';
+import 'package:klotter/plotting/parsers/vector_field_parser.dart';
 import 'package:klotter/settings/settings_provider.dart';
 import 'package:klotter/plotting/models/enums.dart';
 import 'package:klotter/plotting/painters/plot_3d_painter.dart';
@@ -24,6 +26,10 @@ void main() {
       PlotExpression.compile(<MathNode>[LiteralNode(text: source)]);
 
   const String zc = PlotExpression.complexVariable;
+
+  /// The same thing as a node, which is how it is really typed.
+  PlotExpression compileNode(List<MathNode> extra) =>
+      PlotExpression.compile(<MathNode>[ComplexVariableNode(), ...extra]);
 
   test('it is z with a combining low line', () {
     expect(zc.codeUnits, <int>[122, 818]);
@@ -86,12 +92,6 @@ void main() {
       expect(e.error, contains('q'));
     });
   });
-
-  // NOT ON THE KEYPAD. The long-press that offered z̲ is withdrawn until the
-  // symbol can be its own node: as two characters in a literal it deletes a
-  // character at a time, and removing the exponent of z̲² took the whole
-  // expression. Everything below still holds — the engine reads the mark and
-  // plots it correctly — so this is one menu entry away from returning.
 
   group('it is drawn once', () {
     testWidgets('a complex line is a surface, not also a standing curve', (
@@ -192,6 +192,73 @@ void main() {
           reason: '$curveish px of standing curve remain',
         );
       });
+    });
+  });
+
+  group('as a node', () {
+    test('it is indivisible, which is the whole reason it is one', () {
+      // As two characters in a literal the editor deleted them one at a time —
+      // backspace left a bare z — and removing the exponent of z̲² took the
+      // whole expression. A node is removed whole or not at all.
+      final node = ComplexVariableNode();
+      expect(node, isA<MathNode>());
+      // It extends UnitVectorNode so that every rule the editor already has
+      // for an indivisible glyph applies to it without being rewritten.
+      expect(node, isA<UnitVectorNode>());
+    });
+
+    test('it compiles to the complex variable', () {
+      final e = compileNode(<MathNode>[]);
+      expect(e.isValid, isTrue, reason: e.error);
+      expect(e.isComplex, isTrue);
+      final w = e.evaluateComplex(1, 2);
+      expect(w.real, closeTo(1, 1e-9));
+      expect(w.imag, closeTo(2, 1e-9));
+    });
+
+    test('and carries an exponent, the case that used to wipe the line', () {
+      final e = PlotExpression.compile(<MathNode>[
+        ExponentNode(
+          base: <MathNode>[ComplexVariableNode()],
+          power: <MathNode>[LiteralNode(text: '2')],
+        ),
+      ]);
+      expect(e.isValid, isTrue, reason: e.error);
+      expect(e.isComplex, isTrue);
+      // (1 + 2i)² = -3 + 4i
+      final w = e.evaluateComplex(1, 2);
+      expect(w.real, closeTo(-3, 1e-9));
+      expect(w.imag, closeTo(4, 1e-9));
+    });
+
+    test('it is not a unit vector, however it is built', () {
+      // It extends one for the editor's sake. A line containing it is a
+      // function of a complex variable, not a field with a z̲ component.
+      expect(
+        VectorFieldParser.isVectorFieldNodes(<MathNode>[ComplexVariableNode()]),
+        isFalse,
+      );
+      expect(
+        VectorFieldParser.fromNodes(<MathNode>[ComplexVariableNode()]),
+        isNull,
+      );
+      // And a real one still is.
+      expect(
+        VectorFieldParser.isVectorFieldNodes(<MathNode>[UnitVectorNode('x')]),
+        isTrue,
+      );
+    });
+
+    test('it survives being saved and read back', () {
+      // Through the public round trip, which is what a cell actually uses.
+      final String json = MathExpressionSerializer.serializeToJson(<MathNode>[
+        ComplexVariableNode(),
+      ]);
+      final List<MathNode> back = MathExpressionSerializer.deserializeFromJson(
+        json,
+      );
+      expect(back, hasLength(1));
+      expect(back.first, isA<ComplexVariableNode>());
     });
   });
 }

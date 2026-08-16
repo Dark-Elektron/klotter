@@ -168,6 +168,9 @@ List<MathNode> _decimalizeExactNode(MathNode node) {
     return [ConstantNode(node.constant)];
   }
 
+  if (node is ComplexVariableNode) {
+    return [ComplexVariableNode()];
+  }
   if (node is UnitVectorNode) {
     return [UnitVectorNode(node.axis)];
   }

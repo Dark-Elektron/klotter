@@ -96,6 +96,8 @@ class MathExpressionSerializer {
       return 'ans$idx';
     } else if (node is ConstantNode) {
       return node.constant;
+    } else if (node is ComplexVariableNode) {
+      return 'z\u0332';
     } else if (node is UnitVectorNode) {
       return 'e_${node.axis}';
     }
@@ -523,6 +525,9 @@ class MathExpressionSerializer {
     if (node is ConstantNode) {
       return {'type': 'constant', 'constant': node.constant};
     }
+    if (node is ComplexVariableNode) {
+      return {'type': 'complex_variable'};
+    }
     if (node is UnitVectorNode) {
       return {'type': 'unit_vector', 'axis': node.axis};
     }
@@ -626,6 +631,8 @@ class MathExpressionSerializer {
         return ConstantNode(json['constant'] as String? ?? '');
       case 'unit_vector':
         return UnitVectorNode(json['axis'] as String? ?? 'x');
+      case 'complex_variable':
+        return ComplexVariableNode();
 
       default:
         return LiteralNode();

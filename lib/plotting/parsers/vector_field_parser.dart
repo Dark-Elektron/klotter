@@ -60,7 +60,10 @@ class VectorFieldParser {
 
   /// True when [nodes] contain a unit vector anywhere at the top level.
   static bool isVectorFieldNodes(List<MathNode> nodes) =>
-      nodes.any((n) => n is UnitVectorNode);
+  // The complex variable extends UnitVectorNode for the editor's sake and
+  // is emphatically not one: a line containing z̲ is a function of a
+  // complex variable, not a field with a z̲ component.
+  nodes.any((n) => n is UnitVectorNode && n is! ComplexVariableNode);
 
   /// Split [nodes] into per-axis components and compile each.
   ///
@@ -87,7 +90,7 @@ class VectorFieldParser {
       UnitVectorNode? axis;
       final List<MathNode> coefficient = <MathNode>[];
       for (final MathNode n in body) {
-        if (n is UnitVectorNode && axis == null) {
+        if (n is UnitVectorNode && n is! ComplexVariableNode && axis == null) {
           axis = n;
         } else {
           coefficient.add(n);

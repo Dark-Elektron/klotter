@@ -926,7 +926,14 @@ class MathEditorController extends ChangeNotifier {
     onCalculate();
   }
 
-  void insertUnitVector(String axis) {
+  /// Insert `z̲`, the complex variable.
+  ///
+  /// Goes in through the unit-vector path because it is one — the node
+  /// extends UnitVectorNode so that every rule the editor already has for an
+  /// indivisible glyph applies to it unchanged.
+  void insertComplexVariable() => insertUnitVector('z', complexVariable: true);
+
+  void insertUnitVector(String axis, {bool complexVariable = false}) {
     saveStateForUndo();
 
     final siblings = _resolveSiblingList();
@@ -941,7 +948,8 @@ class MathEditorController extends ChangeNotifier {
     String before = text.substring(0, cursorPos);
     String after = text.substring(cursorPos);
 
-    final node = UnitVectorNode(axis);
+    final MathNode node =
+        complexVariable ? ComplexVariableNode() : UnitVectorNode(axis);
 
     if (actualIndex >= 0) {
       if (after.isNotEmpty) {

@@ -175,6 +175,8 @@ class MathClipboard {
       return AnsNode(index: deepCopyNodes(node.index));
     } else if (node is ConstantNode) {
       return ConstantNode(node.constant);
+    } else if (node is ComplexVariableNode) {
+      return ComplexVariableNode();
     } else if (node is UnitVectorNode) {
       return UnitVectorNode(node.axis);
     } else if (node is ComplexNode) {

@@ -266,6 +266,14 @@ class MathRenderer extends StatelessWidget {
     // widget case, so they measured correctly and then drew nothing — the read
     // -only result display has its own copy of this, which is why they showed
     // up in results but never in the expression being typed.
+    if (node is ComplexVariableNode) {
+      return Text(
+        'z\u0332',
+        style: MathTextStyle.getStyle(fontSize).copyWith(color: Colors.white),
+        textScaler: textScaler,
+      );
+    }
+
     if (node is UnitVectorNode) {
       return Text(
         '${node.axis}\u0302',
@@ -2572,6 +2580,7 @@ class MathRenderer extends StatelessWidget {
       return (fontSize, fontSize / 2);
     }
 
+    // Same box as a unit vector: one glyph with a mark on it.
     if (node is UnitVectorNode) {
       return (fontSize, fontSize / 2);
     }
