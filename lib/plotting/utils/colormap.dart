@@ -1,5 +1,5 @@
 import 'dart:math' as math;
-import 'dart:ui';
+import 'package:flutter/painting.dart';
 
 import '../models/point_3d.dart';
 
@@ -238,4 +238,45 @@ Color applyShading(Color base, double factor) {
 Color applyDepthCue(Color color, double depth01, Color background) {
   const double maxWash = 0.28;
   return Color.lerp(color, background, depth01.clamp(0.0, 1.0) * maxWash)!;
+}
+
+/// The colour standing for a complex value in a domain-coloured plot.
+///
+/// Hue carries the argument and lightness carries the modulus, which is the
+/// usual reading: a zero is a black point every hue runs into, a pole is a
+/// white one, and the order of the colours going round says which way the
+/// function turns.
+///
+/// The hue wheel is used rather than [plotColormap] because phase wraps. A
+/// ramp with different colours at its ends would draw a seam along every ray
+/// where the argument passes π — a line in the picture that is not in the
+/// function.
+///
+/// The modulus is compressed before it is used. Untouched, a function that
+/// reaches a few hundred somewhere is flat white nearly everywhere else; the
+/// compression is what lets a pole and a zero show in the same picture.
+/// [scale] is the modulus that comes out mid-grey.
+Color domainColor(double argument, double modulus, {double scale = 1.0}) {
+  if (!argument.isFinite || !modulus.isFinite) {
+    return const Color(0x00000000);
+  }
+
+  // atan2 gives (-π, π]; the wheel wants [0, 360).
+  double hue = argument * 180 / math.pi;
+  if (hue < 0) hue += 360;
+
+  // 0 at a zero, 1 at a pole, 0.5 at `scale`. Both ends are approached
+  // smoothly, so neither is a hard disc of colour.
+  final double turns = math.log(1 + modulus / scale) / math.log(2);
+  final double lightness = (turns / (1 + turns)).clamp(0.0, 1.0);
+
+  // Full colour in the middle, giving way to the black and the white that
+  // mark the zero and the pole.
+  final double vividness = 1 - (2 * lightness - 1).abs();
+  return HSLColor.fromAHSL(
+    1,
+    hue,
+    (0.3 + 0.7 * vividness).clamp(0.0, 1.0),
+    lightness,
+  ).toColor();
 }

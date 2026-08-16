@@ -6,6 +6,7 @@ import '../models/enums.dart';
 import '../parsers/plot_expression.dart';
 import '../utils/parametric.dart';
 import '../parsers/vector_field_parser.dart';
+import '../../math_engine/math_engine.dart';
 import '../utils/colormap.dart';
 import '../utils/curve_features.dart';
 import '../utils/level_set.dart';
@@ -112,7 +113,11 @@ class Plot2DPainter extends CustomPainter {
       // are written the same way. Only the variables tell them apart: `y x̂ − x ŷ`
       // is an arrow at every point, `cos(u) x̂ + sin(u) ŷ` is one point swept
       // into a curve.
-      if (vectorParser != null && vectorParser!.isParametric) {
+      if (function.isComplex) {
+        // Before everything: a complex line is not a curve of x, and sampling
+        // it as one gives NaN at every point.
+        _drawDomainColouring(canvas, size);
+      } else if (vectorParser != null && vectorParser!.isParametric) {
         _drawParametric(canvas, toScreenX, toScreenY);
       } else if (fieldType == FieldType.vector && vectorParser != null) {
         _drawVectorField(canvas, size, toScreenX, toScreenY);
@@ -707,6 +712,79 @@ class Plot2DPainter extends CustomPainter {
     }
     canvas.drawPath(path, paint);
   }
+
+  /// Colour every point of the window by the value of f there.
+  ///
+  /// The whole plot is the picture, so this is drawn on the lattice the
+  /// heatmap already uses: one `drawVertices` for the grid, colour
+  /// interpolated across each cell rather than a flat block per cell, and any
+  /// cell touching an undefined sample left out so a pole is a hole instead of
+  /// a wrong colour.
+  void _drawDomainColouring(Canvas canvas, Size size) {
+    const int grid = _domainGrid;
+    final double cellW = size.width / grid;
+    final double cellH = size.height / grid;
+
+    // Sampled at the corners, which are shared between neighbouring cells, so
+    // the colour runs continuously across the picture.
+    final List<List<Color?>> corner = <List<Color?>>[
+      for (int i = 0; i <= grid; i++)
+        <Color?>[
+          for (int j = 0; j <= grid; j++)
+            () {
+              final double x = xMin + (xMax - xMin) * i / grid;
+              final double y = yMin + (yMax - yMin) * j / grid;
+              final Complex w = function.evaluateComplex(x, y);
+              if (!w.real.isFinite || !w.imag.isFinite) return null;
+              return domainColor(w.phase, w.magnitude);
+            }(),
+        ],
+    ];
+
+    final List<Offset> positions = <Offset>[];
+    final List<Color> colors = <Color>[];
+    for (int i = 0; i < grid; i++) {
+      for (int j = 0; j < grid; j++) {
+        final Color? a = corner[i][j];
+        final Color? b = corner[i + 1][j];
+        final Color? c = corner[i + 1][j + 1];
+        final Color? d = corner[i][j + 1];
+        if (a == null || b == null || c == null || d == null) continue;
+
+        final double left = i * cellW;
+        final double right = left + cellW;
+        // Screen y runs down while the imaginary axis runs up.
+        final double bottom = size.height - j * cellH;
+        final double top = bottom - cellH;
+
+        positions.addAll(<Offset>[
+          Offset(left, bottom),
+          Offset(right, bottom),
+          Offset(right, top),
+          Offset(left, bottom),
+          Offset(right, top),
+          Offset(left, top),
+        ]);
+        colors.addAll(<Color>[a, b, c, a, c, d]);
+      }
+    }
+    if (positions.isEmpty) return;
+
+    final Vertices vertices = Vertices(
+      VertexMode.triangles,
+      positions,
+      colors: colors,
+    );
+    canvas.drawVertices(vertices, BlendMode.srcOver, Paint());
+    vertices.dispose();
+  }
+
+  /// Cells across the window for domain colouring.
+  ///
+  /// Finer than the heatmap's lattice because this *is* the plot rather than a
+  /// backdrop for one — the eye reads the shape of the colour directly, so a
+  /// coarse grid shows as blocky bands around a zero.
+  static const int _domainGrid = 96;
 
   void _drawFunction(
     Canvas canvas,

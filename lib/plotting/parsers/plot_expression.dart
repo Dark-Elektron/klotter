@@ -1,5 +1,6 @@
 import '../../math_engine/math_engine_exact.dart';
 import '../../math_renderer/math_nodes.dart';
+import '../../math_engine/math_engine.dart';
 import '../../utils/coordinate_system.dart';
 
 /// How the two sides of a relation compare.
@@ -77,7 +78,52 @@ class PlotExpression {
     this.isLevelSet = false,
     this.system = CoordinateSystem.cartesian,
     this.relation = PlotRelation.equal,
-  });
+    bool isComplex = false,
+  }) : _isComplex = isComplex;
+
+  final bool _isComplex;
+
+  /// True when [nodes] contain the imaginary unit anywhere, however deeply.
+  ///
+  /// Walked over the typed nodes rather than the compiled expression: the
+  /// simplifier folds `0i` away and cancels `i - i`, so asking the [Expr]
+  /// misses a unit the user plainly wrote.
+  static bool usesImaginaryUnit(List<MathNode> nodes) {
+    for (final MathNode n in nodes) {
+      if (n is ComplexNode) return true;
+      if (n is LiteralNode && _bareImaginary.hasMatch(n.text)) return true;
+      for (final List<MathNode> child in _childrenOf(n)) {
+        if (usesImaginaryUnit(child)) return true;
+      }
+    }
+    return false;
+  }
+
+  /// `i` as its own symbol, not the i in `sin` or `pi`.
+  static final RegExp _bareImaginary = RegExp(r'(?<![A-Za-z])i(?![A-Za-z])');
+
+  /// The node lists hanging off [n], for walking a tree of unknown shape.
+  static Iterable<List<MathNode>> _childrenOf(MathNode n) sync* {
+    if (n is ComplexNode) yield n.content;
+    if (n is ParenthesisNode) yield n.content;
+    if (n is FractionNode) {
+      yield n.numerator;
+      yield n.denominator;
+    }
+    if (n is TrigNode) yield n.argument;
+    if (n is ExponentNode) {
+      yield n.base;
+      yield n.power;
+    }
+    if (n is LogNode) {
+      yield n.base;
+      yield n.argument;
+    }
+    if (n is RootNode) {
+      yield n.index;
+      yield n.radicand;
+    }
+  }
 
   /// The variables a plot may bind.
   static const Set<String> plottableVariables = {'x', 'y', 'z'};
@@ -110,6 +156,10 @@ class PlotExpression {
     CoordinateSystem system = CoordinateSystem.cartesian,
     bool isVectorComponent = false,
   }) {
+    // Read before anything simplifies: `0i` folds to nothing and `i - i`
+    // cancels, so the compiled form can lose a unit the user plainly typed.
+    final bool complex = usesImaginaryUnit(nodes);
+
     if (nodes.isEmpty) {
       return PlotExpression._(null, {}, 'Please enter a function');
     }
@@ -230,9 +280,13 @@ class PlotExpression {
     // where the third coordinate is the answer rather than something to
     // sample over — applying it to a component rejected fields like
     // rθθ̂ + zr̂, whose components legitimately mention all three.
+    // A complex line binds z to the point of the plane rather than sampling
+    // over it, so the rule below — which is about z being an answer and not an
+    // input — does not apply to it.
     final List<String> names = system.variables;
     if (!isVectorComponent &&
         !isLevelSet &&
+        !complex &&
         free.contains(names[2]) &&
         (free.contains(names[0]) || free.contains(names[1]))) {
       return PlotExpression._(
@@ -261,6 +315,7 @@ class PlotExpression {
       isLevelSet: isLevelSet,
       system: system,
       relation: relation?.$3 ?? PlotRelation.equal,
+      isComplex: complex,
     );
   }
 
@@ -448,6 +503,44 @@ class PlotExpression {
       return double.nan;
     }
   }
+
+  /// True when this line is a function of a complex variable.
+  ///
+  /// Decided by the imaginary unit appearing anywhere in it. A line with an
+  /// `i` in it cannot be sampled as a real function — [evaluate] answers NaN
+  /// for the unit — so there is nothing else it could sensibly be.
+  ///
+  /// Read from what was typed rather than from the compiled form. The
+  /// simplifier folds `0i` to nothing and cancels `i - i`, so by the time an
+  /// expression is an [Expr] the unit may be gone even though the user put it
+  /// there — which made `z + 0i`, the obvious way to ask for the identity, a
+  /// real plot.
+  ///
+  /// The cost of reading it this way at all is that `f(z) = z²` is not
+  /// recognised, having no `i` in it anywhere.
+  bool get isComplex => _isComplex;
+
+  /// This line at the point `x + iy` of the complex plane.
+  ///
+  /// `z` is the complex variable. `x` and `y` stay bound to the real and
+  /// imaginary parts, so `z·x` means what it looks like rather than failing
+  /// on an unbound name.
+  Complex evaluateComplex(double x, double y) {
+    final Expr? c = _compiled;
+    if (c == null) return const Complex(double.nan, double.nan);
+    _complexBindings['z'] = Complex(x, y);
+    _complexBindings['x'] = Complex(x, 0);
+    _complexBindings['y'] = Complex(y, 0);
+    try {
+      return c.evalComplexWith(_complexBindings);
+    } catch (_) {
+      return const Complex(double.nan, double.nan);
+    }
+  }
+
+  /// Scratch space for [evaluateComplex], reused for the same reason
+  /// [_bindings] is: domain colouring asks for a value per pixel.
+  final Map<String, Complex> _complexBindings = <String, Complex>{};
 
   /// Scratch space for [evaluate]. Safe to share because painting is
   /// single-threaded and the map never outlives the call.
