@@ -214,6 +214,14 @@ class Plot2DScreenState extends State<Plot2DScreen> {
     if (widget.fieldType != FieldType.scalar || widget.is3DFunction) {
       return;
     }
+    // A complex function has no curve to frame. Its domain is the plane, and
+    // the window should stay centred on the origin — the Argand diagram is
+    // the picture, not a graph of something against x.
+    //
+    // Fitting it anyway read a real-valued sample of it: `evaluate(x, 0, 0)`
+    // of (x + yi)² is x², so the window came out as -2.5 to 27.5 and the
+    // origin sat near the bottom of the plot.
+    if (widget.function.isComplex) return;
     try {
       final curves =
           widget.functions.isEmpty

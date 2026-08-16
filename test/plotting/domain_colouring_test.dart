@@ -3,6 +3,10 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'package:klotter/plotting/widgets/plot_2d_screen.dart';
 
 import 'package:klotter/math_renderer/math_nodes.dart';
 import 'package:klotter/plotting/models/enums.dart';
@@ -203,6 +207,114 @@ void main() {
         greaterThan(20),
         reason: 'the axis shows at only $spikes of 40 points',
       );
+    });
+  });
+
+  group('the window', () {
+    testWidgets('stays centred on the origin', (tester) async {
+      // A complex function has no curve to frame: its domain is the plane,
+      // and the Argand diagram is the picture rather than a graph of
+      // something against x.
+      SharedPreferences.setMockInitialValues({
+        'walkthrough_completed_v2': true,
+      });
+      final settings = await SettingsProvider.create();
+      addTearDown(settings.dispose);
+
+      final key = GlobalKey<Plot2DScreenState>();
+      // z̲ + 3, which is the spelling that exposes this. The real evaluator
+      // returns NaN for anything containing i, so the fit already found
+      // nothing to fit for (x + yi)² and left the window alone. z̲ compiles
+      // to a plain z with no imaginary part, so the fit does read numbers
+      // from it — 3 everywhere — and framed the window around y = 3.
+      final expr = PlotExpression.compile(<MathNode>[
+        ComplexVariableNode(),
+        LiteralNode(text: '+3'),
+      ]);
+      expect(expr.isComplex, isTrue, reason: expr.error);
+      expect(expr.evaluate(2, 0, 0), 3, reason: 'the fit would read this');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<SettingsProvider>.value(
+          value: settings,
+          child: MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                height: 400,
+                width: 360,
+                child: Plot2DScreen(
+                  key: key,
+                  plotTheme: PlotThemeData.fromColors(colors),
+                  function: expr,
+                  functions: <PlotExpression>[expr],
+                  is3DFunction: false,
+                  plotMode: PlotMode.function,
+                  fieldType: FieldType.scalar,
+                  showContour: false,
+                  surfaceMode: SurfaceMode.none,
+                  colors: colors,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 600));
+
+      final (xMin, xMax, yMin, yMax) = key.currentState!.ranges;
+      expect(
+        (yMin + yMax).abs(),
+        lessThan(0.01),
+        reason: 'the window runs $yMin to $yMax',
+      );
+      expect((xMin + xMax).abs(), lessThan(0.01));
+    });
+
+    testWidgets('while an ordinary function is still framed to fit', (
+      tester,
+    ) async {
+      // The control: auto-scaling has to keep working for everything else.
+      SharedPreferences.setMockInitialValues({
+        'walkthrough_completed_v2': true,
+      });
+      final settings = await SettingsProvider.create();
+      addTearDown(settings.dispose);
+
+      final key = GlobalKey<Plot2DScreenState>();
+      final expr = PlotExpression.compile(<MathNode>[
+        LiteralNode(text: 'x^2+20'),
+      ]);
+      await tester.pumpWidget(
+        ChangeNotifierProvider<SettingsProvider>.value(
+          value: settings,
+          child: MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                height: 400,
+                width: 360,
+                child: Plot2DScreen(
+                  key: key,
+                  plotTheme: PlotThemeData.fromColors(colors),
+                  function: expr,
+                  functions: <PlotExpression>[expr],
+                  is3DFunction: false,
+                  plotMode: PlotMode.function,
+                  fieldType: FieldType.scalar,
+                  showContour: false,
+                  surfaceMode: SurfaceMode.none,
+                  colors: colors,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 600));
+
+      final (_, _, yMin, yMax) = key.currentState!.ranges;
+      // x² + 20 never comes near zero, so a framed window must not be
+      // centred on it.
+      expect(yMin, greaterThan(5), reason: 'the window runs $yMin to $yMax');
     });
   });
 }
