@@ -27,11 +27,11 @@ void main() {
   PlotExpression saddle() =>
       PlotExpression.compile(<MathNode>[LiteralNode(text: 'x*y')]);
 
-  Future<ui.Image> render(SurfaceMode mode) async {
+  Future<ui.Image> render(SurfaceMode mode, {int surfaces = 1}) async {
     final expr = saddle();
     final painter = Plot3DPainter(
       function: expr,
-      functions: <PlotExpression>[expr],
+      functions: <PlotExpression>[for (int i = 0; i < surfaces; i++) expr],
       is3DFunction: true,
       rotationX: 0.6,
       rotationZ: 0.8,
@@ -109,11 +109,12 @@ void main() {
       // however solid the surface is.
       final int byValue = await hueCount(await render(SurfaceMode.magnitude));
       final int off = await hueCount(await render(SurfaceMode.none));
-      // Measured at 16 against 9. Not down to one, because a solid surface
-      // still has the axes and the shading's own tint around it.
+      // Measured at 17 against 13. Not down to one, because a solid surface
+      // still has the axes and the shading's own tint around it, and the hue
+      // buckets are coarse.
       expect(
         off,
-        lessThan(byValue - 4),
+        lessThan(byValue - 2),
         reason: 'by value $byValue hues, off $off',
       );
     });
@@ -134,6 +135,38 @@ void main() {
       expect(opaque, greaterThan(10000), reason: 'only $opaque px drawn');
       // The cells face different ways, so one colour is many brightnesses.
       expect(tones.length, greaterThan(4), reason: '${tones.length} tones');
+    });
+  });
+
+  testWidgets('a solid surface takes its colour from the series palette', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      // The first surface is the palette's first colour whether or not it has
+      // company. It used to be the accent when alone, so adding a second plot
+      // recoloured the first from yellow to blue.
+      final theme = PlotThemeData.fromColors(colors);
+      final Color first = theme.seriesColor(0);
+
+      final data = (await (await render(SurfaceMode.none)).toByteData())!;
+      int matching = 0;
+      for (int i = 0; i < 320 * 320; i++) {
+        final int o = i * 4;
+        if (data.getUint8(o + 3) < 200) continue;
+        // Shaded, so the colour is the series hue at some brightness.
+        final HSVColor hsv = HSVColor.fromColor(
+          Color.fromARGB(
+            255,
+            data.getUint8(o),
+            data.getUint8(o + 1),
+            data.getUint8(o + 2),
+          ),
+        );
+        if (hsv.saturation < 0.25) continue;
+        final double d = (hsv.hue - HSVColor.fromColor(first).hue).abs();
+        if (d < 25 || d > 335) matching++;
+      }
+      expect(matching, greaterThan(8000), reason: 'only $matching px match');
     });
   });
 }

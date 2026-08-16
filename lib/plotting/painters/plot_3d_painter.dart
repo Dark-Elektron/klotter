@@ -1069,8 +1069,11 @@ class Plot3DPainter extends CustomPainter {
       // along and the painter ignored it, so a surface was always coloured by
       // its own height — which the shape already shows.
       final bool solid = surfaceMode == SurfaceMode.none;
-      final Color plain =
-          curves.length == 1 ? colors.accent : _theme.seriesColor(c);
+      // The series palette, always — including for a lone surface. Falling
+      // back to the accent when there was only one meant a surface was yellow
+      // on its own and blue the moment a second was added, so adding a plot
+      // recoloured the one already there.
+      final Color plain = _theme.seriesColor(c);
 
       if (curves.length == 1) {
         soleMin = built.minV;
