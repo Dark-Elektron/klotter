@@ -1,4 +1,4 @@
-import 'dart:math' show exp, max;
+import 'dart:math' show exp;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -209,16 +209,6 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   /// frames is on screen long enough to read anyway. So the scrub moves a
   /// cheap readout and the plot is drawn once, on release.
   int? _scrubTarget;
-
-  /// Opacity of the page area, for the cross-fade between plots.
-  double _pageOpacity = 1;
-
-  /// True while a fade is running, so a second swipe cannot start one on top
-  /// of it and leave the page stuck half faded.
-  bool _fading = false;
-
-  /// Half of the cross-fade. Short: this is covering a jump, not narrating it.
-  static const Duration _pageFade = Duration(milliseconds: 130);
 
   SettingsProvider? _settingsProvider;
   bool _listenerAdded = false;
@@ -464,14 +454,14 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     if (forward) {
       if (current < keys.length - 1) {
-        _fadeToPage(current + 1);
+        _animateToPage(current + 1);
       } else if (_canAddPage) {
         _addDisplay();
       }
       return;
     }
     if (current > 0) {
-      _fadeToPage(current - 1);
+      _animateToPage(current - 1);
     }
   }
 
@@ -522,10 +512,6 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   /// The plot itself owns pan and pinch, so page navigation needs its own
   /// surface rather than competing with those gestures.
   /// How far the finger travels for one plot while scrubbing.
-  ///
-  /// The whole strip covers the whole set, so a long list is one sweep rather
-  /// than a hundred flicks — but never finer than a comfortable thumb's width,
-  /// or two plots would be indistinguishable when there are only three.
   /// How big the dot for plot [i] is, given the finger is over [focus].
   ///
   /// The dock's magnification: not one dot picked out and the rest left flat,
@@ -542,8 +528,15 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return resting + (peak - resting) * bump;
   }
 
-  double _scrubPitch(double stripWidth, int count) =>
-      count <= 1 ? stripWidth : max(28.0, stripWidth / count);
+  double _scrubPitch(double stripWidth, int count) {
+    if (count <= 1) return stripWidth;
+    // Capped rather than floored, which is the opposite of what it was. With
+    // only a few plots, dividing the strip between them meant fifty pixels of
+    // travel each — slower than just swiping, which is not what a hold-and-run
+    // is for. The lower bound only stops a very long list becoming twitchy.
+    final double even = stripWidth / count;
+    return even < 9.0 ? 9.0 : (even > 18.0 ? 18.0 : even);
+  }
 
   void _scrubTo(double dx, int from, double stripWidth, int count) {
     final int target = (from + dx / _scrubPitch(stripWidth, count)).round();
@@ -585,6 +578,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
       builder: (context, constraints) {
         final double stripWidth = constraints.maxWidth;
         return GestureDetector(
+          key: const ValueKey<String>('plot-swipe-strip'),
           behavior: HitTestBehavior.opaque,
           onHorizontalDragEnd: (details) {
             final v = details.primaryVelocity ?? 0;
@@ -674,35 +668,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final int? target = _scrubTarget;
     setState(() => _scrubTarget = null);
     if (target == null) return;
-    _fadeToPage(target);
-  }
-
-  /// Change page behind a cross-fade.
-  ///
-  /// The page is jumped rather than scrolled. A scroll would slide every plot
-  /// between here and there across the screen, and each one is a cold geometry
-  /// cache — the cost of arriving somewhere would depend on how far away it
-  /// was. The fade covers the swap and costs the same however far the jump.
-  Future<void> _fadeToPage(int target) async {
-    final keys = _pageKeys;
-    if (target < 0 || target >= keys.length) return;
-    if (!_pageViewController.hasClients) return;
-    if (target == keys.indexOf(_currentPageIndex)) return;
-
-    if (_fading) {
-      _animateToPage(target, jump: true);
-      return;
-    }
-    _fading = true;
-    try {
-      setState(() => _pageOpacity = 0);
-      await Future<void>.delayed(_pageFade);
-      if (!mounted) return;
-      _animateToPage(target, jump: true);
-      setState(() => _pageOpacity = 1);
-    } finally {
-      _fading = false;
-    }
+    _animateToPage(target, jump: true);
   }
 
   Widget _buildPlotArea(
@@ -1728,32 +1694,24 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   // above its expression. Other cells are reached by the swipe
                   // strip below rather than by scrolling.
                   Expanded(
-                    child: AnimatedOpacity(
-                      opacity: _pageOpacity,
-                      duration: _pageFade,
-                      curve: Curves.easeInOut,
-                      child: PageView.builder(
-                        controller: _pageViewController,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: _pageKeys.length,
-                        onPageChanged: (position) {
-                          final keys = _pageKeys;
-                          if (position >= 0 && position < keys.length) {
-                            _captureView(_currentPageIndex);
-                            setState(() => activeIndex = keys[position]);
-                          }
-                        },
-                        itemBuilder: (context, position) {
-                          final keys = _pageKeys;
-                          if (position >= keys.length) {
-                            return const SizedBox.shrink();
-                          }
-                          return _buildExpressionDisplay(
-                            keys[position],
-                            colors,
-                          );
-                        },
-                      ),
+                    child: PageView.builder(
+                      controller: _pageViewController,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: _pageKeys.length,
+                      onPageChanged: (position) {
+                        final keys = _pageKeys;
+                        if (position >= 0 && position < keys.length) {
+                          _captureView(_currentPageIndex);
+                          setState(() => activeIndex = keys[position]);
+                        }
+                      },
+                      itemBuilder: (context, position) {
+                        final keys = _pageKeys;
+                        if (position >= keys.length) {
+                          return const SizedBox.shrink();
+                        }
+                        return _buildExpressionDisplay(keys[position], colors);
+                      },
                     ),
                   ),
                   // A hairline between the expression and the strip below it,
