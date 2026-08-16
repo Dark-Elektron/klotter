@@ -1120,6 +1120,12 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
       // A complex function has no single height, so "on" is not one thing:
       // the surface can be coloured by any real reading of it, including the
       // argument, which goes on the hue wheel rather than a ramp.
+      // arg first, straight after Off: it is the reading a complex plot
+      // arrives with and the one the 2D view shows, so it belongs where the
+      // eye lands rather than at the bottom of the list.
+      menuItems.add(
+        const PopupMenuItem(value: SurfaceMode.z, child: Text('arg f')),
+      );
       menuItems.add(
         const PopupMenuItem(value: SurfaceMode.x, child: Text('Re f')),
       );
@@ -1128,9 +1134,6 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
       );
       menuItems.add(
         const PopupMenuItem(value: SurfaceMode.magnitude, child: Text('|f|')),
-      );
-      menuItems.add(
-        const PopupMenuItem(value: SurfaceMode.z, child: Text('arg f')),
       );
     } else {
       menuItems.add(
