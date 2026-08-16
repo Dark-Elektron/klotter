@@ -191,4 +191,36 @@ void main() {
       });
     });
   });
+
+  testWidgets('the modulus surface carries the hue, not one flat colour', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      // The report this was written for: |f| came out solid green with only
+      // the lighting varying across it. Coloured by argument it carries the
+      // same wheel the 2D view shows.
+      final data =
+          (await (await render(abs, mode: SurfaceMode.z)).toByteData())!;
+      final Set<int> sectors = <int>{};
+      int coloured = 0;
+      for (int i = 0; i < 320 * 320; i++) {
+        final int o = i * 4;
+        if (data.getUint8(o + 3) < 200) continue;
+        final HSVColor c = HSVColor.fromColor(
+          Color.fromARGB(
+            255,
+            data.getUint8(o),
+            data.getUint8(o + 1),
+            data.getUint8(o + 2),
+          ),
+        );
+        if (c.saturation < 0.3 || c.value < 0.2) continue;
+        coloured++;
+        sectors.add((c.hue / 30).floor() % 12);
+      }
+      expect(coloured, greaterThan(5000), reason: 'only $coloured px coloured');
+      // A solid surface lands in one or two sectors however it is lit.
+      expect(sectors.length, greaterThan(8), reason: '${sectors.length}');
+    });
+  });
 }

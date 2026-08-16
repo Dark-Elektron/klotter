@@ -290,7 +290,13 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
       _is3DFunction = valid.any(
         (PlotExpression e) => e.usesY || e.isImplicitSurface,
       );
-      if (valid.first.isLevelSet) {
+      if (valid.first.isComplex) {
+        // A complex surface arrives coloured by argument, which is what the
+        // 2D view of the same function shows without being asked. Left solid,
+        // it was a green shape with nothing on it but the lighting — the
+        // height alone says almost nothing about a complex function.
+        if (!_surfaceModeChosen) _surfaceMode = SurfaceMode.z;
+      } else if (valid.first.isLevelSet) {
         // Never F itself: it only locates the curve or surface, so a heatmap
         // of it would colour the plot by distance from the answer. In 3D
         // there is height to shade instead, which is what the coloured

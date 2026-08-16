@@ -194,4 +194,15 @@ void main() {
     final Plot3DScreen solid = tester.widget(find.byType(Plot3DScreen));
     expect(solid.surfaceMode, SurfaceMode.magnitude);
   });
+
+  testWidgets('a complex plot arrives coloured by argument', (tester) async {
+    // What the 2D view of the same function shows without being asked. Left
+    // solid, a complex surface is a green shape with nothing on it but the
+    // lighting — its height alone says almost nothing.
+    await tester.pumpWidget(host(<MathNode>[LiteralNode(text: 'x+yi')]));
+    await tester.pumpAndSettle();
+
+    final Plot3DScreen solid = tester.widget(find.byType(Plot3DScreen));
+    expect(solid.surfaceMode, SurfaceMode.z);
+  });
 }
