@@ -407,9 +407,64 @@ class Plot3DPainter extends CustomPainter {
   ///         0.40             78%            108%   clipped
   ///         0.55            108%            133%   clipped
   ///
-  /// So about 0.35 is as long as the axis goes on a panel this shape before
-  /// the top and bottom are cut off.
-  static const double _zExtent = 0.35;
+  /// One per shape of screen, split the same way the floor line is, because
+  /// how long the axis can be depends on how much height there is to spend: a
+  /// landscape tablet has little and a portrait one has plenty.
+  ///
+  /// Independent of the placement knobs in both directions. Changing one of
+  /// these grows or shrinks the axis about the floor, which stays where
+  /// [_floorLineFor] puts it; changing a floor line slides everything without
+  /// altering any length.
+  static const double _zExtentLandscape = 0.5;
+  static const double _zExtentPortrait = 0.4;
+  static const double _zExtentPhone = 0.45;
+
+  /// Which of those applies, from the shape of the plot area.
+  static double _zExtentFor(Size size) => switch (_formFactorOf(size)) {
+    _Panel.phone => _zExtentPhone,
+    _Panel.tabletLandscape => _zExtentLandscape,
+    _Panel.tabletPortrait => _zExtentPortrait,
+  };
+
+  /// Where the floor plane sits, as a fraction of the panel height from the
+  /// top, when the box is taller than the panel.
+  ///
+  /// **These are the knobs for vertical placement**, one per shape of screen,
+  /// because the right answer genuinely differs: a landscape tablet wants the
+  /// floor high, a portrait one wants it low, and a phone fits without any of
+  /// this mattering.
+  ///
+  /// Anchored on the floor rather than on the top of the box, which is what
+  /// decouples this from [_zExtent]. Hung from the box's top edge, making the
+  /// z axis taller pushed everything down as a side effect — the same knob
+  /// moved two things. The floor's own position depends on the plan and the
+  /// tilt and nothing else, so lengthening z now grows the axis upward and
+  /// leaves the plane where it was.
+  static const double _floorLineLandscape = 1.0;
+  static const double _floorLinePortrait = 0.86;
+  static const double _floorLinePhone = 0.95;
+
+  /// Which of those applies, from the shape of the plot area.
+  ///
+  /// Read from the panel rather than passed in, so nothing upstream has to
+  /// know about it and a rotation is picked up on the next paint.
+  static double _floorLineFor(Size size) => switch (_formFactorOf(size)) {
+    _Panel.phone => _floorLinePhone,
+    _Panel.tabletLandscape => _floorLineLandscape,
+    _Panel.tabletPortrait => _floorLinePortrait,
+  };
+
+  /// The kind of screen a plot area of this shape belongs to.
+  ///
+  /// 600 is the same threshold the keypad uses to decide it is on a tablet.
+  /// One rule for both sets of knobs, so the axis length and the floor line
+  /// can never disagree about which device they are on.
+  static _Panel _formFactorOf(Size size) {
+    if (size.shortestSide < 600 && size.width < 600) return _Panel.phone;
+    return size.width > size.height
+        ? _Panel.tabletLandscape
+        : _Panel.tabletPortrait;
+  }
 
   /// The perspective strength, as a multiple of the panel's longer side.
   ///
@@ -436,6 +491,37 @@ class Plot3DPainter extends CustomPainter {
 
   /// Cached per viewport: the search below is cheap but runs on every paint
   /// and every pick, and the size rarely changes.
+  /// Where the drawing sits vertically: centred when it fits, hung from the
+  /// top when it does not.
+  ///
+  /// On a panel too short for the box — a tablet in landscape, where a floor
+  /// spanning the width is deeper than the panel is tall — centring divides
+  /// the loss between the top and the bottom, and the top is where the
+  /// surface is. The bottom of the box is mostly the empty half below the
+  /// floor, which is the part worth losing.
+  ///
+  /// Shrinking the box until it fits was the other way out and it wastes the
+  /// width, which is the thing a wide screen has most of.
+  static double _verticalPlacement(
+    ({double left, double right, double top, double bottom, double floor}) b,
+    double floorLine,
+    Size size,
+  ) {
+    // Applied whether or not the box fits.
+    //
+    // This used to fall back to plain centring when the drawing fitted the
+    // panel, which made _floorLinePhone dead code: a phone's box fits, so it
+    // took that branch every time and the knob did nothing.
+    // b.floor is in the same space as b.top: distance above the middle of the
+    // canvas, before the offset. Wanting it at `floorLine` down the panel
+    // means an offset of that minus where it would otherwise fall.
+    //
+    // Whatever runs off the panel as a result is the empty half below the
+    // plane, and the tip of the z axis above it — which is the trade the knob
+    // exists to let you make.
+    return b.floor - size.height * (0.5 - floorLine);
+  }
+
   /// What the fit has to keep on the canvas: the box corners and the axis
   /// arrow tips, the latter reaching further than any corner.
   static List<(double, double, double)> _fitPoints(
@@ -454,6 +540,9 @@ class Plot3DPainter extends CustomPainter {
       (0, -planar * reach, 0),
       (0, 0, vertical * reach),
       (0, 0, -vertical * reach),
+      // The centre of the floor plane, which is what the vertical placement
+      // is measured from. On the axis, so no rotation moves it sideways.
+      (0, 0, -vertical),
     ];
   }
 
@@ -483,34 +572,54 @@ class Plot3DPainter extends CustomPainter {
     // Keyed on the knobs as well as the size, so editing one and hot
     // reloading actually re-fits. Keyed on size alone, a changed constant
     // looked like it did nothing at all.
-    final String key = '$size|$_planExtent|$_zExtent|$_perspective|$_fitTilt';
+    final double floorLine = _floorLineFor(size);
+    final String key =
+        '$size|$_planExtent|${_zExtentFor(size)}|$floorLine|'
+        '$_perspective|$_fitTilt';
     if (_fitKey == key && _fitResult != null) return _fitResult!;
 
     final double focalLength = focalLengthFor(size);
     final double ct = cos(_fitTilt), st = sin(_fitTilt);
 
-    // Set, not solved. Every version of this that searched for a size ended
-    // up tying the two extents together — the panel is one budget, so
-    // whichever was fitted first took it and the other knob did nothing. The
-    // sizes are now simply what they are told to be, and the only thing
-    // computed is where to put the result.
-    final double planar = size.width * _planExtent;
-    final double vertical = size.height * _zExtent;
+    // The shape comes from the knobs; the size comes from the panel.
+    //
+    // _planExtent and _zExtent set the proportions of the box — how wide the
+    // floor is against how tall the axis. That ratio is a matter of taste and
+    // stays exactly as written. What cannot be written down in advance is how
+    // big the result may be, because that depends on the panel: the same
+    // proportions that fill a phone overflow a landscape tablet by half
+    // again, since the floor is drawn tilted and a wide panel gives it a depth
+    // the panel has no height for.
+    //
+    // So the pair is scaled together until the drawing fits, which leaves the
+    // shape untouched and uses whatever room there is. Nothing is special
+    // cased per device.
+    final double shapePlanar = size.width * _planExtent;
+    final double shapeVertical = size.height * _zExtentFor(size);
 
     /// Where the drawing lands, over a full turn of azimuth, so the centring
     /// holds at every rotation rather than only the one it was measured at.
     ///
     /// Null when the box reaches the eye, where the projection stops meaning
     /// anything.
-    ({double left, double right, double top, double bottom})? boundsOf() {
+    ({double left, double right, double top, double bottom, double floor})?
+    boundsOf(double scale) {
       double left = double.infinity, right = double.negativeInfinity;
       double top = double.negativeInfinity, bottom = double.infinity;
+      // Where the plane itself lands, which is what the placement is hung on.
+      //
+      // Its centre, not the average of its corners. Averaging let one corner
+      // dominate: the near one sits closest to the eye, so its perspective
+      // factor is the largest, and on a small panel that produced a "floor"
+      // thousands of pixels from anything real. The centre is on the axis, so
+      // no azimuth moves it and no corner can skew it.
+      double floorCentre = 0;
       for (int a = 0; a < 36; a++) {
         final double az = a * pi / 18;
         final double ca = cos(az), sa = sin(az);
         for (final (double x, double y, double z) in _fitPoints(
-          planar,
-          vertical,
+          shapePlanar * scale,
+          shapeVertical * scale,
         )) {
           final double vx = x * ca - y * sa;
           final double planeY = x * sa + y * ca;
@@ -524,18 +633,33 @@ class Plot3DPainter extends CustomPainter {
           // Screen y runs downwards, so the largest vz is the top.
           top = max(top, vz * k);
           bottom = min(bottom, vz * k);
+          if (x == 0 && y == 0 && z == -shapeVertical * scale) {
+            floorCentre = vz * k;
+          }
         }
       }
-      return (left: left, right: right, top: top, bottom: bottom);
+      return (
+        left: left,
+        right: right,
+        top: top,
+        bottom: bottom,
+        floor: floorCentre,
+      );
     }
 
+    // No scaling to fit. The shape is the shape, at full size, because on a
+    // wide panel shrinking it until it fits is exactly what wastes the width
+    // a tablet has most of.
+    final double planar = shapePlanar;
+    final double vertical = shapeVertical;
+
     // Centre what is actually drawn, not the origin it is drawn around.
-    final b = boundsOf();
+    final b = boundsOf(1);
     final ViewFit fit = ViewFit(
       planar: planar,
       vertical: vertical,
       offsetX: b == null ? 0 : -(b.left + b.right) / 2,
-      offsetY: b == null ? 0 : (b.top + b.bottom) / 2,
+      offsetY: b == null ? 0 : _verticalPlacement(b, floorLine, size),
     );
     _fitKey = key;
     _fitResult = fit;
@@ -773,9 +897,15 @@ class Plot3DPainter extends CustomPainter {
         final double y2 = y1 * cx - z * sx;
         final double z2 = y1 * sx + z * cx;
 
+        // _panX and _panY, not panX and panY: the framing offset has to be
+        // included here as it is everywhere else. This path projects by hand
+        // rather than through Point3D.project, so it was missed when the
+        // offset was added — the axes and the floor moved with the framing
+        // and every level surface stayed where it was, which showed up as a
+        // sphere sitting off its own origin.
         final double scale = focalLength / (focalLength + y2);
-        screen[o + v * 2] = halfW + x1 * scale + panX;
-        screen[o + v * 2 + 1] = halfH - z2 * scale + panY;
+        screen[o + v * 2] = halfW + x1 * scale + _panX;
+        screen[o + v * 2 + 1] = halfH - z2 * scale + _panY;
         depthSum += y2;
       }
       depth[t] = depthSum / 3;
@@ -3635,3 +3765,6 @@ class Plot3DPainter extends CustomPainter {
       old.surfaceMode != surfaceMode ||
       old.colors != colors;
 }
+
+/// The shapes of screen the framing knobs are split across.
+enum _Panel { phone, tabletLandscape, tabletPortrait }

@@ -2,7 +2,7 @@ name: klotter
 description: "A scientific calculator that graphs what you type."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
-publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+publish_to: "none" # Remove this line if you wish to publish to pub.dev
 
 # The following defines the version and build number for your application.
 # A version number is three numbers separated by dots, like 1.2.43
@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 0.1.0+24
+version: 0.1.0+26
 
 environment:
   sdk: ^3.7.0
@@ -63,16 +63,16 @@ flutter_native_splash:
   android: true
   ios: true
   web: false
-  color: "#deebe7"
-  icon_background_color: "#deebe7"
+  color: "#ede4eb"
+  icon_background_color: "#ede4eb"
   image: "assets/icons/playstore.png"
   branding: "assets/icons/branding.png"
   android_12:
-    color: "#deebe7"
+    color: "#ede4eb"
     image: "assets/icons/playstore.png"
     branding: "assets/icons/branding.png"
     icon_background_color: "#bfcfcc"
-  
+
 flutter_launcher_icons:
   android: "launcher_icon"
   ios: true
@@ -80,12 +80,12 @@ flutter_launcher_icons:
   image_path: "assets/icons/app_icon.png"
   min_sdk_android: 16 # android min sdk min:16, default 21
   adaptive_icon_foreground: "assets/icons/app_icon.png"
-  adaptive_icon_background: "#deebe7"
+  adaptive_icon_background: "#ede4eb"
   web:
     generate: true
     image_path: "assets/icons/app_icon.png"
-    background_color: "#deebe7"
-    theme_color: "#deebe7"
+    background_color: "#ede4eb"
+    theme_color: "#ede4eb"
   windows:
     generate: true
     image_path: "assets/icons/app_icon.png"
@@ -99,7 +99,6 @@ flutter_launcher_icons:
 
 # The following section is specific to Flutter packages.
 flutter:
-
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.

@@ -302,6 +302,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
       panX = 0.0;
       panY = 0.0;
     });
+    // Home puts a parametric plot back around its figure, not back to ±5.
     _autoScaleIfNeeded();
   }
 
@@ -423,13 +424,62 @@ class Plot3DScreenState extends State<Plot3DScreen>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.function != widget.function ||
         oldWidget.functions != widget.functions ||
-        oldWidget.fieldType != widget.fieldType) {
+        oldWidget.fieldType != widget.fieldType ||
+        // The sweep decides where a parametric figure goes, so changing it
+        // changes what there is to frame.
+        oldWidget.vectorParser != widget.vectorParser ||
+        oldWidget.uRange != widget.uRange ||
+        oldWidget.vRange != widget.vRange) {
       _autoScaleIfNeeded();
     }
   }
 
+  /// Frame a parametric plot around the shape it actually traces.
+  ///
+  /// A sweep has no natural range: u and v decide where the points go, and
+  /// nothing about the axes does. Left at the default ±5 a small figure sits
+  /// in the middle of an empty box and a large one runs out of it, and either
+  /// way the first thing anyone does is pinch to fix it.
+  ///
+  /// Returns false when there is nothing to frame, so the caller can fall
+  /// through to whatever it would have done.
+  bool _frameParametric() {
+    final VectorFieldParser? field = widget.vectorParser;
+    if (field == null || !field.isParametric) return false;
+
+    final Iterable<ParametricPoint?> points =
+        field.isParametricSurface
+            ? cachedParametricSurface(
+              field,
+              u: widget.uRange,
+              v: widget.vRange,
+            ).expand((List<ParametricPoint?> row) => row)
+            : cachedParametricCurve(field, u: widget.uRange);
+
+    final ({double x, double y, double z})? extent = parametricExtent(points);
+    if (extent == null) return false;
+
+    // A tenth of margin so the figure does not touch the walls, and a floor
+    // so a curve that lies flat in one axis — a circle in the plane, say —
+    // still gets a box with some depth to it rather than a slot.
+    double axis(double reach) {
+      final double padded = reach * 1.1;
+      return padded.isFinite && padded > 0.5 ? padded : 0.5;
+    }
+
+    setState(() {
+      xRange = axis(extent.x);
+      yRange = axis(extent.y);
+      zRange = axis(extent.z);
+    });
+    return true;
+  }
+
   void _autoScaleIfNeeded() {
     if (_manualZ) return;
+    // A sweep is framed by its own extent; the height-surface fit below has
+    // nothing to say about it.
+    if (_frameParametric()) return;
     final newZ = _computeAutoZRange();
     if (newZ == null) return;
     setState(() {

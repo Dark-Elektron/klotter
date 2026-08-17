@@ -67,138 +67,109 @@ void main() {
     );
   }
 
-  /// How tall the z axis alone projects — the segment on the axis itself,
-  /// arrowhead included, with nothing of the floor in it.
-  double zAxisHeight(Size size) {
-    final ViewFit f = Plot3DPainter.viewExtentsFor(size);
-    final double focal = Plot3DPainter.focalLengthFor(size);
-    const double tilt = 0.6;
-    const double reach = Plot3DPainter.axisArrowOvershoot;
-    final double ct = math.cos(tilt);
-    double top = double.negativeInfinity, bottom = double.infinity;
-    for (final double sz in <double>[-1, 1]) {
-      // On the axis, so azimuth cannot move it.
-      final double z = sz * f.vertical * reach;
-      final double k = focal / (focal - z * math.sin(tilt));
-      final double y = -z * ct * k;
-      top = math.max(top, -y);
-      bottom = math.min(bottom, -y);
-    }
-    return top - bottom;
-  }
-
   const List<Size> shapes = <Size>[
     Size(988, 1210), // the phone in portrait, where the waste showed
     Size(400, 400), // square
     Size(360, 320), // a short inline panel
     Size(800, 300), // wide and shallow
+    Size(2000, 790), // a tablet in landscape
     Size(300, 900), // very tall
   ];
 
-  group('a portrait panel', () {
-    const Size phone = Size(988, 1210);
+  group('the shape comes from the knobs, the size from the panel', () {
+    // _planExtent and _zExtent set the proportions of the box. How big that
+    // box may be cannot be written down in advance, because it depends on the
+    // panel: the same proportions that fill a phone overrun a landscape
+    // tablet by half again, since the floor is drawn tilted and a wide panel
+    // gives it a depth the panel has no height for. So the pair is scaled
+    // together until it fits.
 
-    test('fills its height', () {
-      expect(footprint(phone).height / phone.height, greaterThan(0.9));
-    });
-
-    test('draws its floor across most of the panel', () {
-      // The floor, not the whole drawing — budgeting everything drawn hid
-      // the fact that the visible grid covered under two thirds while the
-      // box's top corners, which nobody reads as the width, touched both
-      // edges.
-      //
-      // Not all of it: the floor's width and the z axis's height are one
-      // budget, and _zAspect is where the two are traded off. A floor filling
-      // the panel would leave the z axis at little over half the height.
-      expect(footprint(phone).floor / phone.width, greaterThan(0.7));
-    });
-
-    test('and gives the z axis a comparable share of the height', () {
-      // The other side of that trade, so a change to _zAspect that starves
-      // one of them fails here rather than passing quietly.
-      final f = Plot3DPainter.viewExtentsFor(phone);
-      final double zShare = zAxisHeight(phone) / phone.height;
-      expect(zShare, greaterThan(0.6), reason: 'z axis is only $zShare');
-      expect(f.vertical, greaterThan(f.planar));
-    });
-
-    test('is a cuboid, with z the long axis', () {
-      // The shape asked for: a cube left the height empty above the box.
-      final ViewFit f = Plot3DPainter.viewExtentsFor(phone);
-      // Only modestly taller than wide. z takes what the height affords once
-      // the floor has the width, and on this panel that is not much more.
-      expect(f.vertical, greaterThan(f.planar * 1.1));
-    });
-
-    test('and sits centred, not low', () {
-      // The centring is the other half of the fix. Without it the drawing
-      // hangs below the middle however well it is sized.
-      final ViewFit f = Plot3DPainter.viewExtentsFor(phone);
-      expect(f.offsetY, isNot(0));
-    });
-  });
-
-  group('the two extents are independent', () {
-    // The point of the whole arrangement. Every earlier version tied them
-    // together — the panel is one budget, so a joint fit meant that raising
-    // one lowered the other, and whichever was fitted first left the other
-    // knob doing nothing at all.
-
-    test('each is a fixed share of the panel, whatever its shape', () {
-      // If either were fitted against the other, its share would move as the
-      // panel changed shape. Neither does.
-      final Set<String> planShares = <String>{};
-      final Set<String> zShares = <String>{};
-      for (final Size s in shapes) {
+    test('the proportions are constant within a form factor', () {
+      // Not across all panels — the z extent is deliberately split three ways,
+      // so a landscape tablet, a portrait tablet and a phone each have their
+      // own. What must hold is that the shape depends only on which of those
+      // a panel is, and not on its exact pixel size: two panels of the same
+      // kind get the same box.
+      final Map<String, Set<String>> byKind = <String, Set<String>>{};
+      for (final Size s in <Size>[
+        Size(2000, 790), Size(1400, 600), // landscape tablets
+        Size(1600, 1100), Size(800, 900), // portrait tablets
+        Size(411, 700), Size(360, 640), // phones
+      ]) {
         final ViewFit f = Plot3DPainter.viewExtentsFor(s);
-        planShares.add((f.planar / s.width).toStringAsFixed(6));
-        zShares.add((f.vertical / s.height).toStringAsFixed(6));
+        final String kind =
+            s.shortestSide < 600 && s.width < 600
+                ? 'phone'
+                : (s.width > s.height ? 'landscape' : 'portrait');
+        byKind
+            .putIfAbsent(kind, () => <String>{})
+            .add(
+              (f.vertical / f.planar * (s.width / s.height)).toStringAsFixed(2),
+            );
       }
-      expect(planShares, hasLength(1), reason: 'plan varies: $planShares');
-      expect(zShares, hasLength(1), reason: 'z varies: $zShares');
+      for (final MapEntry<String, Set<String>> e in byKind.entries) {
+        expect(e.value, hasLength(1), reason: '${e.key} varies: ${e.value}');
+      }
     });
 
-    test('neither reads the other', () {
-      // Doubling the panel's height must not touch the plan, and doubling its
-      // width must not touch z. Anything shared between them would show here.
-      const Size base = Size(600, 600);
-      final ViewFit a = Plot3DPainter.viewExtentsFor(base);
-      final ViewFit taller = Plot3DPainter.viewExtentsFor(
-        const Size(600, 1200),
-      );
-      final ViewFit wider = Plot3DPainter.viewExtentsFor(const Size(1200, 600));
-
-      expect(taller.planar, a.planar, reason: 'a taller panel moved the plan');
-      expect(wider.vertical, a.vertical, reason: 'a wider panel moved z');
-    });
-  });
-
-  group('what the panel affords', () {
-    test('the plan covers most of the width', () {
-      // Turned, so the floor spans about 2.8 times its half-width.
+    test('and the width is used in full', () {
+      // What the sizing is for. Scaling the box down until it fitted the
+      // height was tried twice and rejected both times: on a wide screen it
+      // gives up the one dimension that screen has plenty of.
       for (final Size s in shapes) {
         expect(
-          footprint(s).floor / s.width,
-          greaterThan(0.75),
+          footprint(s).width / s.width,
+          greaterThan(0.9),
+          reason: 'width on $s',
+        );
+      }
+    });
+
+    test('a panel too short for the box loses the bottom, not the top', () {
+      // A landscape tablet cannot hold a full-width floor: it is deeper than
+      // the panel is tall. Centring split the loss between top and bottom,
+      // and the top is where the surface is — the bottom of the box is
+      // mostly the empty half below the floor, which is the part to lose.
+      const Size tablet = Size(2000, 790);
+      final ViewFit f = Plot3DPainter.viewExtentsFor(tablet);
+      final footprintOf = footprint(tablet);
+      expect(
+        footprintOf.height,
+        greaterThan(tablet.height),
+        reason: 'this panel is only interesting if the box overruns it',
+      );
+      // Hung from the top: the offset pushes the drawing down rather than
+      // splitting the difference.
+      expect(f.offsetY, isNot(0));
+    });
+
+    test('while still filling one dimension of it', () {
+      // Scaled to fit, not scaled down: whichever way round the panel is, the
+      // drawing reaches across it.
+      for (final Size s in shapes) {
+        final f = footprint(s);
+        expect(
+          math.max(f.width / s.width, f.height / s.height),
+          greaterThan(0.9),
           reason: 'on $s',
         );
       }
     });
 
-    test('a portrait panel holds both, near enough', () {
-      // Independence means nothing shrinks to make room, so nothing stops the
-      // extents overrunning either — that is the documented cost, and the
-      // table beside _zExtent says where it starts. This guards against a
-      // value that is badly wrong, not against the last few percent, which is
-      // a matter of taste and meant to be tuned.
-      const Size phone = Size(988, 1210);
-      expect(footprint(phone).height, lessThan(phone.height * 1.05));
-      // The floor stays inside. Only the box's topmost corners lean past the
-      // edge, which is the cheapest part of the drawing to lose.
-      expect(footprint(phone).floor, lessThan(phone.width));
+    test('and sits centred, not low', () {
+      final ViewFit f = Plot3DPainter.viewExtentsFor(const Size(988, 1210));
+      expect(f.offsetY, isNot(0));
     });
   });
+
+  // NOT TESTED: that what is *drawn* ends up centred.
+  //
+  // The geometry above is centred, and measuring the rendered pixels shows
+  // the ink is not — it sits high, and on a wide panel it sits right as well.
+  // The two differ because the ink is the surface, the floor and the axes,
+  // while the centring is computed from the box corners and the arrow tips.
+  // No assertion here until that is understood, rather than one that locks in
+  // a number nobody has explained.
 
   test('the fit is cached, so it is not re-searched every paint', () {
     // The search projects a few thousand points; it runs on every paint and

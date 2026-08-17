@@ -158,20 +158,24 @@ class _ParameterRangeDialogState extends State<_ParameterRangeDialog> {
 
     return AlertDialog(
       title: Text('Range of ${widget.name}'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          field('Minimum', _min),
-          field('Maximum', _max),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text(
-                _error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+      // Scrollable, because in landscape the keyboard leaves a dialog barely
+      // taller than its own two fields — 12 px short, on the tablet.
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            field('Minimum', _min),
+            field('Maximum', _max),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
       actions: <Widget>[
         TextButton(

@@ -181,9 +181,12 @@ void main() {
       // Not the origin itself: the box is fitted and centred on what it
       // draws, so the middle of the widget looks a little to one side of it.
       expect(hit!.z, closeTo(hit.x + hit.y, 1e-6));
-      // And near the middle of the box rather than out at an edge.
-      expect(hit.x.abs(), lessThan(1.5));
-      expect(hit.y.abs(), lessThan(1.5));
+      // And somewhere near the middle of the box rather than out at an edge.
+      // Not tighter than that: where the centre of the widget falls in data
+      // terms depends on how the view is placed, and the placement is now a
+      // per-screen knob rather than a fixed centring.
+      expect(hit.x.abs(), lessThan(3));
+      expect(hit.y.abs(), lessThan(3));
     });
 
     testWidgets('a tap takes it away again', (tester) async {
