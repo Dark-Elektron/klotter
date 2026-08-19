@@ -10,7 +10,16 @@ import '../parsers/plot_expression.dart';
 /// entries is enough: a plot has one surface, and keeping the previous window
 /// makes a zoom step cheap to undo.
 class PlotCache<T> {
-  PlotCache(this.capacity);
+  PlotCache(this.capacity) {
+    _live.add(this);
+  }
+
+  /// Every cache that has been made, so they can all be emptied at once.
+  ///
+  /// A registry rather than a list written out by hand in
+  /// [releasePlotGeometry]: the caches are private top-level finals in two
+  /// files already, and the next one added would silently not be released.
+  static final List<PlotCache<dynamic>> _live = <PlotCache<dynamic>>[];
 
   final int capacity;
   final Map<Object, T> _entries = <Object, T>{};
@@ -34,6 +43,28 @@ class PlotCache<T> {
   }
 
   void clear() => _entries.clear();
+}
+
+/// Empty every plot cache, returning how many entries went.
+///
+/// These caches hold the bulkiest thing the app keeps: a marched surface can
+/// be 33,000 triangles, which is a 1.2 MB `Float32List` and a 0.4 MB
+/// `Int32List`, and the mesh cache holds eight of them. They are top-level
+/// finals, so nothing frees them while the process lives — the plot is still
+/// on screen, so no widget has been disposed.
+///
+/// That matters when the app is backgrounded. Android picks what to kill by
+/// how much a process is holding, and an app sitting on tens of megabytes of
+/// geometry it is not drawing is an easy choice. Dropping it on the way out
+/// costs a resample on return, which the plot does in single-digit
+/// milliseconds.
+int releasePlotGeometry() {
+  int released = 0;
+  for (final PlotCache<dynamic> cache in PlotCache._live) {
+    released += cache.length;
+    cache.clear();
+  }
+  return released;
 }
 
 /// Key for cached plot geometry.

@@ -1,8 +1,45 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import '../../settings/settings_provider.dart';
 import '../../utils/app_colors.dart';
 
 class PlotThemeData {
+  /// How strongly the plot ground is lit, 0 flat to 1 full.
+  ///
+  /// This was flat, and on purpose. A vignette competes with the data twice
+  /// over: the same curve colour reads at a different contrast depending where
+  /// it sits, and in 3D the surface shading already carries form through
+  /// lightness, so a ground that also varies in lightness argues with it.
+  /// Scientific plotting surfaces are flat for that reason, and the earlier
+  /// version swung 20-40% from centre to edge, which is far too much to sit
+  /// behind a colour ramp.
+  ///
+  /// Kept as a knob rather than a decision, because it is a matter of taste
+  /// and the depth does make a 3D plot sit in space rather than float on a
+  /// panel. Set it to 0 for a flat ground.
+  ///
+  /// 0.75 gives about a 14% swing. That is deliberately more than the 12% this
+  /// started at: the plot panel is opaque on ten of the eleven themes, so the
+  /// wallpaper behind it never shows and this gradient is the only thing
+  /// carrying depth there. It is worth knowing that 14% is approaching the
+  /// 20-40% the original vignette was removed for — the reason that was too
+  /// much has not changed, and if a colour ramp ever starts reading
+  /// differently at the rim than at the centre, this is the number to lower.
+  static const double backgroundDepth = 0.75;
+
+  /// The overlay controls that sit on the plot: 2D/3D, zoom, surface, pan.
+  ///
+  /// They were a fixed teal-and-white — an accent that matched no theme, and
+  /// idle colours of `white24`/`white54` that all but vanished on a light
+  /// ground. Both now come from the same place as the axes and labels, so a
+  /// control is legible wherever it is drawn and the highlight is the theme's
+  /// own accent.
+  final Color controlActive;
+  final Color controlIdle;
+  final Color controlOutline;
+  final Color controlFill;
+
   final Gradient background2D;
   final Gradient background3D;
   final Color grid;
@@ -23,6 +60,10 @@ class PlotThemeData {
   final List<Color> seriesColors;
 
   const PlotThemeData({
+    required this.controlActive,
+    required this.controlIdle,
+    required this.controlOutline,
+    required this.controlFill,
     required this.background2D,
     required this.background3D,
     required this.grid,
@@ -57,40 +98,90 @@ class PlotThemeData {
         colors.displayBackground.computeLuminance() > 0.5,
     };
 
-    // A flat surface, not a vignette.
-    //
-    // The previous radial gradient ran a ~20-40% lightness swing from centre
-    // to edge. That competes with the data twice over: the same curve colour
-    // reads at different contrast depending where it sits, and in 3D the
-    // surface shading already encodes form through lightness, so a background
-    // that also varies in lightness fights it. Scientific plotting surfaces
-    // are flat for exactly this reason. A 2% wash is kept only so the panel
-    // does not read as a dead rectangle.
+    // How much the ground lifts from its edges towards the light. See
+    // [backgroundDepth].
     final Color surface =
         mode == PlotColorMode.themeBased
             ? colors.displayBackground
             : (isLight ? const Color(0xFFFBFBFD) : const Color(0xFF15171C));
 
+    /// Lighten or darken [c], keeping its transparency.
+    ///
+    /// The plot panel is translucent in most themes — classic's is white at
+    /// 38% — and lerping towards opaque white or black drags the alpha along
+    /// with the colour. The edge of the ground then became *more* opaque than
+    /// its middle, so on a light app background the vignette came out
+    /// inverted: the corners read brighter than the lit centre.
     Color shift(Color c, double amount) {
       if (amount == 0) return c;
-      return (amount > 0
+      final Color mixed =
+          (amount > 0
               ? Color.lerp(c, Colors.white, amount)
               : Color.lerp(c, Colors.black, -amount)) ??
           c;
+      return mixed.withValues(alpha: c.a);
     }
 
-    final Color surfaceEdge = shift(surface, isLight ? -0.02 : 0.02);
+    // The lit centre and the fall-off at the corners. Both are measured from
+    // the panel colour so every theme keeps its own ground and only the
+    // shading is shared.
+    //
+    // A light panel is lit by darkening its edges and a dark one by lifting
+    // its middle: adding white to something already near white does nothing
+    // visible, and neither does adding black to near-black.
+    final double lift = backgroundDepth;
+    // A light panel is lit by darkening its rim and a dark one by lifting its
+    // middle: adding white to something already near white does nothing
+    // visible, and neither does adding black to near-black.
+    //
+    // The two sides need very different amounts, which is why light themes
+    // showed no depth at all while dark ones read perfectly. A dark ground was
+    // getting a 0.55 lift and a light one only a 0.20 darkening — and on top of
+    // that the eye reads lightness relatively, so the smaller change on the
+    // brighter ground was doubly invisible. 0.50 brings them to the same order.
+    // A translucent panel dilutes its own gradient: classic's is white at 38%,
+    // so only 38% of any shading it carries reaches the screen and it read
+    // flatter than the opaque light themes beside it. Compensating by the
+    // panel's own alpha puts them on the same footing. Bounded, so a nearly
+    // invisible panel cannot ask for an impossible shift.
+    // Capped well short of full compensation. A 38% panel cannot carry full
+    // contrast however hard the stops are pushed — asking for it drove the rim
+    // to almost pure black and saturated. 1.8 is the most that still buys
+    // depth without the rim going flat.
+    final double sheer = (1 / math.max(surface.a, 0.30)).clamp(1.0, 1.8);
+    final Color surfaceCentre =
+        isLight
+            ? shift(surface, 0.06 * lift * sheer)
+            : shift(surface, 0.55 * lift);
+    final Color surfaceEdge =
+        isLight
+            ? shift(surface, -0.50 * lift * sheer - 0.02)
+            : shift(surface, -0.22 * lift + 0.02);
 
-    final background2D = LinearGradient(
-      begin: Alignment.topCenter,
-      end: Alignment.bottomCenter,
-      colors: [surface, surfaceEdge],
-    );
-    final background3D = LinearGradient(
-      begin: Alignment.topCenter,
-      end: Alignment.bottomCenter,
-      colors: [surface, surfaceEdge],
-    );
+    // Radial rather than top-to-bottom, and off-centre: a light that sits
+    // above and slightly left of the plot reads as a light in a room, while
+    // one dead centre reads as a spotlight and draws the eye to the middle of
+    // the data.
+    Gradient ground() {
+      if (backgroundDepth <= 0) {
+        // Flat. The 2% wash is kept only so the panel does not read as a dead
+        // rectangle.
+        return LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: <Color>[surface, surfaceEdge],
+        );
+      }
+      return RadialGradient(
+        center: const Alignment(-0.25, -0.45),
+        radius: 1.15,
+        colors: <Color>[surfaceCentre, surface, surfaceEdge],
+        stops: const <double>[0.0, 0.55, 1.0],
+      );
+    }
+
+    final background2D = ground();
+    final background3D = ground();
 
     // Ink derives from the plot surface, not the app text colour — otherwise a
     // light plot inside a dark theme draws white axes on a white ground.
@@ -111,7 +202,12 @@ class PlotThemeData {
             : Color.lerp(baseColor, Colors.white, 0.20)) ??
         baseColor;
 
+    final Color accent = colors.accent;
     return PlotThemeData(
+      controlActive: accent,
+      controlIdle: lineBase.withValues(alpha: isLight ? 0.55 : 0.60),
+      controlOutline: lineBase.withValues(alpha: isLight ? 0.28 : 0.24),
+      controlFill: accent.withValues(alpha: isLight ? 0.22 : 0.30),
       background2D: background2D,
       background3D: background3D,
       grid: grid,

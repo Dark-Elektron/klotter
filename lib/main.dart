@@ -2,7 +2,6 @@ import 'dart:math' show exp;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:klotter/utils/constants.dart';
 import 'package:klotter/widgets/confirm_clear_dialog.dart';
 import 'package:klotter/utils/texture_generator.dart';
 import 'package:provider/provider.dart';
@@ -27,11 +26,19 @@ import 'plotting/models/plot_view_state.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'plotting/export/plot_exporter.dart';
+import 'plotting/utils/plot_theme.dart';
 import 'plotting/widgets/inline_plot_panel.dart';
 import 'widgets/textured_container.dart';
+import 'utils/crash_log.dart';
+import 'utils/laid_out_subtree.dart';
+import 'utils/memory_release.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Before anything else that can fail, so a failure during startup is
+  // recorded too.
+  CrashLog.install();
 
   // Precache SVG backgrounds to avoid flash on load
   await Future.wait([
@@ -79,7 +86,11 @@ class MyApp extends StatelessWidget {
           theme: ThemeData(
             brightness: Brightness.light,
             primarySwatch: Colors.blueGrey,
-            fontFamily: FONTFAMILY,
+            // The chosen font, not the built-in default. Hardcoding the
+            // constant here meant the setting changed the expression (which
+            // asks MathTextStyle) while every button, label and result stayed
+            // on OpenSans.
+            fontFamily: settings.fontFamily,
             scaffoldBackgroundColor: Colors.white,
             appBarTheme: const AppBarTheme(
               backgroundColor: Colors.blueGrey,
@@ -94,7 +105,11 @@ class MyApp extends StatelessWidget {
           darkTheme: ThemeData(
             brightness: Brightness.dark,
             primarySwatch: Colors.blueGrey,
-            fontFamily: FONTFAMILY,
+            // The chosen font, not the built-in default. Hardcoding the
+            // constant here meant the setting changed the expression (which
+            // asks MathTextStyle) while every button, label and result stayed
+            // on OpenSans.
+            fontFamily: settings.fontFamily,
             scaffoldBackgroundColor: const Color(0xFF121212),
             appBarTheme: const AppBarTheme(
               backgroundColor: Color(0xFF1E1E1E),
@@ -246,6 +261,13 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final GlobalKey _numberKeypadKey = GlobalKey();
   final GlobalKey _extrasKeypadKey = GlobalKey();
   final GlobalKey _mainKeypadAreaKey = GlobalKey();
+  // The three blocks of the tablet keypad. Separate from the page keys above:
+  // those belong to the phone's swipeable pages, and although the two layouts
+  // never coexist, a key that means one thing in one layout and something else
+  // in the other is a trap for whoever changes either.
+  final GlobalKey _tabletNumberBlockKey = GlobalKey();
+  final GlobalKey _tabletScientificBlockKey = GlobalKey();
+  final GlobalKey _tabletExtrasBlockKey = GlobalKey();
   final GlobalKey _settingsButtonKey = GlobalKey(); // NEW
 
   // App-level undo/redo for operations like "Clear All"
@@ -277,9 +299,9 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     'settings_button': _settingsButtonKey, // NEW
     // Tablet keypad steps
     'tablet_keypads_visible': _mainKeypadAreaKey,
-    'tablet_swipe_left_extras': _mainKeypadAreaKey,
-    'tablet_extras_visible': _mainKeypadAreaKey,
-    'tablet_swipe_right_back': _mainKeypadAreaKey,
+    'tablet_number_block': _tabletNumberBlockKey,
+    'tablet_scientific_block': _tabletScientificBlockKey,
+    'tablet_extras_block': _tabletExtrasBlockKey,
     'tablet_settings_button': _settingsButtonKey, // NEW
     // Common
     'main_keypad_area': _mainKeypadAreaKey,
@@ -928,12 +950,31 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
+    CrashLog.context = 'the app was ${state.name}';
 
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive ||
         state == AppLifecycleState.detached) {
       _saveCells();
     }
+
+    // Only once actually backgrounded. `inactive` also arrives for a dialog or
+    // a pull-down of the notification shade, and throwing away every decoded
+    // image for those would show as a flash of reloading on the way back.
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      releaseMemoryForBackground();
+    }
+  }
+
+  /// Android asking every process to give memory back.
+  ///
+  /// This is the warning that precedes being killed, and it is the one chance
+  /// to stop being the largest thing on the device.
+  @override
+  void didHaveMemoryPressure() {
+    super.didHaveMemoryPressure();
+    releaseMemoryForBackground();
   }
 
   @override
@@ -1718,6 +1759,10 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
 
     final colors = AppColors.of(context);
+    // Which way the wallpaper leans, for the lighting below. The same test
+    // PlotThemeData uses, so the plot ground and the wallpaper never disagree
+    // about whether this is a light theme.
+    final bool lightGround = colors.displayBackground.computeLuminance() > 0.5;
 
     return WalkthroughOverlay(
       walkthroughService: _walkthroughService,
@@ -1737,6 +1782,50 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 fit: BoxFit.cover,
                 width: double.infinity,
                 height: double.infinity,
+              ),
+            ),
+            // Light across the wallpaper.
+            //
+            // Over the artwork rather than baked into it: the same wash then
+            // covers all eleven themes, stays one number to tune, and leaves
+            // the SVGs as drawn. Black at the rim and white at the lit point,
+            // both at low alpha, so a dark theme deepens and a light one is
+            // shaded rather than washed out.
+            //
+            // IgnorePointer because it spans the whole screen and must not sit
+            // between the user and the keypad.
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      // Tight to the visible strip. The plot occupies the top
+                      // half of the screen and the keypad the bottom, so a
+                      // circle sized to the whole window puts its dark rim
+                      // behind opaque UI and only the flat middle shows.
+                      center: const Alignment(-0.25, -0.75),
+                      radius: 0.85,
+                      colors: <Color>[
+                        Colors.white.withValues(
+                          alpha: 0.18 * PlotThemeData.backgroundDepth,
+                        ),
+                        Colors.transparent,
+                        // Harder on a light theme. The eye reads lightness
+                        // relatively, so the same wash that swung 76% of the
+                        // local value on a dark ground swung only 22% on a
+                        // light one and vanished. 1.8x brings a light theme to
+                        // about 45%, which is the same order without being
+                        // heavy-handed.
+                        Colors.black.withValues(
+                          alpha:
+                              (lightGround ? 1.8 : 0.85) *
+                              PlotThemeData.backgroundDepth,
+                        ),
+                      ],
+                      stops: const <double>[0.0, 0.5, 1.0],
+                    ),
+                  ),
+                ),
               ),
             ),
             SafeArea(
@@ -1776,63 +1865,71 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   AnimatedSize(
                     duration: const Duration(milliseconds: 250),
                     curve: Curves.easeInOut,
-                    child: Builder(
-                      builder: (context) {
-                        final mediaQuery = MediaQuery.of(context);
-                        double screenWidth = mediaQuery.size.width;
-                        bool isLandscape =
-                            mediaQuery.orientation == Orientation.landscape;
+                    // Inside the AnimatedSize, so the guard sits directly above
+                    // the keypad's own Column — the box that was reported with
+                    // no size. See [LaidOutSubtree].
+                    child: LaidOutSubtree(
+                      child: Builder(
+                        builder: (context) {
+                          final mediaQuery = MediaQuery.of(context);
+                          double screenWidth = mediaQuery.size.width;
+                          bool isLandscape =
+                              mediaQuery.orientation == Orientation.landscape;
 
-                        return CalculatorKeypad(
-                          screenWidth: screenWidth,
-                          isLandscape: isLandscape,
-                          colors: colors,
-                          activeIndex: activeIndex,
-                          mathEditorControllers: mathEditorControllers,
-                          textDisplayControllers: textDisplayControllers,
-                          settingsProvider: _settingsProvider!,
-                          onUpdateMathEditor: updateMathEditor,
-                          onAddDisplay: _addDisplay,
-                          onRemoveDisplay: _removeDisplay,
-                          onExportPlot: _exportPlot,
-                          variableSystem: _variableSystem,
-                          unitVectorSystem: _unitVectorSystem,
-                          onVariableSystemChanged: (system) {
-                            // The two groups move together. A row of x, y, z
-                            // beside r̂, θ̂, ẑ describes a point in one system
-                            // and its directions in another, which is not a
-                            // thing anyone means to write.
-                            setState(() {
-                              _variableSystem = system;
-                              _unitVectorSystem = system;
-                            });
-                            // The symbols an expression is read in changed, so
-                            // every cell has to be recompiled and redrawn.
-                            updateMathEditor();
-                          },
-                          onUnitVectorSystemChanged: (system) {
-                            setState(() {
-                              _unitVectorSystem = system;
-                              _variableSystem = system;
-                            });
-                          },
-                          onClearAllDisplays: _confirmClearAllDisplays,
-                          onSetState: () => setState(() {}),
-                          onClearSelectionOverlay: _clearAllSelectionOverlays,
-                          canUndoAppState: canUndoAppState,
-                          canRedoAppState: canRedoAppState,
-                          onUndoAppState: undoAppState,
-                          onRedoAppState: redoAppState,
-                          // Walkthrough
-                          walkthroughService: _walkthroughService,
-                          scientificKeypadKey: _scientificKeypadKey,
-                          numberKeypadKey: _numberKeypadKey,
-                          extrasKeypadKey: _extrasKeypadKey,
-                          commandButtonKey: _commandButtonKey,
-                          mainKeypadAreaKey: _mainKeypadAreaKey,
-                          settingsButtonKey: _settingsButtonKey,
-                        );
-                      },
+                          return CalculatorKeypad(
+                            screenWidth: screenWidth,
+                            isLandscape: isLandscape,
+                            colors: colors,
+                            activeIndex: activeIndex,
+                            activeController:
+                                mathEditorControllers[activeIndex],
+                            settingsProvider: _settingsProvider!,
+                            onUpdateMathEditor: updateMathEditor,
+                            onAddDisplay: _addDisplay,
+                            onRemoveDisplay: _removeDisplay,
+                            onExportPlot: _exportPlot,
+                            variableSystem: _variableSystem,
+                            unitVectorSystem: _unitVectorSystem,
+                            onVariableSystemChanged: (system) {
+                              // The two groups move together. A row of x, y, z
+                              // beside r̂, θ̂, ẑ describes a point in one system
+                              // and its directions in another, which is not a
+                              // thing anyone means to write.
+                              setState(() {
+                                _variableSystem = system;
+                                _unitVectorSystem = system;
+                              });
+                              // The symbols an expression is read in changed, so
+                              // every cell has to be recompiled and redrawn.
+                              updateMathEditor();
+                            },
+                            onUnitVectorSystemChanged: (system) {
+                              setState(() {
+                                _unitVectorSystem = system;
+                                _variableSystem = system;
+                              });
+                            },
+                            onClearAllDisplays: _confirmClearAllDisplays,
+                            onSetState: () => setState(() {}),
+                            onClearSelectionOverlay: _clearAllSelectionOverlays,
+                            canUndoAppState: canUndoAppState,
+                            canRedoAppState: canRedoAppState,
+                            onUndoAppState: undoAppState,
+                            onRedoAppState: redoAppState,
+                            // Walkthrough
+                            walkthroughService: _walkthroughService,
+                            scientificKeypadKey: _scientificKeypadKey,
+                            numberKeypadKey: _numberKeypadKey,
+                            extrasKeypadKey: _extrasKeypadKey,
+                            commandButtonKey: _commandButtonKey,
+                            mainKeypadAreaKey: _mainKeypadAreaKey,
+                            numberBlockKey: _tabletNumberBlockKey,
+                            scientificBlockKey: _tabletScientificBlockKey,
+                            extrasBlockKey: _tabletExtrasBlockKey,
+                            settingsButtonKey: _settingsButtonKey,
+                          );
+                        },
+                      ),
                     ),
                   ),
                 ],

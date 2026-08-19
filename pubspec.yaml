@@ -103,13 +103,19 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  # Every family offered by the font setting has to be declared here, or the
+  # name resolves to nothing and Flutter quietly falls back to the default —
+  # which is how two of the three choices did nothing at all.
   fonts:
     - family: OpenSans
       fonts:
         - asset: assets/fonts/OpenSans-Regular.ttf
-    # - family: Cambria
-    #   fonts:
-    #     - asset: assets/fonts/cambria-math.ttf
+    - family: Cambria
+      fonts:
+        - asset: assets/fonts/cambria-math.ttf
+    - family: Rosemary
+      fonts:
+        - asset: assets/fonts/Rosemary.ttf
 
   # To add assets to your application, add an assets section, like this:
   assets:

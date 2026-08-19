@@ -147,12 +147,16 @@ class MathEditorInlineState extends State<MathEditorInline>
 
     if (bounds != null) {
       const padding = 15.0;
+      // The tap's height decides which line's start or end is meant. The
+      // bounds span every line, so without it a tap past the end of a short
+      // second line reads as "past the end of the expression" and the caret
+      // goes to the end of the longest line instead.
       if (localToContainer.dx < bounds.left - padding) {
-        widget.controller.moveCursorToStartWithRect();
+        widget.controller.moveCursorToStartWithRect(atY: localToContainer.dy);
         return;
       }
       if (localToContainer.dx > bounds.right + padding) {
-        widget.controller.moveCursorToEndWithRect();
+        widget.controller.moveCursorToEndWithRect(atY: localToContainer.dy);
         return;
       }
     }
@@ -197,6 +201,17 @@ class MathEditorInlineState extends State<MathEditorInline>
       localToContainer,
     );
     if (target != null) {
+      // Drop any live selection first. This path returns early, so it used to
+      // leave one standing: select something, then long-press a number to
+      // tune it, and the next backspace deleted the old selection rather than
+      // a character — which after a select-all is the whole expression.
+      //
+      // In klator, where there is no tuning, a long press over a number
+      // selects it and the selection is always replaced. Here it is not, so
+      // it has to be cleared deliberately.
+      if (widget.controller.hasSelection) {
+        widget.controller.clearSelection();
+      }
       setState(() {
         _scrubTarget = target;
         _scrubStartX = details.localPosition.dx;

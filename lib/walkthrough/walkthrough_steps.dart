@@ -109,29 +109,39 @@ const List<WalkthroughStep> walkthroughSteps = [
   ),
 
   // ============ TABLET ONLY STEPS ============
+  // A tablet has no swipe between keypads — every block is on screen at
+  // once — so the tour points at each block in turn rather than asking for
+  // a gesture that does nothing here. The phone steps above still teach the
+  // swipes, and they are mobileOnly, so no tour shows both.
   WalkthroughStep(
     id: 'tablet_keypads_visible',
-    title: 'Scientific & Number Pads',
+    title: 'Every Key at Once',
     description:
-        'On your wider screen, both the Scientific functions (left) and Number pad (right) are visible together!',
+        'Your screen is wide enough for the whole keypad, so there is nothing to swipe between. Here is what each block holds.',
     position: TooltipPosition.above,
     tabletOnly: true,
   ),
   WalkthroughStep(
-    id: 'tablet_swipe_left_extras',
-    title: 'Swipe for More',
+    id: 'tablet_number_block',
+    title: 'Number Block',
     description:
-        'Swipe LEFT to reveal the Extras keypad with permutations, combinations, undo/redo, export and settings.',
+        'The digits, the basic operators, and the command key that evaluates what you have typed.',
     position: TooltipPosition.above,
-    requiresAction: true,
-    requiredAction: WalkthroughAction.swipeLeft,
     tabletOnly: true,
   ),
   WalkthroughStep(
-    id: 'tablet_extras_visible',
-    title: 'Number Pad & Extras',
+    id: 'tablet_scientific_block',
+    title: 'Scientific Block',
     description:
-        'Now you can see the Number pad and Extra functions together — including ⇪, which saves the current plot as an image or PDF.',
+        'Trigonometry, logarithms, powers and roots. Long-press a key to reach its second function.',
+    position: TooltipPosition.above,
+    tabletOnly: true,
+  ),
+  WalkthroughStep(
+    id: 'tablet_extras_block',
+    title: 'Extras Block',
+    description:
+        'Permutations and combinations, integrals and sums, undo/redo, and ⇪ to save the current plot as an image or PDF.',
     position: TooltipPosition.above,
     tabletOnly: true,
   ),
@@ -141,15 +151,6 @@ const List<WalkthroughStep> walkthroughSteps = [
     description:
         'Tap the gear icon \u2630 anytime to access settings. You can always restart this tutorial from there!',
     position: TooltipPosition.above,
-    tabletOnly: true,
-  ),
-  WalkthroughStep(
-    id: 'tablet_swipe_right_back',
-    title: 'Navigate Back',
-    description: 'Swipe RIGHT to return to Scientific and Number pads anytime.',
-    position: TooltipPosition.above,
-    requiresAction: true,
-    requiredAction: WalkthroughAction.swipeRight,
     tabletOnly: true,
   ),
 

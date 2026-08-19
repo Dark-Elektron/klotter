@@ -77,6 +77,10 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   FieldType _fieldType = FieldType.scalar;
   VectorFieldParser? _vectorParser;
 
+  /// Every vector or parametric line in the cell. [_vectorParser] is the
+  /// first; the controls that describe "the field" still mean that one.
+  List<VectorFieldParser> _vectorFields = const <VectorFieldParser>[];
+
   /// What u and v are swept over. Per panel rather than per app: two plots
   /// open at once are usually two different curves.
   ///
@@ -218,29 +222,63 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
         _currentFunction = PlotExpression.invalid;
         _functions = const <PlotExpression>[];
         _vectorParser = null;
+        _vectorFields = const <VectorFieldParser>[];
+        _vectorFields = const <VectorFieldParser>[];
         _fieldType = FieldType.scalar;
         _errorMessage = null;
       });
       return;
     }
 
-    // Vector fields split from the node tree, not the serialized string, so
-    // their components compile through the same engine as everything else.
-    final vector = VectorFieldParser.fromNodes(widget.nodes);
+    // Line by line, because every line of a cell is its own plot on shared
+    // axes and they need not be the same kind of plot.
+    //
+    // This used to hand the whole cell to the vector parser at once. A cell
+    // holding `x²+y²=1`, `x²−y²=0.1` and `u x̂ + u² ŷ` was then read as one
+    // vector field: the two circles were discarded for having no unit vector,
+    // and what was left was the sweep with the other lines' terms folded into
+    // its components. The cell drew nothing and called itself vector arrows.
+    final List<List<MathNode>> lines = PlotExpression.splitLines(widget.nodes);
+    final List<List<MathNode>> vectorLines =
+        lines.where(VectorFieldParser.isVectorFieldNodes).toList();
+
+    // All of them. Two fields on one set of axes get two sets of arrows and a
+    // colour ramp each, the same way two surfaces do — sharing the full
+    // rainbow would put every magnitude in both and neither could be followed.
+    final List<VectorFieldParser> fields = <VectorFieldParser>[
+      for (final List<MathNode> line in vectorLines)
+        if (VectorFieldParser.fromNodes(line) case final VectorFieldParser f) f,
+    ];
+    final VectorFieldParser? vector = fields.isEmpty ? null : fields.first;
+
     if (vector != null) {
+      // The rest of the cell is still made of plots, and they are drawn
+      // alongside rather than thrown away. Compiled one line at a time, since
+      // each is its own curve.
+      final List<PlotExpression> alongside =
+          <PlotExpression>[
+            for (final List<MathNode> line in lines)
+              if (!VectorFieldParser.isVectorFieldNodes(line))
+                PlotExpression.compile(line, system: widget.coordinateSystem),
+          ].where((PlotExpression e) => e.isValid).toList();
+
       setState(() {
-        _currentFunction = PlotExpression.invalid;
-        _functions = const <PlotExpression>[];
+        _currentFunction =
+            alongside.isEmpty ? PlotExpression.invalid : alongside.first;
+        _functions = alongside;
         _vectorParser = vector;
+        _vectorFields = fields;
         _fieldType = FieldType.vector;
-        _is3DFunction = vector.is3D;
+        // Either half can want the third dimension: a 3D field, or a level
+        // set in z sitting on the same axes.
+        _is3DFunction =
+            vector.is3D ||
+            alongside.any((PlotExpression e) => e.usesY || e.isImplicitSurface);
         _errorMessage = vector.error;
         if (vector.isParametric) {
-          // A sweep arrives coloured, but only on arrival. Its default
-          // shading reads the shape and says nothing about the numbers, and
-          // the magnitude is what a parametric plot is nearly always being
-          // looked at for. Once the user has said otherwise, that stands.
-          if (!_surfaceModeChosen) _surfaceMode = SurfaceMode.magnitude;
+          if (!_surfaceModeChosen) {
+            _surfaceMode = _defaultParametricSurfaceMode;
+          }
         } else if (_is3DFunction) {
           _surfaceMode = SurfaceMode.none;
         } else if (_surfaceMode == SurfaceMode.none) {
@@ -407,15 +445,44 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   /// enough to hit, small enough not to cover the plot they control.
   static const double _overlayButtonSize = 40;
   static const double _overlayIconSize = 18;
+
+  /// How a parametric sweep arrives, before the user has said otherwise.
+  ///
+  /// In 3D, coloured by magnitude: a surface swept in u and v is nearly always
+  /// being read for its numbers, and left solid it is a shape with nothing on
+  /// it but the lighting.
+  ///
+  /// In 2D there is no surface to shade. A sweep there is a curve — one
+  /// parameter traced across the plane — and shading it filled the plot with a
+  /// surface nobody asked for. So it starts off, and the button is there for
+  /// anyone who wants it.
+  SurfaceMode get _defaultParametricSurfaceMode =>
+      _show3D ? SurfaceMode.magnitude : SurfaceMode.none;
+
   void _setShow3D(bool value) {
     if (value == _show3D) return;
-    setState(() => _show3D = value);
+    setState(() {
+      _show3D = value;
+      // The default differs per dimension, so switching re-reads it. Only
+      // while it is still a default: a choice the user has made survives the
+      // switch, which is the whole point of tracking that they made one.
+      if (!_surfaceModeChosen && (_vectorParser?.isParametric ?? false)) {
+        _surfaceMode = _defaultParametricSurfaceMode;
+      }
+    });
     _publishView();
   }
 
   /// Switch dimension without hunting for the toolbar button.
   @visibleForTesting
   void setShow3DForTest(bool value) => _setShow3D(value);
+
+  /// What the plot is coloured by, and whether that was asked for.
+  @visibleForTesting
+  (SurfaceMode, bool) get surfaceModeForTest => (
+    _surfaceMode,
+    _surfaceModeChosen,
+  );
 
   /// Wraps the plot layers only, so exports exclude the overlay controls.
   final GlobalKey _captureKey = GlobalKey();
@@ -534,17 +601,23 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
         decoration: BoxDecoration(
           color:
               on
-                  ? Colors.greenAccent.withValues(alpha: 0.3)
+                  ? _plotTheme(context).controlFill
                   : Colors.black.withValues(alpha: 0.5),
           border: Border.all(
-            color: on ? Colors.greenAccent : Colors.white24,
+            color:
+                on
+                    ? _plotTheme(context).controlActive
+                    : _plotTheme(context).controlOutline,
             width: on ? 2 : 1,
           ),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: on ? Colors.greenAccent : Colors.white70,
+            color:
+                on
+                    ? _plotTheme(context).controlActive
+                    : _plotTheme(context).controlIdle,
             fontSize: 12,
             fontWeight: FontWeight.w600,
           ),
@@ -617,7 +690,9 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
       case SurfaceMode.z:
         return 'Fz';
       case SurfaceMode.none:
-        return 'Surface';
+        // The collapsed button, which names the control rather than the
+        // current value when nothing is chosen.
+        return 'f(x, y)';
     }
   }
 
@@ -678,6 +753,8 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                       plotMode: _plotMode,
                       fieldType: _fieldType,
                       vectorParser: _vectorParser,
+                      vectorFields: _vectorFields,
+                      vectorSeriesBase: _functions.length,
                       uRange: _uRange,
                       vRange: _vRange,
                       complexView: _complexView,
@@ -698,6 +775,8 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                       plotMode: _plotMode,
                       fieldType: _fieldType,
                       vectorParser: _vectorParser,
+                      vectorFields: _vectorFields,
+                      vectorSeriesBase: _functions.length,
                       uRange: _uRange,
                       vRange: _vRange,
                       complexView: _complexView,
@@ -738,13 +817,13 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                     _buildModeButton(
                       label: '3D',
                       isSelected: _show3D,
-                      selectedColor: Colors.tealAccent,
+                      selectedColor: _plotTheme(context).controlActive,
                       onTap: () => _setShow3D(true),
                     ),
                     _buildModeButton(
                       label: '2D',
                       isSelected: !_show3D,
-                      selectedColor: Colors.tealAccent,
+                      selectedColor: _plotTheme(context).controlActive,
                       onTap: () => _setShow3D(false),
                     ),
                   ],
@@ -767,7 +846,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                       _buildModeButton(
                         icon: Icons.home,
                         isSelected: false,
-                        selectedColor: Colors.tealAccent,
+                        selectedColor: _plotTheme(context).controlActive,
                         onTap: _resetView,
                         tooltip: 'Reset view',
                       ),
@@ -775,7 +854,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                         _buildModeButton(
                           icon: Icons.crop_free,
                           isSelected: false,
-                          selectedColor: Colors.tealAccent,
+                          selectedColor: _plotTheme(context).controlActive,
                           onTap: _editRanges,
                           tooltip: 'Set range',
                         ),
@@ -784,14 +863,14 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                         _buildModeButton(
                           icon: Icons.pan_tool,
                           isSelected: _tool3DMode == Tool3DMode.pan,
-                          selectedColor: Colors.tealAccent,
+                          selectedColor: _plotTheme(context).controlActive,
                           onTap: _togglePan,
                           tooltip: 'Pan',
                         ),
                         _buildModeButton(
                           icon: Icons.crop_free,
                           isSelected: false,
-                          selectedColor: Colors.tealAccent,
+                          selectedColor: _plotTheme(context).controlActive,
                           onTap: _edit3DRanges,
                           tooltip: 'Set range',
                         ),
@@ -819,7 +898,10 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                   ),
                   child: Text(
                     _getModeDescription(),
-                    style: const TextStyle(color: Colors.white70, fontSize: 11),
+                    style: TextStyle(
+                      color: _plotTheme(context).controlIdle,
+                      fontSize: 11,
+                    ),
                   ),
                 ),
               ),
@@ -962,7 +1044,8 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                   ? selectedColor.withValues(alpha: 0.3)
                   : Colors.black.withValues(alpha: 0.5),
           border: Border.all(
-            color: isSelected ? selectedColor : Colors.white24,
+            color:
+                isSelected ? selectedColor : _plotTheme(context).controlOutline,
             width: isSelected ? 2 : 1,
           ),
         ),
@@ -971,13 +1054,19 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
               icon != null
                   ? Icon(
                     icon,
-                    color: isSelected ? selectedColor : Colors.white54,
+                    color:
+                        isSelected
+                            ? selectedColor
+                            : _plotTheme(context).controlIdle,
                     size: _overlayIconSize,
                   )
                   : Text(
                     label!,
                     style: TextStyle(
-                      color: isSelected ? selectedColor : Colors.white54,
+                      color:
+                          isSelected
+                              ? selectedColor
+                              : _plotTheme(context).controlIdle,
                       fontWeight: FontWeight.bold,
                       fontSize: 13,
                     ),
@@ -1030,7 +1119,10 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   Widget _build3DZoomButton() {
     final colors = _colorsNoListen(context);
     final bool isSelected = _tool3DMode == Tool3DMode.zoom;
-    final Color tint = isSelected ? Colors.tealAccent : Colors.white54;
+    final Color tint =
+        isSelected
+            ? _plotTheme(context).controlActive
+            : _plotTheme(context).controlIdle;
 
     return Tooltip(
       message: 'Zoom axis',
@@ -1052,10 +1144,13 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
           decoration: BoxDecoration(
             color:
                 isSelected
-                    ? Colors.tealAccent.withValues(alpha: 0.3)
+                    ? _plotTheme(context).controlFill
                     : Colors.black.withValues(alpha: 0.5),
             border: Border.all(
-              color: isSelected ? Colors.tealAccent : Colors.white24,
+              color:
+                  isSelected
+                      ? _plotTheme(context).controlActive
+                      : _plotTheme(context).controlOutline,
               width: isSelected ? 2 : 1,
             ),
           ),
@@ -1073,7 +1168,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                       vertical: 1,
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.tealAccent,
+                      color: _plotTheme(context).controlActive,
                       borderRadius: BorderRadius.circular(3),
                     ),
                     child: Text(
@@ -1139,7 +1234,11 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
       menuItems.add(
         const PopupMenuItem(
           value: SurfaceMode.magnitude,
-          child: Text('Surface'),
+          // Named for what the colour is read from, not for what is drawn.
+          // A scalar plot is already a surface, so "Surface" said nothing
+          // about the choice being made; the height is f(x, y), and that is
+          // what the ramp maps.
+          child: Text('f(x, y)'),
         ),
       );
     }
@@ -1153,17 +1252,23 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
         decoration: BoxDecoration(
           color:
               isSelected
-                  ? Colors.greenAccent.withValues(alpha: 0.3)
+                  ? _plotTheme(context).controlFill
                   : Colors.black.withValues(alpha: 0.5),
           border: Border.all(
-            color: isSelected ? Colors.greenAccent : Colors.white24,
+            color:
+                isSelected
+                    ? _plotTheme(context).controlActive
+                    : _plotTheme(context).controlOutline,
             width: isSelected ? 2 : 1,
           ),
         ),
         child: Center(
           child: Icon(
             Icons.landscape,
-            color: isSelected ? Colors.greenAccent : Colors.white54,
+            color:
+                isSelected
+                    ? _plotTheme(context).controlActive
+                    : _plotTheme(context).controlIdle,
             size: 20,
           ),
         ),

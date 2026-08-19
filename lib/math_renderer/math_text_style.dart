@@ -41,6 +41,23 @@ class MathTextStyle {
     _fontFamily = family;
   }
 
+  /// How to draw `z̲`, the complex variable.
+  ///
+  /// A real underline on a plain `z`, not the combining low line U+0332. A
+  /// combining mark only sits where it should if the font knows how to compose
+  /// it, and not every font does — the mark drifted off the glyph the moment
+  /// the font setting started having an effect. An underline is drawn by the
+  /// text engine and lands correctly whatever the family.
+  ///
+  /// Shared by the editor and the read-only result display so the two cannot
+  /// drift apart.
+  static TextStyle complexVariableStyle(double fontSize, Color color) =>
+      getStyle(fontSize).copyWith(
+        color: color,
+        decoration: TextDecoration.underline,
+        decorationColor: color,
+      );
+
   static const Set<String> _allMultiplySigns = {multiplyDot, multiplyTimes};
 
   static const Set<String> _paddedOperators = {

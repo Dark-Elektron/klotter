@@ -268,8 +268,8 @@ class MathRenderer extends StatelessWidget {
     // up in results but never in the expression being typed.
     if (node is ComplexVariableNode) {
       return Text(
-        'z\u0332',
-        style: MathTextStyle.getStyle(fontSize).copyWith(color: Colors.white),
+        'z',
+        style: MathTextStyle.complexVariableStyle(fontSize, Colors.white),
         textScaler: textScaler,
       );
     }

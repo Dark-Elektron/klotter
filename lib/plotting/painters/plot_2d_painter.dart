@@ -31,6 +31,29 @@ class Plot2DPainter extends CustomPainter {
   final PlotMode plotMode;
   final FieldType fieldType;
   final VectorFieldParser? vectorParser;
+
+  /// Every vector or parametric line in the cell, in the order written.
+  /// [vectorParser] is the first of them, kept because most of what the
+  /// painter does with a field wants exactly one.
+  ///
+  /// Empty means fall back to [vectorParser] alone, so callers written before
+  /// a cell could hold several need not change.
+  final List<VectorFieldParser> vectorFields;
+
+  /// The series index of the first vector line.
+  ///
+  /// A cell numbers its plots in the order they are written, and a sweep is
+  /// one of them. Colouring it from index 0 handed it the same colour as the
+  /// first curve on the same axes.
+  final int vectorSeriesBase;
+
+  /// The fields to draw, with [vectorParser] as the fallback.
+  List<VectorFieldParser> get fieldsToDraw =>
+      vectorFields.isNotEmpty
+          ? vectorFields
+          : (vectorParser == null
+              ? const <VectorFieldParser>[]
+              : <VectorFieldParser>[vectorParser!]);
   final bool showContour;
   final SurfaceMode surfaceMode;
   final AppColors colors;
@@ -66,6 +89,8 @@ class Plot2DPainter extends CustomPainter {
     required this.plotMode,
     required this.fieldType,
     this.vectorParser,
+    this.vectorFields = const <VectorFieldParser>[],
+    this.vectorSeriesBase = 0,
     required this.showContour,
     required this.surfaceMode,
     required this.colors,
@@ -134,12 +159,21 @@ class Plot2DPainter extends CustomPainter {
         if (complexView.showsPolya) {
           _drawPolyaField(canvas, size, toScreenX, toScreenY);
         }
-      } else if (vectorParser != null && vectorParser!.isParametric) {
-        _drawParametric(canvas, toScreenX, toScreenY);
-      } else if (fieldType == FieldType.vector && vectorParser != null) {
-        _drawVectorField(canvas, size, toScreenX, toScreenY);
       } else {
-        _drawFunction(canvas, size, toScreenX, toScreenY);
+        // Not an either/or. A cell is a stack of lines and they need not be
+        // the same kind of plot: a sweep on the same axes as two level sets is
+        // three plots, and drawing only whichever one the cell was classified
+        // as threw the other two away.
+        if (vectorParser != null && vectorParser!.isParametric) {
+          _drawParametric(canvas, toScreenX, toScreenY);
+        } else if (fieldType == FieldType.vector && vectorParser != null) {
+          _drawVectorField(canvas, size, toScreenX, toScreenY);
+        }
+        // `functions` is empty unless there are scalar lines to draw, so this
+        // costs nothing for a cell that is only a field.
+        if (functions.isNotEmpty || fieldType == FieldType.scalar) {
+          _drawFunction(canvas, size, toScreenX, toScreenY);
+        }
       }
     }
 
@@ -701,12 +735,27 @@ class Plot2DPainter extends CustomPainter {
     double Function(double) toScreenX,
     double Function(double) toScreenY,
   ) {
-    final VectorFieldParser? field = vectorParser;
-    if (field == null) return;
+    // Every parametric line, not just the first, and each in its own colour:
+    // a cell numbers its plots in the order they are written, so a sweep that
+    // follows two curves is the third series, not the first.
+    final List<VectorFieldParser> sweeps = fieldsToDraw
+        .where((VectorFieldParser f) => f.isParametric)
+        .toList(growable: false);
+    for (int n = 0; n < sweeps.length; n++) {
+      _drawOneParametric(canvas, toScreenX, toScreenY, sweeps[n], n);
+    }
+  }
 
+  void _drawOneParametric(
+    Canvas canvas,
+    double Function(double) toScreenX,
+    double Function(double) toScreenY,
+    VectorFieldParser field,
+    int nth,
+  ) {
     final paint =
         Paint()
-          ..color = plotTheme.seriesColor(0)
+          ..color = plotTheme.seriesColor(vectorSeriesBase + nth)
           ..strokeWidth = 3
           ..style = PaintingStyle.stroke
           ..strokeCap = StrokeCap.round
@@ -1386,8 +1435,34 @@ class Plot2DPainter extends CustomPainter {
     double Function(double) toScreenX,
     double Function(double) toScreenY,
   ) {
-    if (vectorParser == null) return;
+    // One set of arrows per field. Two fields sharing the full rainbow are
+    // unreadable — every magnitude appears in both — so each takes a ramp of
+    // its own, exactly as several surfaces on one set of axes do.
+    final List<VectorFieldParser> fields = fieldsToDraw;
+    for (int n = 0; n < fields.length; n++) {
+      _drawOneVectorField(
+        canvas,
+        size,
+        toScreenX,
+        toScreenY,
+        fields[n],
+        surfaceColormap(n, of: fields.length),
+        surfaceRampStops(n, of: fields.length),
+        n,
+      );
+    }
+  }
 
+  void _drawOneVectorField(
+    Canvas canvas,
+    Size size,
+    double Function(double) toScreenX,
+    double Function(double) toScreenY,
+    VectorFieldParser field,
+    Color Function(double) ramp,
+    List<Color> rampStops,
+    int row,
+  ) {
     const gridCount = 20;
     final arrowLength = min(size.width, size.height) / gridCount / 1.0;
 
@@ -1396,7 +1471,7 @@ class Plot2DPainter extends CustomPainter {
       for (int j = 0; j <= gridCount; j++) {
         final x = xMin + (xMax - xMin) * i / gridCount;
         final y = yMin + (yMax - yMin) * j / gridCount;
-        final mag = vectorParser!.magnitude(x, y);
+        final mag = field.magnitude(x, y);
         if (mag.isFinite) maxMag = max(maxMag, mag);
       }
     }
@@ -1408,10 +1483,10 @@ class Plot2DPainter extends CustomPainter {
         final x = xMin + (xMax - xMin) * i / gridCount;
         final y = yMin + (yMax - yMin) * j / gridCount;
 
-        final (fx, fy, fz) = vectorParser!.evaluate(x, y);
+        final (fx, fy, fz) = field.evaluate(x, y);
         double vx = fx;
         double vy = fy;
-        double mag = vectorParser!.magnitude(x, y);
+        double mag = field.magnitude(x, y);
 
         if (surfaceMode == SurfaceMode.x) {
           vx = fx;
@@ -1430,7 +1505,7 @@ class Plot2DPainter extends CustomPainter {
         if (!mag.isFinite || mag < 1e-10) continue;
 
         final normalized = mag / maxMag;
-        final color = plotColormap(normalized);
+        final color = ramp(normalized);
 
         final scale = mag == 0 ? 0 : 1 / mag;
         final nx = vx * scale;
@@ -1474,7 +1549,7 @@ class Plot2DPainter extends CustomPainter {
     }
 
     if (surfaceMode == SurfaceMode.none) {
-      _drawColorbar(canvas, size, 0, maxMag);
+      _drawColorbar(canvas, size, 0, maxMag, stops: rampStops, row: row);
     }
   }
 
@@ -1531,7 +1606,20 @@ class Plot2DPainter extends CustomPainter {
   /// parameter panels and the top left to the mode label, and a plot is wider
   /// than it is tall, so a bar laid along the width has room for its labels
   /// without taking a bite out of the drawing area.
-  void _drawColorbar(Canvas canvas, Size size, double minVal, double maxVal) {
+  /// A scale for what the colours mean.
+  ///
+  /// [stops] is the ramp being labelled and [row] which bar this is, counting
+  /// down from the top. Two fields on one set of axes use two ramps, so one
+  /// bar could only ever be right about one of them — it showed the rainbow
+  /// while the arrows were blue and amber.
+  void _drawColorbar(
+    Canvas canvas,
+    Size size,
+    double minVal,
+    double maxVal, {
+    List<Color> stops = plotColormapStops,
+    int row = 0,
+  }) {
     final theme = plotTheme;
     const double barHeight = 12.0;
     const double margin = 10.0;
@@ -1541,7 +1629,7 @@ class Plot2DPainter extends CustomPainter {
 
     final barRect = Rect.fromLTWH(
       size.width - barWidth - margin,
-      margin,
+      margin + row * (barHeight + 6),
       barWidth,
       barHeight,
     );
@@ -1551,10 +1639,10 @@ class Plot2DPainter extends CustomPainter {
     canvas.drawRect(
       barRect,
       Paint()
-        ..shader = const LinearGradient(
+        ..shader = LinearGradient(
           begin: Alignment.centerLeft,
           end: Alignment.centerRight,
-          colors: plotColormapStops,
+          colors: stops,
         ).createShader(barRect),
     );
 

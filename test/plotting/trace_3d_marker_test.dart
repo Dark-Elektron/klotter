@@ -104,7 +104,14 @@ void main() {
   testWidgets('the marker lands where the point projects', (tester) async {
     final PlotCamera c = camera();
     final List<PlotExpression> curves = <PlotExpression>[fn('x+y')];
-    const SurfaceHit hit = (x: 1.2, y: -1.4, z: -0.2, curveIndex: 0);
+    const SurfaceHit hit = (
+      x: 1.2,
+      y: -1.4,
+      z: -0.2,
+      curveIndex: 0,
+      u: null,
+      v: null,
+    );
 
     final ByteData without = await rasterise(tester, painter(curves));
     final ByteData with_ = await rasterise(tester, painter(curves, trace: hit));

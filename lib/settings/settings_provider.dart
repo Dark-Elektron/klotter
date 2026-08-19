@@ -76,7 +76,7 @@ class SettingsProvider extends ChangeNotifier {
   bool _useScientificNotationButton = false;
   double _borderRadius = 5.0;
   double _buttonSpacing = 1.0;
-  TextureType _textureType = TextureType.smoothNoise;
+  TextureType _textureType = TextureType.none;
   String _fontFamily = FONTFAMILY;
   KeypadColorMode _keypadColorMode = KeypadColorMode.themeBased;
   Handedness _handedness = Handedness.rightHanded;
@@ -129,7 +129,7 @@ class SettingsProvider extends ChangeNotifier {
     String multiplicationSign = '×',
     NumberFormat numberFormat = NumberFormat.automatic,
     bool useScientificNotationButton = false,
-    TextureType textureType = TextureType.smoothNoise,
+    TextureType textureType = TextureType.none,
     String? fontFamily,
   }) : _themeType = themeType,
        _multiplicationSign = multiplicationSign,
@@ -144,7 +144,7 @@ class SettingsProvider extends ChangeNotifier {
     String multiplicationSign = '×',
     NumberFormat numberFormat = NumberFormat.automatic,
     bool useScientificNotationButton = false,
-    TextureType textureType = TextureType.smoothNoise,
+    TextureType textureType = TextureType.none,
     String? fontFamily,
   }) {
     return SettingsProvider._forTesting(
@@ -202,7 +202,7 @@ class SettingsProvider extends ChangeNotifier {
     String textureStr = prefs.getString('textureType') ?? 'smoothNoise';
     _textureType = TextureType.values.firstWhere(
       (e) => e.name == textureStr,
-      orElse: () => TextureType.smoothNoise,
+      orElse: () => TextureType.none,
     );
 
     // Load font family

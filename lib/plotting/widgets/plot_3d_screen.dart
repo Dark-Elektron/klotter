@@ -28,6 +28,14 @@ class Plot3DScreen extends StatefulWidget {
   final FieldType fieldType;
   final VectorFieldParser? vectorParser;
 
+  /// Every vector or parametric line in the cell, in the order written.
+  /// Empty falls back to [vectorParser] alone.
+  final List<VectorFieldParser> vectorFields;
+
+  /// The series index of the first vector line, so a sweep continues the
+  /// cell's colour cycle instead of restarting it.
+  final int vectorSeriesBase;
+
   /// The spans u and v are swept over, when the cell is parametric.
   /// Which readings of a complex function are on show.
   final ComplexView complexView;
@@ -52,6 +60,8 @@ class Plot3DScreen extends StatefulWidget {
     required this.plotMode,
     required this.fieldType,
     this.vectorParser,
+    this.vectorFields = const <VectorFieldParser>[],
+    this.vectorSeriesBase = 0,
     this.complexView = ComplexView.initial,
     this.uRange = defaultParameterRange,
     this.vRange = defaultParameterRange,
@@ -384,20 +394,42 @@ class Plot3DScreenState extends State<Plot3DScreen>
   /// the touch is over empty space.
   void _pickTrace(Offset local, Size size) {
     if (size.width <= 0 || size.height <= 0) return;
-    final SurfaceHit? hit = pickSurface(
-      PlotCamera(
-        size: size,
-        rotationX: rotationX,
-        rotationZ: rotationZ,
-        panX: panX,
-        panY: panY,
-        rangeX: xRange,
-        rangeY: yRange,
-        rangeZ: zRange,
-      ),
-      _curves,
-      local,
+    final PlotCamera camera = PlotCamera(
+      size: size,
+      rotationX: rotationX,
+      rotationZ: rotationZ,
+      panX: panX,
+      panY: panY,
+      rangeX: xRange,
+      rangeY: yRange,
+      rangeZ: zRange,
     );
+
+    // A sweep is picked from its own samples rather than by marching a ray:
+    // it is not a height, so there is nothing for a ray to cross. Tried first
+    // because a cell holding a sweep is showing the sweep — the scalar march
+    // below would find nothing there anyway.
+    final VectorFieldParser? field = widget.vectorParser;
+    final SurfaceHit? hit =
+        (field != null && field.isParametric)
+            ? pickParametric(
+              camera,
+              field,
+              local,
+              uRange: widget.uRange,
+              vRange: widget.vRange,
+            )
+            : pickSurface(
+              camera,
+              _curves,
+              local,
+              // A vector field's magnitude surface is a height like any other
+              // and joins the same march, as do the components of a complex
+              // line — which are only pickable while they are on show.
+              field: field,
+              surfaceMode: widget.surfaceMode,
+              complexView: widget.complexView,
+            );
     setState(() => _tracePoint = hit);
   }
 
@@ -462,8 +494,20 @@ class Plot3DScreenState extends State<Plot3DScreen>
     // A tenth of margin so the figure does not touch the walls, and a floor
     // so a curve that lies flat in one axis — a circle in the plane, say —
     // still gets a box with some depth to it rather than a slot.
-    double axis(double reach) {
-      final double padded = reach * 1.1;
+    // The sweep is not necessarily the whole cell. A circle of radius 1 beside
+    // a sweep half a unit across belongs in the same box, and framing on the
+    // sweep alone left the circle outside the walls.
+    double reach = 0;
+    for (final PlotExpression e in widget.functions) {
+      if (!e.isValid) continue;
+      // A level set says where it is satisfied, not how big it is, so its own
+      // window is the only thing to go on. Height surfaces are handled by the
+      // fit below and are not stretched to here.
+      if (e.isLevelSet) reach = math.max(reach, 1.0);
+    }
+
+    double axis(double own) {
+      final double padded = math.max(own, reach) * 1.1;
       return padded.isFinite && padded > 0.5 ? padded : 0.5;
     }
 
@@ -658,6 +702,8 @@ class Plot3DScreenState extends State<Plot3DScreen>
                   plotMode: widget.plotMode,
                   fieldType: widget.fieldType,
                   vectorParser: widget.vectorParser,
+                  vectorFields: widget.vectorFields,
+                  vectorSeriesBase: widget.vectorSeriesBase,
                   showContour: widget.showContour,
                   surfaceMode: widget.surfaceMode,
                   colors: widget.colors,

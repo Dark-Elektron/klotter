@@ -438,10 +438,16 @@ class PlotExpression {
   /// cell, so one cell holds several expressions that share a plot. Blank
   /// lines are dropped; a cell with no newline yields a single entry, so
   /// callers never need to special-case the common case.
-  static List<PlotExpression> compileAll(
-    List<MathNode> nodes, {
-    CoordinateSystem system = CoordinateSystem.cartesian,
-  }) {
+  /// The cell's lines, split on the newlines between them.
+  ///
+  /// Every line of a cell is its own plot on shared axes, so anything deciding
+  /// what a cell *is* has to ask line by line. Asking of the whole node list
+  /// reads three separate equations as one expression — which is how a cell
+  /// mixing a curve and a sweep came out as a single malformed vector field
+  /// and drew nothing at all.
+  ///
+  /// Empty lines are dropped: a trailing newline is not a plot.
+  static List<List<MathNode>> splitLines(List<MathNode> nodes) {
     final List<List<MathNode>> lines = <List<MathNode>>[<MathNode>[]];
     for (final MathNode node in nodes) {
       if (node is NewlineNode) {
@@ -450,6 +456,15 @@ class PlotExpression {
         lines.last.add(node);
       }
     }
+    lines.removeWhere((List<MathNode> line) => line.isEmpty);
+    return lines;
+  }
+
+  static List<PlotExpression> compileAll(
+    List<MathNode> nodes, {
+    CoordinateSystem system = CoordinateSystem.cartesian,
+  }) {
+    final List<List<MathNode>> lines = splitLines(nodes);
 
     final List<PlotExpression> out = <PlotExpression>[];
     for (final List<MathNode> line in lines) {

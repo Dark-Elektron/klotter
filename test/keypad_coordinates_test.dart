@@ -5,7 +5,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:klotter/keypad/buttons.dart';
 import 'package:klotter/keypad/keypad.dart';
-import 'package:klotter/math_renderer/math_editor_controller.dart';
 import 'package:klotter/utils/app_colors.dart';
 import 'package:klotter/walkthrough/walkthrough_service.dart';
 import 'package:klotter/keypad/popup_menu_button.dart';
@@ -80,8 +79,7 @@ void main() {
                     isLandscape: false,
                     colors: AppColors.of(context),
                     activeIndex: 0,
-                    mathEditorControllers: <int, MathEditorController>{},
-                    textDisplayControllers: <int, TextEditingController>{},
+                    activeController: null,
                     settingsProvider: settings,
                     onUpdateMathEditor: () {},
                     onAddDisplay: () {},

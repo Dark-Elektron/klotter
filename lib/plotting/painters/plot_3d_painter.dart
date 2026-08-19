@@ -30,6 +30,17 @@ class Quad {
   /// across the cell instead.
   final double v1, v2, v3, v4;
 
+  /// Where this cell's corners land on the floor, already rotated.
+  ///
+  /// Computed with the corners rather than from them: by the time a quad
+  /// exists its points have been through `rotateZ`/`rotateX`, and a rotated
+  /// coordinate cannot be turned back into a height. A shadow needs the
+  /// height, so it is taken while the corner is still a data point — the same
+  /// reason [v1] is gathered up there rather than recovered down here.
+  ///
+  /// Null for the paths that build quads without a floor to cast onto.
+  final Point3D? s1, s2, s3, s4;
+
   Quad(
     this.p1,
     this.p2,
@@ -41,6 +52,10 @@ class Quad {
     double? v2,
     double? v3,
     double? v4,
+    this.s1,
+    this.s2,
+    this.s3,
+    this.s4,
   }) : v1 = v1 ?? avgValue,
        v2 = v2 ?? avgValue,
        v3 = v3 ?? avgValue,
@@ -268,6 +283,29 @@ class Plot3DPainter extends CustomPainter {
   final PlotMode plotMode;
   final FieldType fieldType;
   final VectorFieldParser? vectorParser;
+
+  /// Every vector or parametric line in the cell, in the order written.
+  /// [vectorParser] is the first of them, kept because most of what the
+  /// painter does with a field wants exactly one.
+  ///
+  /// Empty means fall back to [vectorParser] alone, so callers written before
+  /// a cell could hold several need not change.
+  final List<VectorFieldParser> vectorFields;
+
+  /// The series index of the first vector line.
+  ///
+  /// A cell numbers its plots in the order they are written, and a sweep is
+  /// one of them. Colouring it from index 0 handed it the same colour as the
+  /// first curve on the same axes.
+  final int vectorSeriesBase;
+
+  /// The fields to draw, with [vectorParser] as the fallback.
+  List<VectorFieldParser> get fieldsToDraw =>
+      vectorFields.isNotEmpty
+          ? vectorFields
+          : (vectorParser == null
+              ? const <VectorFieldParser>[]
+              : <VectorFieldParser>[vectorParser!]);
   final bool showContour;
   final SurfaceMode surfaceMode;
   final AppColors colors;
@@ -312,6 +350,8 @@ class Plot3DPainter extends CustomPainter {
     required this.plotMode,
     required this.fieldType,
     this.vectorParser,
+    this.vectorFields = const <VectorFieldParser>[],
+    this.vectorSeriesBase = 0,
     required this.showContour,
     required this.surfaceMode,
     required this.colors,
@@ -673,6 +713,54 @@ class Plot3DPainter extends CustomPainter {
 
   /// Every function to draw, falling back to the single [function] so callers
   /// that predate multi-surface support keep working unchanged.
+  /// Where the light is, in the room rather than in the data.
+  ///
+  /// The scene had light in it already — each facet is shaded by how squarely
+  /// it faces the viewer — but nothing cast by it. Shading cannot say how far
+  /// above the floor a surface sits: a dome and a dent shade almost alike, and
+  /// their shadows do not.
+  ///
+  /// Given in *view* space: x to the right of the screen, y into it, z up. A
+  /// lamp above, in front and a little to the left.
+  static const Point3D lightDirection = Point3D(-0.34, -0.22, -1.0);
+
+  /// The light's direction expressed in the plot's own coordinates.
+  ///
+  /// This is the whole point. The shadow is cast onto the floor, and the floor
+  /// turns with the plot, so the projection has to happen in the plot's frame
+  /// — but the *light* does not turn with it. Writing the direction as a
+  /// constant in the plot's frame nailed the lamp to the data, and the shadow
+  /// then rotated rigidly with the surface as though painted on it, which is
+  /// exactly what a shadow does not do.
+  ///
+  /// So the fixed view-space direction is carried back through the inverse of
+  /// the view rotation. Turning the plot leaves the lamp where it was and
+  /// sweeps the shadow around the floor, which is what a lamp in a room does.
+  @visibleForTesting
+  static Point3D lightInPlotSpace(double rotationX, double rotationZ) =>
+      lightDirection.rotateX(-rotationX).rotateZ(-rotationZ);
+
+  /// How far a corner slides per unit of its own height, on the way down.
+  ///
+  /// Clamped: as the light approaches the horizontal its shadow runs away to
+  /// infinity, and a plot rotated to that angle would otherwise fill with a
+  /// shadow stretched across the whole floor.
+  @visibleForTesting
+  static ({double dx, double dy}) shadowSlide(
+    double rotationX,
+    double rotationZ,
+  ) {
+    final Point3D l = lightInPlotSpace(rotationX, rotationZ);
+    final double down = l.z.abs() < 0.2 ? 0.2 * (l.z.isNegative ? -1 : 1) : l.z;
+    return (dx: -l.x / down, dy: -l.y / down);
+  }
+
+  /// Not const: a test has to render the same scene with the shadow off,
+  /// because "is anything dark on the floor" counts the grid lines already
+  /// drawn there and passes with shadows disabled.
+  @visibleForTesting
+  static double shadowAlpha = 0.22;
+
   List<PlotExpression> get _curves =>
       functions.isEmpty ? <PlotExpression>[function] : functions;
 
@@ -740,7 +828,18 @@ class Plot3DPainter extends CustomPainter {
       // Ahead of the field branch for the same reason as in 2D: the notation
       // is shared, and only the variables say whether this is an arrow at
       // every point or one point swept into a curve.
+      //
+      // This draws the sweep together with any z = f(x, y) and standing curves
+      // in the cell, because they all belong in one depth-ordered scene.
       _drawHeightSurfaces(canvas, size, focalLength);
+      // Equations are contoured rather than sampled, so they have a renderer
+      // of their own and it has to be asked. It only ran in the scalar branch,
+      // so a cell holding a sweep and a circle drew the sweep alone — the
+      // circle was compiled, framed and then never drawn.
+      if (_curves.any((PlotExpression e) => e.isLevelSet)) {
+        // The scene above already laid the floor down in depth order.
+        _drawLevelSurface(canvas, size, focalLength, withFloor: false);
+      }
     } else if (fieldType == FieldType.vector && vectorParser != null) {
       // Vector field visualization
       if (showSurface && !vectorParser!.is3D) {
@@ -1178,6 +1277,32 @@ class Plot3DPainter extends CustomPainter {
       c.z * scaleZ,
     ).rotateZ(rotationZ).rotateX(rotationX);
 
+    /// The same corner, dropped onto the floor along the light.
+    ///
+    /// The slide is worked out for the current view, not baked in: the lamp
+    /// stays where it is while the plot turns underneath it.
+    final ({double dx, double dy}) slide = Plot3DPainter.shadowSlide(
+      rotationX,
+      rotationZ,
+    );
+    // Floor bounds, so a shadow cannot sprawl past the plane it falls on.
+    final double floorX = rangeX * scaleX;
+    final double floorY = rangeY * scaleY;
+
+    Point3D floorUnder(({double x, double y, double z, double v}) c) {
+      // The slide is applied to the *scaled* height, not the raw one. Mixing
+      // them was the bug behind the black bands across the plot: z runs to 50
+      // on x^2+y^2 while x and y span 5, so a slide of 0.34 per data unit threw
+      // the shadow seventeen units sideways on a box ten wide, and the quads
+      // stretched off across the background.
+      final double h = c.z * scaleZ;
+      return Point3D(
+        (c.x * scaleX + h * slide.dx).clamp(-floorX, floorX),
+        (c.y * scaleY + h * slide.dy).clamp(-floorY, floorY),
+        0,
+      ).rotateZ(rotationZ).rotateX(rotationX);
+    }
+
     /// Sutherland–Hodgman against one wall, in data space.
     ///
     /// A corner outside is replaced by the point where its edge crosses, so
@@ -1263,6 +1388,10 @@ class Plot3DPainter extends CustomPainter {
               v2: b.v,
               v3: d.v,
               v4: d.v,
+              s1: floorUnder(a),
+              s2: floorUnder(b),
+              s3: floorUnder(d),
+              s4: floorUnder(d),
             ),
           );
         }
@@ -1270,6 +1399,40 @@ class Plot3DPainter extends CustomPainter {
     }
 
     return (quads: quads, minV: minZ, maxV: maxZ);
+  }
+
+  /// Lay a cell's shadow on the floor.
+  ///
+  /// Cells tile, so their shadows tile too and the translucent fills do not
+  /// stack into blotches — which is what a shadow assembled from overlapping
+  /// blobs would do. Sorted by its own depth like anything else in the scene,
+  /// so a shadow passing behind the surface casting it is occluded correctly.
+  void _addShadowOf(
+    Quad quad,
+    _DepthScene scene,
+    Size size,
+    double focalLength,
+  ) {
+    final Point3D? s1 = quad.s1;
+    final Point3D? s2 = quad.s2;
+    final Point3D? s3 = quad.s3;
+    final Point3D? s4 = quad.s4;
+    if (shadowAlpha <= 0 ||
+        s1 == null ||
+        s2 == null ||
+        s3 == null ||
+        s4 == null) {
+      return;
+    }
+
+    final Offset a = s1.project(focalLength, size, _panX, _panY);
+    final Offset b = s2.project(focalLength, size, _panX, _panY);
+    final Offset c = s3.project(focalLength, size, _panX, _panY);
+    final Offset d = s4.project(focalLength, size, _panX, _panY);
+
+    final int ink = Color.fromRGBO(0, 0, 0, shadowAlpha).toARGB32();
+    scene.addTriangle(a, b, c, ink, ink, ink, (s1.y + s2.y + s3.y) / 3);
+    scene.addTriangle(a, c, d, ink, ink, ink, (s1.y + s3.y + s4.y) / 3);
   }
 
   /// Draw every z = f(x, y) in the cell on one set of axes.
@@ -1330,6 +1493,7 @@ class Plot3DPainter extends CustomPainter {
       }
 
       for (final quad in built.quads) {
+        _addShadowOf(quad, scene, size, focalLength);
         final o1 = quad.p1.project(focalLength, size, _panX, _panY);
         final o2 = quad.p2.project(focalLength, size, _panX, _panY);
         final o3 = quad.p3.project(focalLength, size, _panX, _panY);
@@ -2981,7 +3145,7 @@ class Plot3DPainter extends CustomPainter {
     }
     final double span = maxV > minV ? maxV - minV : 1.0;
 
-    final Color base = _theme.seriesColor(0);
+    final Color base = _theme.seriesColor(vectorSeriesBase);
 
     /// The averaged normal's facing at a corner, 0 edge-on to 1 square on.
     ///
@@ -3101,14 +3265,29 @@ class Plot3DPainter extends CustomPainter {
   /// the sweep says where the point is, and the window only decides whether it
   /// is visible.
   void _addParametricTo(_DepthScene scene, Size size, double focalLength) {
-    final VectorFieldParser? field = vectorParser;
     // A surface is not also a curve: sweeping u alone would trace one edge of
     // it and draw that line across the mesh.
-    if (field == null || !field.isParametric || field.isParametricSurface) {
-      return;
+    final List<VectorFieldParser> sweeps = fieldsToDraw
+        .where(
+          (VectorFieldParser f) => f.isParametric && !f.isParametricSurface,
+        )
+        .toList(growable: false);
+    for (int n = 0; n < sweeps.length; n++) {
+      _addOneParametricTo(scene, size, focalLength, sweeps[n], n);
     }
+  }
 
-    final Color curveColor = _theme.seriesColor(0);
+  void _addOneParametricTo(
+    _DepthScene scene,
+    Size size,
+    double focalLength,
+    VectorFieldParser field,
+    int nth,
+  ) {
+    // As in 2D: the sweep takes its place in the cell's colour cycle rather
+    // than restarting it, so it does not arrive wearing the first curve's
+    // colour.
+    final Color curveColor = _theme.seriesColor(vectorSeriesBase + nth);
     final paint =
         Paint()
           ..color = curveColor
@@ -3341,11 +3520,35 @@ class Plot3DPainter extends CustomPainter {
   }
 
   void _drawVectorField3D(Canvas canvas, Size size, double focalLength) {
-    if (vectorParser == null) return;
+    // One set of arrows per field, as in 2D. Two fields sharing the full
+    // rainbow put every magnitude in both and neither can be followed, so each
+    // takes a ramp and a scale of its own.
+    final List<VectorFieldParser> fields = fieldsToDraw;
+    for (int n = 0; n < fields.length; n++) {
+      _drawOneVectorField3D(
+        canvas,
+        size,
+        focalLength,
+        fields[n],
+        surfaceColormap(n, of: fields.length),
+        surfaceRampStops(n, of: fields.length),
+        n,
+      );
+    }
+  }
 
+  void _drawOneVectorField3D(
+    Canvas canvas,
+    Size size,
+    double focalLength,
+    VectorFieldParser field,
+    Color Function(double) ramp,
+    List<Color> rampStops,
+    int row,
+  ) {
     final bool showSurface = surfaceMode != SurfaceMode.none;
     const gridCount = 8;
-    final bool is3DVector = vectorParser!.is3D;
+    final bool is3DVector = field.is3D;
 
     List<Arrow3D> arrows = [];
     double maxMag = 0;
@@ -3359,12 +3562,12 @@ class Plot3DPainter extends CustomPainter {
             final y = -rangeY + (2 * rangeY * j / gridCount);
             final z = -rangeZ + (2 * rangeZ * k / gridCount);
 
-            final (fx, fy, fz) = vectorParser!.evaluate(x, y, z);
+            final (fx, fy, fz) = field.evaluate(x, y, z);
             double vx = fx;
             double vy = fy;
             double vz = fz;
             double surfaceValue = 0;
-            double mag = vectorParser!.magnitude(x, y, z);
+            double mag = field.magnitude(x, y, z);
 
             if (surfaceMode == SurfaceMode.x) {
               vx = fx;
@@ -3409,12 +3612,12 @@ class Plot3DPainter extends CustomPainter {
           final x = -rangeX + (2 * rangeX * i / (gridCount * 2));
           final y = -rangeY + (2 * rangeY * j / (gridCount * 2));
 
-          final (fx, fy, fz) = vectorParser!.evaluate(x, y, 0);
+          final (fx, fy, fz) = field.evaluate(x, y, 0);
           double vx = fx;
           double vy = fy;
           double vz = 0;
           double surfaceValue = 0;
-          double mag = vectorParser!.magnitude(x, y, 0);
+          double mag = field.magnitude(x, y, 0);
 
           if (surfaceMode == SurfaceMode.x) {
             vx = fx;
@@ -3491,7 +3694,7 @@ class Plot3DPainter extends CustomPainter {
       final endProj = endRotated.project(focalLength, size, _panX, _panY);
 
       final normalized = arrow.magnitude / maxMag;
-      final color = plotColormap(normalized);
+      final color = ramp(normalized);
 
       final paint =
           Paint()
@@ -3534,7 +3737,7 @@ class Plot3DPainter extends CustomPainter {
     }
 
     if (surfaceMode == SurfaceMode.none) {
-      _drawColorbar3D(canvas, size, 0, maxMag);
+      _drawColorbar3D(canvas, size, 0, maxMag, stops: rampStops, row: row);
     }
   }
 
@@ -3674,6 +3877,12 @@ class Plot3DPainter extends CustomPainter {
       (color: _theme.axisX, text: 'x = ${formatReadout(hit.x)}', bold: false),
       (color: _theme.axisY, text: 'y = ${formatReadout(hit.y)}', bold: false),
       (color: _theme.axisZ, text: 'z = ${formatReadout(hit.z)}', bold: false),
+      // On a sweep these are the numbers worth having: x, y and z say where
+      // the point is, u and v say which part of the sweep put it there.
+      if (hit.u case final double u)
+        (color: _theme.label, text: 'u = ${formatReadout(u)}', bold: false),
+      if (hit.v case final double v)
+        (color: _theme.label, text: 'v = ${formatReadout(v)}', bold: false),
     ], anchorX: at.dx);
   }
 
@@ -3683,7 +3892,19 @@ class Plot3DPainter extends CustomPainter {
   /// edge to the parameter panels and the top left to the mode label. Ticks
   /// hang below the bar rather than beside it, which is the only arrangement
   /// that keeps five labels from colliding.
-  void _drawColorbar3D(Canvas canvas, Size size, double minVal, double maxVal) {
+  /// A scale for what the arrows mean.
+  ///
+  /// [stops] is the ramp being labelled and [row] which bar this is, counting
+  /// down from the top — several fields on one set of axes each need their own,
+  /// exactly as in 2D.
+  void _drawColorbar3D(
+    Canvas canvas,
+    Size size,
+    double minVal,
+    double maxVal, {
+    List<Color> stops = plotColormapStops,
+    int row = 0,
+  }) {
     const double barHeight = 12.0;
     const double margin = 10.0;
     const int ticks = 4;
@@ -3691,7 +3912,7 @@ class Plot3DPainter extends CustomPainter {
 
     final Rect barRect = Rect.fromLTWH(
       size.width - barWidth - margin,
-      margin,
+      margin + row * (barHeight + 6),
       barWidth,
       barHeight,
     );
@@ -3702,10 +3923,10 @@ class Plot3DPainter extends CustomPainter {
     canvas.drawRect(
       barRect,
       Paint()
-        ..shader = const LinearGradient(
+        ..shader = LinearGradient(
           begin: Alignment.centerLeft,
           end: Alignment.centerRight,
-          colors: plotColormapStops,
+          colors: stops,
         ).createShader(barRect),
     );
 

@@ -349,6 +349,18 @@ class MathEditorController extends ChangeNotifier {
     NodeLayoutInfo? bestContain;
     NodeLayoutInfo? bestNearest;
     double minDistanceSq = double.infinity;
+    // The nearest node on the line that was tapped, which is preferred over
+    // anything nearer on another line.
+    //
+    // Straight-line distance is the right answer only while an expression is
+    // one line, which is how it was in the app this came from — its action key
+    // starts a new cell. Here it inserts a newline in the same cell, so one
+    // editor holds several lines, and the nearest node to a tap past the end of
+    // a short line is often on the long line above it. The caret then landed on
+    // a line the user was not pointing at, and the next backspace deleted from
+    // there.
+    NodeLayoutInfo? bestOnLine;
+    double minLineDistance = double.infinity;
 
     // Single pass for both containment and distance
     for (final info in _layoutRegistry.values) {
@@ -365,9 +377,19 @@ class MathEditorController extends ChangeNotifier {
         minDistanceSq = distSq;
         bestNearest = info;
       }
+
+      // On the tapped line, only the horizontal gap matters: the node at the
+      // end of that line is the one being reached for.
+      if (position.dy >= info.rect.top && position.dy <= info.rect.bottom) {
+        final double gap = dx.abs();
+        if (gap < minLineDistance) {
+          minLineDistance = gap;
+          bestOnLine = info;
+        }
+      }
     }
 
-    final targetNode = bestContain ?? bestNearest;
+    final targetNode = bestContain ?? bestOnLine ?? bestNearest;
     if (targetNode != null) {
       _processTapAtNode(targetNode, position);
     }
@@ -448,7 +470,14 @@ class MathEditorController extends ChangeNotifier {
     );
   }
 
-  void moveCursorToStartWithRect() {
+  /// Put the caret at the start of the line, for a tap off the left edge.
+  ///
+  /// [atY] is where that tap was. Without it this takes the leftmost node of
+  /// the whole expression, which is the start of the first line rather than of
+  /// the line pointed at — right while an expression is a single line, wrong
+  /// here, where one cell holds several. Null keeps the old whole-expression
+  /// behaviour, for callers that have no position to offer.
+  void moveCursorToStartWithRect({double? atY}) {
     if (_layoutRegistry.isEmpty) {
       return;
     }
@@ -458,6 +487,7 @@ class MathEditorController extends ChangeNotifier {
     double minLeft = double.infinity;
 
     for (final info in _layoutRegistry.values) {
+      if (!_isOnLine(info, atY)) continue;
       if (info.rect.left < minLeft) {
         minLeft = info.rect.left;
         leftmostInfo = info;
@@ -487,7 +517,22 @@ class MathEditorController extends ChangeNotifier {
     cursorPaintNotifier.updateRectDirect(newRect);
   }
 
-  void moveCursorToEndWithRect() {
+  /// True when [info] is on the line at [atY], or when no line was named.
+  ///
+  /// A node whose vertical span contains the point is on that line. Falling
+  /// back to true for a null [atY] keeps every existing caller working on the
+  /// whole expression.
+  bool _isOnLine(NodeLayoutInfo info, double? atY) {
+    if (atY == null) return true;
+    return atY >= info.rect.top && atY <= info.rect.bottom;
+  }
+
+  /// Put the caret at the end of the line, for a tap off the right edge.
+  ///
+  /// See [moveCursorToStartWithRect]: without [atY] this finds the rightmost
+  /// node anywhere, which on a multi-line expression is the end of the *widest*
+  /// line rather than the one being pointed at.
+  void moveCursorToEndWithRect({double? atY}) {
     if (_layoutRegistry.isEmpty) return;
 
     // Find the rightmost literal node
@@ -495,6 +540,7 @@ class MathEditorController extends ChangeNotifier {
     double maxRight = double.negativeInfinity;
 
     for (final info in _layoutRegistry.values) {
+      if (!_isOnLine(info, atY)) continue;
       if (info.rect.right > maxRight) {
         maxRight = info.rect.right;
         rightmostInfo = info;

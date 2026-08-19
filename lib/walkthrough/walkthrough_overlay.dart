@@ -147,11 +147,11 @@ class WalkthroughOverlay extends StatelessWidget {
   }
 
   String _getTargetKeyId(String stepId) {
+    // The per-block steps have targets of their own — invisible boxes laid
+    // over the columns each block occupies — so they are not listed here and
+    // fall through to a key of the same name.
     const tabletTargetMappings = {
       'tablet_keypads_visible': 'main_keypad_area',
-      'tablet_swipe_left_extras': 'main_keypad_area',
-      'tablet_extras_visible': 'main_keypad_area',
-      'tablet_swipe_right_back': 'main_keypad_area',
       'tablet_settings_button': 'settings_button',
     };
 

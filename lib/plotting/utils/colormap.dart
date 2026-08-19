@@ -175,6 +175,15 @@ Color Function(double) surfaceColormap(int index, {required int of}) {
   return (double t) => _rampLerp(ramp, t);
 }
 
+/// The stops behind [surfaceColormap], for drawing its scale.
+///
+/// A colorbar is a gradient across a list of colours rather than a sampled
+/// function, so it needs the stops themselves. Matches [surfaceColormap] for
+/// the same arguments, including falling back to the rainbow for a lone
+/// surface.
+List<Color> surfaceRampStops(int index, {required int of}) =>
+    of <= 1 ? plotColormapStops : _surfaceRamps[index % _surfaceRamps.length];
+
 /// Quieter single-hue alternative for the plain "gradient" surface mode.
 Color surfaceGradientColor(double t) => _rampLerp(_tealRamp, t);
 

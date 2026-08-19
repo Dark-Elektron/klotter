@@ -20,6 +20,14 @@ class Plot2DScreen extends StatefulWidget {
   final FieldType fieldType;
   final VectorFieldParser? vectorParser;
 
+  /// Every vector or parametric line in the cell, in the order written.
+  /// Empty falls back to [vectorParser] alone.
+  final List<VectorFieldParser> vectorFields;
+
+  /// The series index of the first vector line, so a sweep continues the
+  /// cell's colour cycle instead of restarting it.
+  final int vectorSeriesBase;
+
   /// The spans u and v are swept over, when the cell is parametric.
   /// Which readings of a complex function are on show.
   final ComplexView complexView;
@@ -42,6 +50,8 @@ class Plot2DScreen extends StatefulWidget {
     required this.plotMode,
     required this.fieldType,
     this.vectorParser,
+    this.vectorFields = const <VectorFieldParser>[],
+    this.vectorSeriesBase = 0,
     this.complexView = ComplexView.initial,
     this.uRange = defaultParameterRange,
     this.vRange = defaultParameterRange,
@@ -382,6 +392,8 @@ class Plot2DScreenState extends State<Plot2DScreen> {
                   plotMode: widget.plotMode,
                   fieldType: widget.fieldType,
                   vectorParser: widget.vectorParser,
+                  vectorFields: widget.vectorFields,
+                  vectorSeriesBase: widget.vectorSeriesBase,
                   showContour: widget.showContour,
                   surfaceMode: widget.surfaceMode,
                   colors: widget.colors,

@@ -135,17 +135,32 @@ void main() {
     expect(solid.uRange.max, 4);
   });
 
-  testWidgets('a parametric plot arrives coloured by magnitude', (
+  testWidgets('a parametric plot in 3D arrives coloured by magnitude', (
     tester,
   ) async {
     // Its default shading reads the shape but says nothing about the
     // numbers, and where the curve runs far from the origin is what a
     // parametric plot is nearly always being looked at for.
-    await tester.pumpWidget(host(curve()));
+    //
+    // In 3D specifically. Both screens are mounted at once, so this used to
+    // read the 3D screen while the panel sat in 2D and was really asserting a
+    // single default for both — which is what put a surface under a 2D sweep.
+    await tester.pumpWidget(
+      host(curve(), view: PlotViewState.initial.copyWith(show3D: true)),
+    );
     await tester.pumpAndSettle();
 
     final Plot3DScreen solid = tester.widget(find.byType(Plot3DScreen));
     expect(solid.surfaceMode, SurfaceMode.magnitude);
+  });
+
+  testWidgets('the same plot in 2D arrives with no colouring', (tester) async {
+    // There is no surface to shade in 2D: a sweep is a curve across the plane.
+    await tester.pumpWidget(host(curve()));
+    await tester.pumpAndSettle();
+
+    final Plot3DScreen solid = tester.widget(find.byType(Plot3DScreen));
+    expect(solid.surfaceMode, SurfaceMode.none);
   });
 
   testWidgets('a plain function is not forced into a colour mode', (
@@ -188,7 +203,9 @@ void main() {
     // The other half: null means the user has not chosen, so the plot is new
     // and the default applies.
     expect(PlotViewState.initial.surfaceMode, isNull);
-    await tester.pumpWidget(host(curve()));
+    await tester.pumpWidget(
+      host(curve(), view: PlotViewState.initial.copyWith(show3D: true)),
+    );
     await tester.pumpAndSettle();
 
     final Plot3DScreen solid = tester.widget(find.byType(Plot3DScreen));

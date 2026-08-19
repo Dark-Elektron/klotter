@@ -7,7 +7,12 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'dart:typed_data';
 
-enum TextureType { smoothNoise, paperFiber, none }
+/// The backgrounds a plot can be drawn on.
+///
+/// `none` first because it is the default and because a dropdown reads best
+/// with its plainest option at the top — the list is built straight from
+/// `TextureType.values`, so the order here is the order on screen.
+enum TextureType { none, smoothNoise, paperFiber }
 
 class TextureGenerator {
   static const int textureWidth = 256;

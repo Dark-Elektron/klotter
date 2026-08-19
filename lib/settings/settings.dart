@@ -1,11 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'package:flutter/services.dart';
+
 import '../utils/app_colors.dart';
+import '../utils/crash_log.dart';
 import '../utils/texture_generator.dart';
 import 'settings_provider.dart';
 
 class SettingsScreen extends StatefulWidget {
+  /// The fonts the user can pick between.
+  ///
+  /// On the widget rather than its state so it can be checked against
+  /// pubspec.yaml: every name here has to be a declared family, or choosing it
+  /// silently falls back to the default.
+  static const List<String> availableFonts = <String>[
+    'OpenSans',
+    'Cambria',
+    'Rosemary',
+  ];
+
   final VoidCallback? onShowTutorial;
 
   const SettingsScreen({super.key, this.onShowTutorial});
@@ -19,6 +33,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   static const double _toggleControlWidth = 120;
   static const double _maxButtonRadius = SettingsProvider.maxButtonRadius;
   static const double _maxButtonSpacing = SettingsProvider.maxButtonSpacing;
+
+  /// The last uncaught error, if the app has had one. Null while it is being
+  /// read, and null forever after on a build that has never failed — which is
+  /// why the section is absent rather than empty in the ordinary case.
+  String? _lastCrash;
+
+  @override
+  void initState() {
+    super.initState();
+    CrashLog.read().then((String? report) {
+      if (mounted) setState(() => _lastCrash = report);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -90,14 +117,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   colors: colors,
                   title: 'APPEARANCE',
                   children: [
-                    _buildThemeControl(settings: settings, colors: colors),
-                    const SizedBox(height: 10),
-                    Divider(color: colors.divider.withValues(alpha: 0.5)),
-                    const SizedBox(height: 10),
+                    // Texture first: it is the one most people turn off, and
+                    // it defaults to off, so it reads oddly buried under the
+                    // theme it does not belong to.
                     _buildTextureTypeControl(
                       settings: settings,
                       colors: colors,
                     ),
+                    const SizedBox(height: 10),
+                    Divider(color: colors.divider.withValues(alpha: 0.5)),
+                    const SizedBox(height: 10),
+                    _buildThemeControl(settings: settings, colors: colors),
                     const SizedBox(height: 10),
                     Divider(color: colors.divider.withValues(alpha: 0.5)),
                     const SizedBox(height: 10),
@@ -156,6 +186,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ],
                 ),
+                if (_lastCrash != null) ...<Widget>[
+                  const SizedBox(height: 16),
+                  _buildSectionCard(
+                    colors: colors,
+                    title: 'DIAGNOSTICS',
+                    children: <Widget>[_buildCrashReport(colors)],
+                  ),
+                ],
               ],
             ),
           ),
@@ -756,6 +794,65 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  /// What the app recorded the last time it failed.
+  ///
+  /// Shown only when there is something to show, so it is invisible unless it
+  /// is needed — and when it appears, it can be copied out whole, which is the
+  /// point of keeping it.
+  Widget _buildCrashReport(AppColors colors) {
+    final String report = _lastCrash!;
+    // First line is the time, second what the app was doing; the rest is the
+    // error and its stack, which belongs behind a copy button rather than on
+    // the screen.
+    final List<String> lines = report.split('\n');
+    final String when = lines.isNotEmpty ? lines.first : '';
+    final String doing = lines.length > 1 ? lines[1] : '';
+    final String what = lines.length > 2 ? lines[2] : '';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          'The app stopped unexpectedly $doing.',
+          style: TextStyle(color: colors.textPrimary, fontSize: 15),
+        ),
+        const SizedBox(height: 4),
+        Text(when, style: TextStyle(color: colors.textSecondary, fontSize: 12)),
+        const SizedBox(height: 8),
+        Text(
+          what,
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: colors.textSecondary, fontSize: 12),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: <Widget>[
+            TextButton.icon(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: report));
+                if (!mounted) return;
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(const SnackBar(content: Text('Report copied')));
+              },
+              icon: const Icon(Icons.copy, size: 16),
+              label: const Text('Copy report'),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: () async {
+                await CrashLog.clear();
+                if (mounted) setState(() => _lastCrash = null);
+              },
+              child: const Text('Dismiss'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   Widget _buildHapticControl({
     required SettingsProvider settings,
     required AppColors colors,
@@ -978,12 +1075,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  static const List<String> _availableFonts = [
-    'OpenSans',
-    'Cambria',
-    'Rosemary',
-  ];
-
   Widget _buildFontFamilyControl({
     required SettingsProvider settings,
     required AppColors colors,
@@ -1002,7 +1093,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _buildModernDropdown<String>(
           colors: colors,
           value: settings.fontFamily,
-          items: _availableFonts,
+          items: SettingsScreen.availableFonts,
           labelBuilder: _getFontFamilyLabel,
           onChanged: (value) => settings.setFontFamily(value),
         ),

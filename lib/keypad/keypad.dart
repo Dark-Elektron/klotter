@@ -60,8 +60,14 @@ class CalculatorKeypad extends StatefulWidget {
   final bool isLandscape;
   final AppColors colors;
   final int activeIndex;
-  final Map<int, MathEditorController?> mathEditorControllers;
-  final Map<int, TextEditingController?> textDisplayControllers;
+
+  /// The editor every key types into.
+  ///
+  /// Handed in already resolved, rather than the keypad reaching into a map by
+  /// index. Which editor is current is the host's business and is about to stop
+  /// being a single index at all — a plot will own several expression rows —
+  /// and the keypad has no stake in that. It only ever wanted one controller.
+  final MathEditorController? activeController;
   final SettingsProvider settingsProvider;
   final VoidCallback onUpdateMathEditor;
   final VoidCallback onAddDisplay;
@@ -76,6 +82,12 @@ class CalculatorKeypad extends StatefulWidget {
   final GlobalKey extrasKeypadKey;
   final GlobalKey commandButtonKey;
   final GlobalKey mainKeypadAreaKey;
+
+  /// Where each block of the tablet keypad sits, for the walkthrough to point
+  /// at. Null on a phone, where the blocks are separate pages instead.
+  final GlobalKey? numberBlockKey;
+  final GlobalKey? scientificBlockKey;
+  final GlobalKey? extrasBlockKey;
   final GlobalKey settingsButtonKey;
 
   final VoidCallback? onClearSelectionOverlay;
@@ -108,8 +120,7 @@ class CalculatorKeypad extends StatefulWidget {
     required this.isLandscape,
     required this.colors,
     required this.activeIndex,
-    required this.mathEditorControllers,
-    required this.textDisplayControllers,
+    required this.activeController,
     required this.settingsProvider,
     required this.onUpdateMathEditor,
     required this.onAddDisplay,
@@ -122,6 +133,9 @@ class CalculatorKeypad extends StatefulWidget {
     required this.extrasKeypadKey,
     required this.commandButtonKey,
     required this.mainKeypadAreaKey,
+    this.numberBlockKey,
+    this.scientificBlockKey,
+    this.extrasBlockKey,
     required this.settingsButtonKey,
     this.onClearSelectionOverlay,
     this.canUndoAppState = false,
@@ -464,6 +478,46 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
   List<List<String?>> get _tabletGrid =>
       widget.isLandscape ? _tabletLandscapeGrid : _tabletPortraitGrid;
 
+  /// The columns one block of the tablet keypad occupies, for the walkthrough
+  /// to point at.
+  ///
+  /// Read off the grid rather than written down, so a rearranged keypad keeps
+  /// its highlights — but by a majority vote per column, not by the outermost
+  /// key carrying the prefix. The blocks are not clean rectangles: landscape
+  /// puts `ext.export` at column 18, deep inside the number keys, so a
+  /// min-to-max span would stretch the extras block across the whole keypad
+  /// and overlap the other two. A column belongs to whichever block holds most
+  /// of it, and the answer is contiguous in both grids.
+  ///
+  /// Columns are counted left to right as drawn, so a left-handed layout —
+  /// which is the grid reflected — reports the mirrored span.
+  ({int first, int last})? _tabletBlockColumns(
+    List<List<String?>> grid,
+    String prefix,
+  ) {
+    int lo = _tabletColumns, hi = -1;
+    for (int c = 0; c < _tabletColumns; c++) {
+      final Map<String, int> votes = <String, int>{};
+      for (final List<String?> row in grid) {
+        if (c >= row.length) continue;
+        final String? name = row[c];
+        if (name == null) continue;
+        final int dot = name.indexOf('.');
+        if (dot < 0) continue;
+        final String block = name.substring(0, dot + 1);
+        votes[block] = (votes[block] ?? 0) + 1;
+      }
+      if (votes.isEmpty) continue;
+      final String winner =
+          votes.entries.reduce((a, b) => b.value > a.value ? b : a).key;
+      if (winner != prefix) continue;
+      final int col = _leftHanded ? _tabletColumns - 1 - c : c;
+      if (col < lo) lo = col;
+      if (col > hi) hi = col;
+    }
+    return hi < 0 ? null : (first: lo, last: hi);
+  }
+
   /// Mirror a row-major order across the vertical axis.
   ///
   /// Mirroring rather than merely moving the block keeps the reach the same:
@@ -648,8 +702,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     );
   }
 
-  MathEditorController? get _activeController =>
-      widget.mathEditorControllers[widget.activeIndex];
+  MathEditorController? get _activeController => widget.activeController;
 
   // Effective keypad button colors, honoring the KeypadColorMode setting
   // (always light, always dark, or follow the current theme).
@@ -1214,22 +1267,54 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
         final double cellW = constraints.maxWidth / _tabletColumns;
         final double cellH = cellW / _gridAspectRatioFor(constraints.maxWidth);
 
+        /// An invisible box over one block, so the walkthrough has something
+        /// with a real rect to highlight.
+        ///
+        /// Laid over the grid rather than wrapped around part of it: the grid
+        /// is one GridView of uniform cells, so a block is a span of columns
+        /// rather than a widget, and there is nothing to attach a key to.
+        Widget blockMarker(GlobalKey? key, String prefix) {
+          if (key == null) return const SizedBox.shrink();
+          final ({int first, int last})? at = _tabletBlockColumns(grid, prefix);
+          if (at == null) return const SizedBox.shrink();
+          return Positioned(
+            key: key,
+            left: at.first * cellW,
+            width: (at.last - at.first + 1) * cellW,
+            top: 0,
+            height: cellH * _tabletRows,
+            child: const IgnorePointer(child: SizedBox.expand()),
+          );
+        }
+
         return SizedBox(
           key: widget.mainKeypadAreaKey,
           height: cellH * _tabletRows,
           width: double.infinity,
-          child: GridView.builder(
-            physics: const NeverScrollableScrollPhysics(),
-            padding: EdgeInsets.zero,
-            itemCount: laidOut.length,
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: _tabletColumns,
-              childAspectRatio: cellW / cellH,
-            ),
-            itemBuilder: (context, position) => laidOut[position],
+          child: Stack(
+            children: <Widget>[
+              Positioned.fill(child: _tabletGridView(laidOut, cellW, cellH)),
+              blockMarker(widget.numberBlockKey, 'num.'),
+              blockMarker(widget.scientificBlockKey, 'sci.'),
+              blockMarker(widget.extrasBlockKey, 'ext.'),
+            ],
           ),
         );
       },
+    );
+  }
+
+  /// The tablet grid itself.
+  Widget _tabletGridView(List<Widget> laidOut, double cellW, double cellH) {
+    return GridView.builder(
+      physics: const NeverScrollableScrollPhysics(),
+      padding: EdgeInsets.zero,
+      itemCount: laidOut.length,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: _tabletColumns,
+        childAspectRatio: cellW / cellH,
+      ),
+      itemBuilder: (context, position) => laidOut[position],
     );
   }
 

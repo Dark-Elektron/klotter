@@ -180,6 +180,17 @@ class MathResultDisplay extends StatelessWidget {
         textScaler: textScaler,
       );
     }
+    // Ahead of the unit-vector case, which it would otherwise fall into and
+    // be drawn as z-with-a-circumflex — a different symbol meaning a different
+    // thing. The node extends UnitVectorNode so the editor treats it as one
+    // indivisible glyph; what it *looks* like has to be decided before that.
+    if (node is ComplexVariableNode) {
+      return Text(
+        'z',
+        style: MathTextStyle.complexVariableStyle(fontSize, textColor),
+        textScaler: textScaler,
+      );
+    }
     if (node is UnitVectorNode) {
       return _UnitVectorWidget(
         axis: node.axis,
