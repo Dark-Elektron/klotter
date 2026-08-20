@@ -1,5 +1,10 @@
 import 'dart:math';
 import 'dart:ui';
+import 'package:klotter/utils/app_colors.dart';
+import 'package:klotter/settings/settings_provider.dart';
+import 'package:klotter/plotting/utils/plot_theme.dart';
+import 'package:klotter/plotting/painters/plot_3d_painter.dart';
+import 'dart:ui' as ui;
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -363,6 +368,72 @@ void main() {
         isNotNull,
         reason: 'the same touch finds it once it is switched on',
       );
+    });
+  });
+
+  group('the shaded dot field', () {
+    // The last vector renderer that still drew one field. `PlotMode.field`
+    // routes here rather than to the arrows, which is the distinction an
+    // earlier test in this suite got wrong.
+    VectorFieldParser field(String fx, String fy) => parse(<MathNode>[
+      LiteralNode(text: fx),
+      UnitVectorNode('x'),
+      LiteralNode(text: '+$fy'),
+      UnitVectorNode('y'),
+    ]);
+
+    Future<int> ink(int count) async {
+      final colors = AppColors.fromType(ThemeType.dark);
+      final fields = <VectorFieldParser>[
+        field('y', '-x'),
+        if (count > 1) field('x', 'y'),
+      ];
+      final painter = Plot3DPainter(
+        function: PlotExpression.invalid,
+        vectorParser: fields.first,
+        vectorFields: fields,
+        is3DFunction: false,
+        rotationX: 0.6,
+        rotationZ: 0.8,
+        rangeX: 2,
+        rangeY: 2,
+        rangeZ: 2,
+        panX: 0,
+        panY: 0,
+        plotMode: PlotMode.field,
+        fieldType: FieldType.vector,
+        showContour: false,
+        surfaceMode: SurfaceMode.none,
+        colors: colors,
+        plotTheme: PlotThemeData.fromColors(colors),
+      );
+      final rec = ui.PictureRecorder();
+      painter.paint(Canvas(rec), const Size(320, 320));
+      final img = await rec.endRecording().toImage(320, 320);
+      final d = (await img.toByteData())!;
+      int n = 0;
+      for (int i = 0; i < 320 * 320; i++) {
+        final o = i * 4;
+        if (d.getUint8(o + 3) < 200) continue;
+        final r = d.getUint8(o), g = d.getUint8(o + 1), b = d.getUint8(o + 2);
+        final mx = [r, g, b].reduce((a, c) => a > c ? a : c);
+        final mn = [r, g, b].reduce((a, c) => a < c ? a : c);
+        if (mx > 60 && mx - mn > 30) n++;
+      }
+      return n;
+    }
+
+    testWidgets('a second field is drawn too', (tester) async {
+      await tester.runAsync(() async {
+        final one = await ink(1);
+        final two = await ink(2);
+        expect(one, greaterThan(0), reason: 'one field drew nothing');
+        expect(
+          two,
+          greaterThan(one),
+          reason: 'the second field added nothing — it was not drawn',
+        );
+      });
     });
   });
 }

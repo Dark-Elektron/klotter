@@ -2,6 +2,9 @@ import 'dart:math';
 import 'dart:math' as math;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+
+import '../models/view_fit.dart';
+import '../utils/level_extent.dart';
 import 'package:flutter/scheduler.dart';
 import '../models/complex_view.dart';
 import '../models/enums.dart';
@@ -27,6 +30,9 @@ class Plot3DScreen extends StatefulWidget {
   final PlotMode plotMode;
   final FieldType fieldType;
   final VectorFieldParser? vectorParser;
+
+  /// How much of the panel's lower edge the expression rows cover.
+  final double bottomInset;
 
   /// Every vector or parametric line in the cell, in the order written.
   /// Empty falls back to [vectorParser] alone.
@@ -60,6 +66,7 @@ class Plot3DScreen extends StatefulWidget {
     required this.plotMode,
     required this.fieldType,
     this.vectorParser,
+    this.bottomInset = 0,
     this.vectorFields = const <VectorFieldParser>[],
     this.vectorSeriesBase = 0,
     this.complexView = ComplexView.initial,
@@ -316,6 +323,13 @@ class Plot3DScreenState extends State<Plot3DScreen>
     _autoScaleIfNeeded();
   }
 
+  /// The panel's size as last laid out, or null before the first layout.
+  Size? _panelSize;
+
+  /// Whether a change of panel shape should re-fit. Only the equal-aspect path
+  /// depends on the shape, so nothing else pays for this.
+  bool _refitOnResize = false;
+
   double? _computeAutoZRange() {
     if (widget.fieldType != FieldType.scalar || !widget.is3DFunction) {
       return null;
@@ -327,8 +341,13 @@ class Plot3DScreenState extends State<Plot3DScreen>
     //
     // Every height surface in the cell has to fit, not just the first: sizing
     // the box to one of them leaves the others clipped at the lid.
+    // Hidden rows are excluded: a curve that is not drawn should not be
+    // deciding how much of the box the drawn ones get. Home is meant to frame
+    // what you can see.
     final List<PlotExpression> curves =
-        _curves.where((PlotExpression e) => !e.isLevelSet).toList();
+        _curves
+            .where((PlotExpression e) => !e.isLevelSet && !e.hidden)
+            .toList();
     if (curves.isEmpty) return null;
     try {
       // Measured on the same lattice the surface is drawn from, and taken
@@ -403,6 +422,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
       rangeX: xRange,
       rangeY: yRange,
       rangeZ: zRange,
+      bottomInset: widget.bottomInset,
     );
 
     // A sweep is picked from its own samples rather than by marching a ray:
@@ -499,7 +519,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
     // sweep alone left the circle outside the walls.
     double reach = 0;
     for (final PlotExpression e in widget.functions) {
-      if (!e.isValid) continue;
+      if (!e.isValid || e.hidden) continue;
       // A level set says where it is satisfied, not how big it is, so its own
       // window is the only thing to go on. Height surfaces are handled by the
       // fit below and are not stretched to here.
@@ -525,10 +545,94 @@ class Plot3DScreenState extends State<Plot3DScreen>
     // nothing to say about it.
     if (_frameParametric()) return;
     final newZ = _computeAutoZRange();
-    if (newZ == null) return;
+    // A level set is framed by where its surface is, which the height fit
+    // cannot tell it. Run both: a cell may hold a sphere and a height surface
+    // at once, and home is meant to show both.
+    final bool framed = _frameLevelSets(floorZ: newZ);
+    if (framed || newZ == null) return;
     setState(() {
       zRange = newZ;
     });
+  }
+
+  /// Sizes the box around every level set in the cell.
+  ///
+  /// A level set is drawn where `F = 0`, and `F` itself says nothing about
+  /// where that is — for the unit sphere over ±5, max|F| is 49, so a fit by
+  /// value asks for a box fifty times too big. [levelSetExtent] instead looks
+  /// for where `F` changes sign. Returns whether it framed anything.
+  ///
+  /// [floorZ] is what the height surfaces in the same cell asked for; the box
+  /// takes whichever is larger so neither kind is clipped.
+  bool _frameLevelSets({double? floorZ}) {
+    final List<PlotExpression> sets =
+        _curves.where((PlotExpression e) => e.isLevelSet && !e.hidden).toList();
+    if (sets.isEmpty) return false;
+
+    double x = 0, y = 0, z = 0;
+    bool found = false;
+    for (final PlotExpression set in sets) {
+      final LevelExtent? at = levelSetExtent(set, volume: widget.is3DFunction);
+      if (at == null) continue;
+      found = true;
+      x = max(x, at.x);
+      y = max(y, at.y);
+      z = max(z, at.z);
+    }
+    if (!found) return false;
+
+    // A little room around the shape.
+    //
+    // An axis the surface does not extend along borrows the shape's overall
+    // size rather than collapsing to nothing. A fixed floor was tried here
+    // first and was wrong: clamping to 1 meant a small shape like x²+y²=0.1
+    // asked for 0.56, got 1, and anything smaller stopped scaling at all.
+    const double margin = 1.4;
+    final double reach = <double>[x, y, z].reduce(max);
+    if (reach <= 0) return false;
+    double fit(double extent) => (extent > 0 ? extent : reach) * margin;
+
+    // Equal aspect, so a sphere is round.
+    //
+    // The box gives the floor and the z axis separate screen budgets — the
+    // plan is as wide as the panel allows, the axis as tall — so scaleX is
+    // planar/xRange while scaleZ is vertical/zRange. Equal ranges therefore
+    // still draw z stretched, and a sphere came out an egg.
+    //
+    // A unit of x and a unit of z cover the same pixels when the ranges hold
+    // the same proportion as the budgets: zRange = plan * vertical / planar.
+    // The plan is then whichever constraint binds, which is the smaller
+    // budget: a tall panel has vertical room to spare, so the width decides
+    // it, and a landscape one is the other way about.
+    final double aspect = _boxAspect();
+    _refitOnResize = true;
+    final double planX = fit(x), planY = fit(y), needZ = fit(z);
+    // z may widen the plan, but only so far. A surface unbounded in z — a
+    // cylinder — reports a z reach of the whole probe, and letting that drive
+    // the plan would frame a unit cylinder at a radius of forty. It cannot be
+    // made to fit, so it is allowed to run off the top instead.
+    final double planFromZ = min(needZ, 3 * max(planX, planY)) / aspect;
+    final double plan = <double>[planX, planY, planFromZ].reduce(max);
+
+    setState(() {
+      xRange = plan;
+      yRange = plan;
+      zRange = max(plan * aspect, floorZ ?? 0);
+    });
+    return true;
+  }
+
+  /// Screen pixels per unit of z against per unit of x, for the current panel.
+  ///
+  /// Above 1 the panel has vertical room to spare and the plan is the binding
+  /// constraint; below 1 the height is. One when nothing has been laid out
+  /// yet, which the post-frame re-fit corrects.
+  double _boxAspect() {
+    final Size? size = _panelSize;
+    if (size == null || size.isEmpty) return 1;
+    final ViewFit fit = Plot3DPainter.viewExtentsFor(size);
+    if (fit.planar <= 0 || fit.vertical <= 0) return 1;
+    return fit.vertical / fit.planar;
   }
 
   @override
@@ -537,6 +641,20 @@ class Plot3DScreenState extends State<Plot3DScreen>
       builder: (context, constraints) {
         if (constraints.maxHeight <= 0 || constraints.maxWidth <= 0) {
           return const SizedBox.shrink();
+        }
+        // The box's proportions depend on the panel, and the first fit runs in
+        // initState with no layout yet. Recorded here so the fit can ask, and
+        // re-run once when it becomes known — and again if the panel changes
+        // shape, which is what a rotation to landscape is.
+        final Size now = Size(constraints.maxWidth, constraints.maxHeight);
+        if (_panelSize != now) {
+          final bool first = _panelSize == null;
+          _panelSize = now;
+          if (first || _refitOnResize) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _autoScaleIfNeeded();
+            });
+          }
         }
         return Listener(
           // Raw events carry their own timestamps, which the gesture callbacks
@@ -702,6 +820,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
                   plotMode: widget.plotMode,
                   fieldType: widget.fieldType,
                   vectorParser: widget.vectorParser,
+                  bottomInset: widget.bottomInset,
                   vectorFields: widget.vectorFields,
                   vectorSeriesBase: widget.vectorSeriesBase,
                   showContour: widget.showContour,

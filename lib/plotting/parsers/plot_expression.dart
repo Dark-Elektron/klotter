@@ -57,6 +57,26 @@ class PlotExpression {
   /// Free variables actually present, restricted to x/y/z.
   final Set<String> variables;
 
+  /// Which row of its plot this came from, and so which colour it wears.
+  ///
+  /// Mutable and assigned after compiling, because it is a property of the
+  /// expression's place in the cell rather than of the maths.
+  ///
+  /// Colour used to be position in whatever list a painter happened to be
+  /// iterating. Those lists are filtered — invalid lines are dropped, vector
+  /// lines are dropped — and 3D re-partitions them into surfaces, standing
+  /// curves and equations, indexing each from zero. The same plot therefore got
+  /// different colours in 2D and in 3D, and a swatch beside a row could not
+  /// have matched either. The row number is the one index that means the same
+  /// thing everywhere.
+  int seriesIndex = 0;
+
+  /// Whether this row's curve is drawn.
+  ///
+  /// A hidden row keeps its place in [seriesIndex], so hiding one curve never
+  /// recolours the others.
+  bool hidden = false;
+
   /// Human-readable reason this expression cannot be plotted, or null.
   final String? error;
 
@@ -469,7 +489,10 @@ class PlotExpression {
     final List<PlotExpression> out = <PlotExpression>[];
     for (final List<MathNode> line in lines) {
       if (line.isEmpty) continue;
-      out.add(PlotExpression.compile(line, system: system));
+      // Stamped here, where the line's position in the cell is still known.
+      out.add(
+        PlotExpression.compile(line, system: system)..seriesIndex = out.length,
+      );
     }
     if (out.isEmpty) {
       out.add(PlotExpression.compile(nodes, system: system));

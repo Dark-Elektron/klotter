@@ -41,12 +41,18 @@ class PlotCamera {
     required this.rangeX,
     required this.rangeY,
     required this.rangeZ,
+    this.bottomInset = 0,
   }) : _extents = Plot3DPainter.viewExtentsFor(size);
 
   final Size size;
   final double rotationX, rotationZ;
   final double panX, panY;
   final double rangeX, rangeY, rangeZ;
+
+  /// The same lift the painter applies, so picking inverts the projection that
+  /// was actually drawn. Miss it and every marker lands half the covered height
+  /// away from the surface.
+  final double bottomInset;
   final ViewFit _extents;
 
   double get scaleX => _extents.planar / rangeX;
@@ -64,7 +70,7 @@ class PlotCamera {
     final double scale = f / (f + vy);
     return Offset(
       size.width / 2 + vx * scale + panX + _extents.offsetX,
-      size.height / 2 - vz * scale + panY + _extents.offsetY,
+      size.height / 2 - vz * scale + panY + _extents.offsetY - bottomInset / 2,
     );
   }
 
@@ -98,7 +104,12 @@ class PlotCamera {
     final double vx =
         (screen.dx - size.width / 2 - panX - _extents.offsetX) * inv;
     final double vz =
-        (size.height / 2 + panY + _extents.offsetY - screen.dy) * inv;
+        (size.height / 2 +
+            panY +
+            _extents.offsetY -
+            bottomInset / 2 -
+            screen.dy) *
+        inv;
     final (double wx, double wy, double wz) = _toWorld(vx, depth, vz);
     return (wx / scaleX, wy / scaleY, wz / scaleZ);
   }

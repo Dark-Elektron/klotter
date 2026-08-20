@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import '../models/complex_view.dart';
 import '../models/enums.dart';
@@ -7,6 +9,7 @@ import '../utils/parametric.dart';
 import '../parsers/plot_expression.dart';
 import '../painters/plot_2d_painter.dart';
 import '../utils/curve_features.dart';
+import '../utils/level_extent.dart';
 import '../utils/pinch_tracker.dart';
 import '../utils/plot_theme.dart';
 
@@ -220,10 +223,29 @@ class Plot2DScreenState extends State<Plot2DScreen> {
     _autoScaleIfNeeded();
   }
 
-  void _autoScaleIfNeeded() {
-    if (widget.fieldType != FieldType.scalar || widget.is3DFunction) {
-      return;
+  /// How far the implicit curves in this cell reach, or null if there are none.
+  ///
+  /// An implicit curve is drawn where `F = 0`, and `F` says nothing about where
+  /// that is, so it cannot be framed by sampling. [levelSetExtent] looks for
+  /// where `F` changes sign instead.
+  LevelExtent? _levelSetSpan(List<PlotExpression> curves) {
+    double x = 0, y = 0;
+    bool found = false;
+    for (final PlotExpression curve in curves) {
+      if (!curve.isValid || curve.hidden || !curve.isLevelSet) continue;
+      // A flat plot, so z plays no part: `volume: false` keeps the search in
+      // the plane instead of hunting a surface that is not being drawn.
+      final LevelExtent? at = levelSetExtent(curve, volume: false);
+      if (at == null) continue;
+      found = true;
+      x = max(x, at.x);
+      y = max(y, at.y);
     }
+    return found ? (x: x, y: y, z: 0.0) : null;
+  }
+
+  void _autoScaleIfNeeded() {
+    if (widget.fieldType != FieldType.scalar) return;
     // A complex function has no curve to frame. Its domain is the plane, and
     // the window should stay centred on the origin — the Argand diagram is
     // the picture, not a graph of something against x.
@@ -242,7 +264,19 @@ class Plot2DScreenState extends State<Plot2DScreen> {
       const int samples = 80;
       // Fit every curve, not just the first, or added lines land off-screen.
       for (final parser in curves) {
-        if (!parser.isValid) continue;
+        if (!parser.isValid || parser.hidden) continue;
+        // An implicit curve is handled below. Sampling it here fits the window
+        // to F's values rather than to the curve: for x²+y²=1, evaluate(x,0,0)
+        // is x²-1, which over ±5 asks for y from -1 to 24 and pushes the unit
+        // circle into the bottom corner.
+        if (parser.isLevelSet) continue;
+        // A surface has no curve to frame in the flat view either — it is
+        // drawn as a field, and evaluate(x, 0, 0) is one slice through the
+        // middle of it. This was a check on the whole cell, which is why an
+        // implicit curve never reached the fit at all: it is flagged 3D
+        // merely for mentioning y. Per curve, so a plain f(x) sharing the
+        // cell with one is still framed.
+        if (parser.usesY) continue;
         for (int i = 0; i <= samples; i++) {
           final t = i / samples;
           final x = xMin + (xMax - xMin) * t;
@@ -252,15 +286,52 @@ class Plot2DScreenState extends State<Plot2DScreen> {
           maxY = maxY == null ? y : (y > maxY ? y : maxY);
         }
       }
-      if (minY == null || maxY == null) return;
-      if ((maxY - minY).abs() < 1e-6) {
-        maxY = maxY + 1;
-        minY = minY - 1;
+      final LevelExtent? level = _levelSetSpan(curves);
+      if (level == null) {
+        if (minY == null || maxY == null) return;
+        if ((maxY - minY).abs() < 1e-6) {
+          maxY = maxY + 1;
+          minY = minY - 1;
+        }
+        final padding = (maxY - minY) * 0.1;
+        setState(() {
+          yMin = minY! - padding;
+          yMax = maxY! + padding;
+        });
+        return;
       }
-      final padding = (maxY - minY) * 0.1;
+
+      // A little room around the shape.
+      //
+      // An axis the curve does not extend along at all — a single point, or a
+      // curve flat in y — would collapse the window to nothing, so it borrows
+      // the shape's overall size instead. A fixed floor was tried here first
+      // and was wrong: clamping to 1 meant x²+y²=0.1 asked for 0.56 and got
+      // 1, and anything smaller stopped scaling altogether.
+      const double margin = 1.4;
+      final double reach = max(level.x, level.y);
+      if (reach <= 0) return;
+      double fit(double extent) => (extent > 0 ? extent : reach) * margin;
+      final double halfX = fit(level.x);
+      final double halfY = fit(level.y);
+
+      // The union of both kinds, so a cell holding a circle and a parabola
+      // shows both. A plain curve has no natural x extent, so it keeps the
+      // default width unless the implicit curve needs more.
+      final double? fitLow = minY;
+      final double? fitHigh = maxY;
+      final bool onlyLevelSets = fitLow == null || fitHigh == null;
+      final double left = onlyLevelSets ? -halfX : min(xMin, -halfX);
+      final double right = onlyLevelSets ? halfX : max(xMax, halfX);
+      final double low = onlyLevelSets ? -halfY : min(fitLow, -halfY);
+      final double high = onlyLevelSets ? halfY : max(fitHigh, halfY);
+      final double padding = (high - low) * 0.1;
+
       setState(() {
-        yMin = minY! - padding;
-        yMax = maxY! + padding;
+        xMin = left;
+        xMax = right;
+        yMin = low - padding;
+        yMax = high + padding;
       });
     } catch (_) {
       // Keep defaults on parse/eval failure

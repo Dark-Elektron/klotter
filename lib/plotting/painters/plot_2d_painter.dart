@@ -962,7 +962,10 @@ class Plot2DPainter extends CustomPainter {
     for (int series = 0; series < curves.length; series++) {
       final parser = curves[series];
       if (!parser.isValid) continue;
-      final Color color = plotTheme.seriesColor(series);
+      if (parser.hidden) continue;
+      // By row, not by position in this list. The list is filtered, so
+      // position would shift whenever a line above became invalid.
+      final Color color = plotTheme.seriesColor(parser.seriesIndex);
       if (parser.isLevelSet) {
         // An inequality is an area, so it is shaded first and the boundary
         // drawn over it.
@@ -1166,7 +1169,8 @@ class Plot2DPainter extends CustomPainter {
     for (int i = 0; i < curves.length; i++) {
       final PlotExpression c = curves[i];
       if (!c.isValid) continue;
-      final Color color = plotTheme.seriesColor(i);
+      if (c.hidden) continue;
+      final Color color = plotTheme.seriesColor(c.seriesIndex);
 
       // An equation has to be solved for y, not evaluated. Evaluating it gives
       // F(x, 0) — how far (x, 0) is from satisfying the equation — which is
@@ -1299,13 +1303,31 @@ class Plot2DPainter extends CustomPainter {
     }
   }
 
+  /// Contours for every surface on the axes, not just the first.
+  ///
+  /// It read `function` — the cell's first row — so a plot holding two surfaces
+  /// contoured one and left the other bare. The same fault as in 3D.
   void _drawContourLines(
     Canvas canvas,
     Size size,
     double Function(double) toScreenX,
     double Function(double) toScreenY,
   ) {
-    final parser = function;
+    final List<PlotExpression> curves =
+        functions.isEmpty ? <PlotExpression>[function] : functions;
+    for (final PlotExpression curve in curves) {
+      if (!curve.isValid || curve.hidden) continue;
+      _drawContoursFor(canvas, size, toScreenX, toScreenY, curve);
+    }
+  }
+
+  void _drawContoursFor(
+    Canvas canvas,
+    Size size,
+    double Function(double) toScreenX,
+    double Function(double) toScreenY,
+    PlotExpression parser,
+  ) {
     const gridSize = 100;
     const numContours = 15;
 

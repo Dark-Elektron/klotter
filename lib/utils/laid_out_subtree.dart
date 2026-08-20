@@ -47,6 +47,24 @@ class RenderLaidOutSubtree extends RenderProxyBox {
       return;
     }
 
+    // Laid out unconditionally.
+    //
+    // A guard was tried here that spotted a clean, sizeless child *before* the
+    // call and skipped it, because the debug build's early-exit path inside
+    // `layout` reads `size` and asserts:
+    //
+    //     'hasSize': RenderBox was not laid out: RenderFlex
+    //     #3  RenderBox.debugResetSize
+    //     #6  RenderLaidOutSubtree.performLayout
+    //
+    // Skipping the call avoided that assertion and was much worse. This box
+    // wraps the keypad, so a skipped layout meant the fallback below ran at
+    // every launch and the keypad was invisible until a hot restart — a rare
+    // crash in debug traded for a broken start every single time.
+    //
+    // The assertion is debug-only: `debugResetSize` does not exist in a
+    // release build, so a published app cannot hit it. Left as it is until
+    // there is a fix that does not cost more than the fault.
     target.layout(constraints, parentUsesSize: true);
     if (target.hasSize) {
       tookFallback = false;
@@ -63,7 +81,13 @@ class RenderLaidOutSubtree extends RenderProxyBox {
     // collapsed at whatever size was invented here, turning a crash into a
     // permanently broken layout, which is not an improvement.
     SchedulerBinding.instance.addPostFrameCallback((_) {
-      if (attached) markNeedsLayout();
+      if (!attached) return;
+      // The child has to be dirtied too, not just this box. Marking only
+      // itself, the next pass found the child still clean and still sizeless
+      // and fell back again, for ever: a crash traded for a keypad stuck at
+      // nothing, which is no better.
+      child?.markNeedsLayout();
+      markNeedsLayout();
     });
   }
 

@@ -28,6 +28,12 @@ class PlotThemeData {
   /// differently at the rim than at the centre, this is the number to lower.
   static const double backgroundDepth = 0.75;
 
+  /// How opaque the plot's own ground is, 0 clear to 1 solid.
+  ///
+  /// The plot fills the page now and the expression rows float over it, so
+  /// this is the only thing standing between the data and the wallpaper.
+  static const double groundOpacity = 0.86;
+
   /// The overlay controls that sit on the plot: 2D/3D, zoom, surface, pan.
   ///
   /// They were a fixed teal-and-white — an accent that matched no theme, and
@@ -84,11 +90,41 @@ class PlotThemeData {
   /// Colour of the nth curve on a plot.
   Color seriesColor(int index) => seriesColors[index % seriesColors.length];
 
+  /// Built themes, kept so the same one is handed out rather than rebuilt.
+  ///
+  /// A theme depends only on the app palette, the plot colour mode and the
+  /// theme type — none of which change while a frame is being drawn. It was
+  /// being rebuilt at every call site that wanted a colour off it, dozens of
+  /// times per frame, and it is not a cheap object: palettes, gradients and a
+  /// couple of dozen derived colours.
+  ///
+  /// Cleared when the settings that feed it change; see [clearCache].
+  static final Map<String, PlotThemeData> _cache = <String, PlotThemeData>{};
+
+  /// Throw away the built themes.
+  ///
+  /// Called when a setting they derive from changes — the plot's depth knob,
+  /// the colour mode, the app theme — because the key cannot see those.
+  static void clearCache() => _cache.clear();
+
   factory PlotThemeData.fromColors(
     AppColors colors, {
     PlotColorMode mode = PlotColorMode.themeBased,
     ThemeType themeType = ThemeType.classic,
   }) {
+    final String key =
+        '${themeType.name}|${mode.name}|'
+        '${colors.displayBackground.toARGB32()}|${colors.accent.toARGB32()}';
+    final PlotThemeData? hit = _cache[key];
+    if (hit != null) return hit;
+    return _cache[key] = PlotThemeData._build(colors, mode, themeType);
+  }
+
+  factory PlotThemeData._build(
+    AppColors colors,
+    PlotColorMode mode,
+    ThemeType themeType,
+  ) {
     // Whether the plot surface is light is a property of the plot, not of the
     // app chrome — a dark app can carry a light plot and vice versa.
     final bool isLight = switch (mode) {
@@ -162,6 +198,19 @@ class PlotThemeData {
     // above and slightly left of the plot reads as a light in a room, while
     // one dead centre reads as a spotlight and draws the eye to the middle of
     // the data.
+    /// The panel's own translucency, so the wallpaper is still visible.
+    ///
+    /// The plot used to occupy the upper part of the page and the expression
+    /// band below it showed the app background. The plot fills the page now,
+    /// so on every theme whose panel colour is opaque the wallpaper was hidden
+    /// completely. Classic was the exception only because its panel happens to
+    /// be white at 38%.
+    ///
+    /// Lower this to see more of the wallpaper, raise it towards 1 for a flat
+    /// ground with more contrast under the data.
+    Color sheerer(Color c) =>
+        c.withValues(alpha: c.a * PlotThemeData.groundOpacity);
+
     Gradient ground() {
       if (backgroundDepth <= 0) {
         // Flat. The 2% wash is kept only so the panel does not read as a dead
@@ -169,13 +218,17 @@ class PlotThemeData {
         return LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: <Color>[surface, surfaceEdge],
+          colors: <Color>[sheerer(surface), sheerer(surfaceEdge)],
         );
       }
       return RadialGradient(
         center: const Alignment(-0.25, -0.45),
         radius: 1.15,
-        colors: <Color>[surfaceCentre, surface, surfaceEdge],
+        colors: <Color>[
+          sheerer(surfaceCentre),
+          sheerer(surface),
+          sheerer(surfaceEdge),
+        ],
         stops: const <double>[0.0, 0.55, 1.0],
       );
     }

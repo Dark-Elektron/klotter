@@ -30,17 +30,6 @@ class Quad {
   /// across the cell instead.
   final double v1, v2, v3, v4;
 
-  /// Where this cell's corners land on the floor, already rotated.
-  ///
-  /// Computed with the corners rather than from them: by the time a quad
-  /// exists its points have been through `rotateZ`/`rotateX`, and a rotated
-  /// coordinate cannot be turned back into a height. A shadow needs the
-  /// height, so it is taken while the corner is still a data point — the same
-  /// reason [v1] is gathered up there rather than recovered down here.
-  ///
-  /// Null for the paths that build quads without a floor to cast onto.
-  final Point3D? s1, s2, s3, s4;
-
   Quad(
     this.p1,
     this.p2,
@@ -52,10 +41,6 @@ class Quad {
     double? v2,
     double? v3,
     double? v4,
-    this.s1,
-    this.s2,
-    this.s3,
-    this.s4,
   }) : v1 = v1 ?? avgValue,
        v2 = v2 ?? avgValue,
        v3 = v3 ?? avgValue,
@@ -284,6 +269,12 @@ class Plot3DPainter extends CustomPainter {
   final FieldType fieldType;
   final VectorFieldParser? vectorParser;
 
+  /// How much of the panel's lower edge is hidden behind the expression rows.
+  ///
+  /// Only affects where the box is centred, not how big it is: the canvas
+  /// still fills the panel so the axes run on behind the rows.
+  final double bottomInset;
+
   /// Every vector or parametric line in the cell, in the order written.
   /// [vectorParser] is the first of them, kept because most of what the
   /// painter does with a field wants exactly one.
@@ -331,7 +322,7 @@ class Plot3DPainter extends CustomPainter {
   /// True while the plot is being dragged, pinched or spinning.
   ///
   /// A surface is sampled more finely when it is still. At rest the mesh is
-  /// built once and then only redrawn, so the extra cells cost a single frame;
+  /// built once and then only redrawn, so the extra gridSize cost a single frame;
   /// in motion every frame pays for them, and a 50-cell surface already takes
   /// most of a 60 Hz frame.
   final bool interacting;
@@ -350,6 +341,7 @@ class Plot3DPainter extends CustomPainter {
     required this.plotMode,
     required this.fieldType,
     this.vectorParser,
+    this.bottomInset = 0,
     this.vectorFields = const <VectorFieldParser>[],
     this.vectorSeriesBase = 0,
     required this.showContour,
@@ -713,53 +705,6 @@ class Plot3DPainter extends CustomPainter {
 
   /// Every function to draw, falling back to the single [function] so callers
   /// that predate multi-surface support keep working unchanged.
-  /// Where the light is, in the room rather than in the data.
-  ///
-  /// The scene had light in it already — each facet is shaded by how squarely
-  /// it faces the viewer — but nothing cast by it. Shading cannot say how far
-  /// above the floor a surface sits: a dome and a dent shade almost alike, and
-  /// their shadows do not.
-  ///
-  /// Given in *view* space: x to the right of the screen, y into it, z up. A
-  /// lamp above, in front and a little to the left.
-  static const Point3D lightDirection = Point3D(-0.34, -0.22, -1.0);
-
-  /// The light's direction expressed in the plot's own coordinates.
-  ///
-  /// This is the whole point. The shadow is cast onto the floor, and the floor
-  /// turns with the plot, so the projection has to happen in the plot's frame
-  /// — but the *light* does not turn with it. Writing the direction as a
-  /// constant in the plot's frame nailed the lamp to the data, and the shadow
-  /// then rotated rigidly with the surface as though painted on it, which is
-  /// exactly what a shadow does not do.
-  ///
-  /// So the fixed view-space direction is carried back through the inverse of
-  /// the view rotation. Turning the plot leaves the lamp where it was and
-  /// sweeps the shadow around the floor, which is what a lamp in a room does.
-  @visibleForTesting
-  static Point3D lightInPlotSpace(double rotationX, double rotationZ) =>
-      lightDirection.rotateX(-rotationX).rotateZ(-rotationZ);
-
-  /// How far a corner slides per unit of its own height, on the way down.
-  ///
-  /// Clamped: as the light approaches the horizontal its shadow runs away to
-  /// infinity, and a plot rotated to that angle would otherwise fill with a
-  /// shadow stretched across the whole floor.
-  @visibleForTesting
-  static ({double dx, double dy}) shadowSlide(
-    double rotationX,
-    double rotationZ,
-  ) {
-    final Point3D l = lightInPlotSpace(rotationX, rotationZ);
-    final double down = l.z.abs() < 0.2 ? 0.2 * (l.z.isNegative ? -1 : 1) : l.z;
-    return (dx: -l.x / down, dy: -l.y / down);
-  }
-
-  /// Not const: a test has to render the same scene with the shadow off,
-  /// because "is anything dark on the floor" counts the grid lines already
-  /// drawn there and passes with shadows disabled.
-  @visibleForTesting
-  static double shadowAlpha = 0.22;
 
   List<PlotExpression> get _curves =>
       functions.isEmpty ? <PlotExpression>[function] : functions;
@@ -787,7 +732,12 @@ class Plot3DPainter extends CustomPainter {
     _viewExtentXY = fit.planar;
     _viewExtentZ = fit.vertical;
     _fitOffsetX = fit.offsetX;
-    _fitOffsetY = fit.offsetY;
+    // Centre the box in the part of the panel that can actually be seen. The
+    // expression rows float over the bottom now, so the panel is taller than
+    // the visible area and a box centred in the whole of it sits too low —
+    // badly so in 3D, where the floor plane ends up behind the rows. Half the
+    // covered height is exactly the shift that re-centres it.
+    _fitOffsetY = fit.offsetY - bottomInset / 2;
 
     final bool showSurface = surfaceMode != SurfaceMode.none;
     canvas.save();
@@ -928,8 +878,11 @@ class Plot3DPainter extends CustomPainter {
     double focalLength, {
     required bool withFloor,
   }) {
+    // Hidden equations are dropped before the ramp index is taken, so the ones
+    // still showing keep telling themselves apart. Their solid colour comes
+    // from the row number, so it does not move when a neighbour is hidden.
     final List<PlotExpression> equations =
-        _curves.where((PlotExpression e) => e.isLevelSet).toList();
+        _curves.where((PlotExpression e) => e.isLevelSet && !e.hidden).toList();
     if (equations.isEmpty) return;
 
     final List<LevelMesh> meshes = <LevelMesh>[
@@ -1101,7 +1054,10 @@ class Plot3DPainter extends CustomPainter {
   /// whole cost of a drag.
   LevelMesh _levelMeshFor(PlotExpression equation, int index, int of) {
     final Color Function(double) ramp = surfaceColormap(index, of: of);
-    final Color plain = _theme.seriesColor(index);
+    // The ramp is chosen by position among the equations on screen — it only
+    // has to tell them apart. The solid colour is the row's, so it matches the
+    // swatch beside the expression and the same plot in 2D.
+    final Color plain = _theme.seriesColor(equation.seriesIndex);
     return cachedLevelMesh(
       equation,
       <double>[-rangeX, rangeX, -rangeY, rangeY, -rangeZ, rangeZ],
@@ -1173,21 +1129,43 @@ class Plot3DPainter extends CustomPainter {
     );
   }
 
-  /// Sample one z = f(x, y) over the floor grid and build its cells.
+  /// Sample one z = f(x, y) over the floor grid and build its gridSize.
   ///
   /// [minV] and [maxV] cover only the corners actually drawn, so colour maps
   /// across what is on screen rather than across values clipped away.
   /// Cells on a side while still, and while moving.
+  /// How finely a surface is sampled, still and while being moved.
+  ///
+  /// Cost is quadratic in these: every cell is clipped, rotated, projected and
+  /// depth-sorted on every frame, and the sampling itself is cached but none of
+  /// that is. Measured on a 400x900 panel, a still frame costs about 34 ms at
+  /// 76 and a drag frame about 10 ms at 42 — it was 13.5 ms at 50.
+  ///
+  /// The moving figure is the one that is felt, since it is paid on every frame
+  /// of a rotation; the still one is paid once on release. Lower the moving
+  /// number for smoother dragging at the cost of a coarser surface while the
+  /// finger is down.
   static const int _surfaceGridStill = 76;
-  static const int _surfaceGridMoving = 50;
+  static const int _surfaceGridMoving = 42;
 
   ({List<Quad> quads, double minV, double maxV}) _surfaceQuads(
     PlotExpression parser, {
     int? gridSize,
     double Function(double x, double y)? heightAt,
+    int surfaces = 1,
     double Function(double x, double y)? valueAt,
   }) {
-    gridSize ??= interacting ? _surfaceGridMoving : _surfaceGridStill;
+    // The budget is the whole scene, not one surface.
+    //
+    // Every surface used to get the full grid, so two surfaces did twice the
+    // clipping, rotating, projecting and depth-sorting and a drag frame went
+    // from 11 ms to 22 ms. Dividing by the square root keeps the total number
+    // of cells roughly fixed however many surfaces share the axes — the same
+    // reasoning as the parametric sampler's cell budget.
+    final int base = interacting ? _surfaceGridMoving : _surfaceGridStill;
+    final int cells =
+        gridSize ??
+        (surfaces <= 1 ? base : max(16, (base / sqrt(surfaces)).round()));
     // Heights are cached: rotating changes where the camera sees the surface
     // from, not the surface, so re-walking the expression tree every frame was
     // wasted work.
@@ -1197,14 +1175,14 @@ class Plot3DPainter extends CustomPainter {
     // line yields up to three different surfaces from it.
     final List<List<double>> sampled =
         heightAt == null
-            ? cachedHeightGrid(parser, rangeX, rangeY, gridSize)
+            ? cachedHeightGrid(parser, rangeX, rangeY, cells)
             : <List<double>>[
-              for (int i = 0; i <= gridSize; i++)
+              for (int i = 0; i <= cells; i++)
                 <double>[
-                  for (int j = 0; j <= gridSize; j++)
+                  for (int j = 0; j <= cells; j++)
                     heightAt(
-                      -rangeX + (2 * rangeX * i / gridSize),
-                      -rangeY + (2 * rangeY * j / gridSize),
+                      -rangeX + (2 * rangeX * i / cells),
+                      -rangeY + (2 * rangeY * j / cells),
                     ),
                 ],
             ];
@@ -1217,13 +1195,13 @@ class Plot3DPainter extends CustomPainter {
     double minZ = double.infinity;
     double maxZ = double.negativeInfinity;
 
-    for (int i = 0; i <= gridSize; i++) {
+    for (int i = 0; i <= cells; i++) {
       final List<({double x, double y, double z, double v})?> row =
           <({double x, double y, double z, double v})?>[];
       final List<double> zRow = <double>[];
-      for (int j = 0; j <= gridSize; j++) {
-        final x = -rangeX + (2 * rangeX * i / gridSize);
-        final y = -rangeY + (2 * rangeY * j / gridSize);
+      for (int j = 0; j <= cells; j++) {
+        final x = -rangeX + (2 * rangeX * i / cells);
+        final y = -rangeY + (2 * rangeY * j / cells);
         final double z = sampled[i][j];
         if (!z.isFinite) {
           row.add(null);
@@ -1277,32 +1255,6 @@ class Plot3DPainter extends CustomPainter {
       c.z * scaleZ,
     ).rotateZ(rotationZ).rotateX(rotationX);
 
-    /// The same corner, dropped onto the floor along the light.
-    ///
-    /// The slide is worked out for the current view, not baked in: the lamp
-    /// stays where it is while the plot turns underneath it.
-    final ({double dx, double dy}) slide = Plot3DPainter.shadowSlide(
-      rotationX,
-      rotationZ,
-    );
-    // Floor bounds, so a shadow cannot sprawl past the plane it falls on.
-    final double floorX = rangeX * scaleX;
-    final double floorY = rangeY * scaleY;
-
-    Point3D floorUnder(({double x, double y, double z, double v}) c) {
-      // The slide is applied to the *scaled* height, not the raw one. Mixing
-      // them was the bug behind the black bands across the plot: z runs to 50
-      // on x^2+y^2 while x and y span 5, so a slide of 0.34 per data unit threw
-      // the shadow seventeen units sideways on a box ten wide, and the quads
-      // stretched off across the background.
-      final double h = c.z * scaleZ;
-      return Point3D(
-        (c.x * scaleX + h * slide.dx).clamp(-floorX, floorX),
-        (c.y * scaleY + h * slide.dy).clamp(-floorY, floorY),
-        0,
-      ).rotateZ(rotationZ).rotateX(rotationX);
-    }
-
     /// Sutherland–Hodgman against one wall, in data space.
     ///
     /// A corner outside is replaced by the point where its edge crosses, so
@@ -1338,8 +1290,8 @@ class Plot3DPainter extends CustomPainter {
       return out;
     }
 
-    for (int i = 0; i < gridSize; i++) {
-      for (int j = 0; j < gridSize; j++) {
+    for (int i = 0; i < cells; i++) {
+      for (int j = 0; j < cells; j++) {
         final c1 = points[i][j];
         final c2 = points[i + 1][j];
         final c3 = points[i + 1][j + 1];
@@ -1388,10 +1340,6 @@ class Plot3DPainter extends CustomPainter {
               v2: b.v,
               v3: d.v,
               v4: d.v,
-              s1: floorUnder(a),
-              s2: floorUnder(b),
-              s3: floorUnder(d),
-              s4: floorUnder(d),
             ),
           );
         }
@@ -1399,40 +1347,6 @@ class Plot3DPainter extends CustomPainter {
     }
 
     return (quads: quads, minV: minZ, maxV: maxZ);
-  }
-
-  /// Lay a cell's shadow on the floor.
-  ///
-  /// Cells tile, so their shadows tile too and the translucent fills do not
-  /// stack into blotches — which is what a shadow assembled from overlapping
-  /// blobs would do. Sorted by its own depth like anything else in the scene,
-  /// so a shadow passing behind the surface casting it is occluded correctly.
-  void _addShadowOf(
-    Quad quad,
-    _DepthScene scene,
-    Size size,
-    double focalLength,
-  ) {
-    final Point3D? s1 = quad.s1;
-    final Point3D? s2 = quad.s2;
-    final Point3D? s3 = quad.s3;
-    final Point3D? s4 = quad.s4;
-    if (shadowAlpha <= 0 ||
-        s1 == null ||
-        s2 == null ||
-        s3 == null ||
-        s4 == null) {
-      return;
-    }
-
-    final Offset a = s1.project(focalLength, size, _panX, _panY);
-    final Offset b = s2.project(focalLength, size, _panX, _panY);
-    final Offset c = s3.project(focalLength, size, _panX, _panY);
-    final Offset d = s4.project(focalLength, size, _panX, _panY);
-
-    final int ink = Color.fromRGBO(0, 0, 0, shadowAlpha).toARGB32();
-    scene.addTriangle(a, b, c, ink, ink, ink, (s1.y + s2.y + s3.y) / 3);
-    scene.addTriangle(a, c, d, ink, ink, ink, (s1.y + s3.y + s4.y) / 3);
   }
 
   /// Draw every z = f(x, y) in the cell on one set of axes.
@@ -1464,9 +1378,11 @@ class Plot3DPainter extends CustomPainter {
 
     double? soleMin;
     double? soleMax;
+    final List<(int, double, double)> ranges = <(int, double, double)>[];
 
     for (int c = 0; c < curves.length; c++) {
-      final built = _surfaceQuads(curves[c]);
+      if (curves[c].hidden) continue;
+      final built = _surfaceQuads(curves[c], surfaces: curves.length);
       if (built.quads.isEmpty) continue;
 
       // Each surface is coloured against its own range. Sharing one range
@@ -1485,15 +1401,19 @@ class Plot3DPainter extends CustomPainter {
       // back to the accent when there was only one meant a surface was yellow
       // on its own and blue the moment a second was added, so adding a plot
       // recoloured the one already there.
-      final Color plain = _theme.seriesColor(c);
+      final Color plain = _theme.seriesColor(curves[c].seriesIndex);
 
       if (curves.length == 1) {
         soleMin = built.minV;
         soleMax = built.maxV;
       }
+      // Every surface's own span, so each ramp can be given a scale rather
+      // than a swatch. A swatch says which surface a colour belongs to; it
+      // does not say what the colour means, which is the whole point of
+      // colouring by value.
+      ranges.add((c, built.minV, built.maxV));
 
       for (final quad in built.quads) {
-        _addShadowOf(quad, scene, size, focalLength);
         final o1 = quad.p1.project(focalLength, size, _panX, _panY);
         final o2 = quad.p2.project(focalLength, size, _panX, _panY);
         final o3 = quad.p3.project(focalLength, size, _panX, _panY);
@@ -1559,7 +1479,21 @@ class Plot3DPainter extends CustomPainter {
         _drawColorbar3D(canvas, size, soleMin, soleMax);
       }
     } else if (curves.length > 1) {
-      _drawSurfaceLegend(canvas, size, curves.length);
+      // A scale per surface, stacked, each on that surface's own ramp and
+      // labelled with its own range — the same treatment two vector fields
+      // already get. The legend this replaced showed which ramp was which but
+      // never what any of them meant.
+      for (int i = 0; i < ranges.length; i++) {
+        final (int index, double lo, double hi) = ranges[i];
+        _drawColorbar3D(
+          canvas,
+          size,
+          lo,
+          hi,
+          stops: surfaceRampStops(index, of: curves.length),
+          row: i,
+        );
+      }
     }
   }
 
@@ -2199,8 +2133,25 @@ class Plot3DPainter extends CustomPainter {
     }
   }
 
+  /// Contours for every height surface on the axes, not just the first.
+  ///
+  /// It read `function` — the cell's first line — so a plot holding two
+  /// surfaces drew contours on one of them and left the other bare, with no
+  /// indication that anything was missing.
   void _drawSurfaceContours(Canvas canvas, Size size, double focalLength) {
-    final parser = function;
+    for (final PlotExpression curve in _sheetCurves) {
+      // A hidden surface has no contours either.
+      if (curve.hidden) continue;
+      _drawContoursFor(canvas, size, focalLength, curve);
+    }
+  }
+
+  void _drawContoursFor(
+    Canvas canvas,
+    Size size,
+    double focalLength,
+    PlotExpression parser,
+  ) {
     const gridSize = 60;
     const numContours = 10;
 
@@ -3066,7 +3017,7 @@ class Plot3DPainter extends CustomPainter {
   /// Normals are averaged at the corners rather than taken per cell, so the
   /// shading runs continuously across the mesh. Flat-shading a cell leaves it
   /// a facet however fine the grid is — the same reason the heatmap colours
-  /// its corners and not its cells — and a sphere came out looking cut from
+  /// its corners and not its gridSize — and a sphere came out looking cut from
   /// gemstone.
   void _addParametricSurfaceTo(
     _DepthScene scene,
@@ -3092,7 +3043,7 @@ class Plot3DPainter extends CustomPainter {
     final int rows = grid.length;
     final int cols = grid.first.length;
 
-    // Every corner rotated once. Each is shared by up to four cells, and the
+    // Every corner rotated once. Each is shared by up to four gridSize, and the
     // rotation is most of the per-cell cost.
     final List<List<Point3D?>> pts = <List<Point3D?>>[
       for (int i = 0; i < rows; i++)
@@ -3204,7 +3155,7 @@ class Plot3DPainter extends CustomPainter {
     }
 
     // Each vertex is shaded and projected once, not once per cell that
-    // touches it. Every interior corner belongs to four cells, and doing this
+    // touches it. Every interior corner belongs to four gridSize, and doing this
     // work inside the cell loop did all of it four times over — on the two
     // most expensive operations there are here, a normal with its square root
     // and a colour lookup with its pack. Hoisting them is what pays for the
@@ -3334,6 +3285,7 @@ class Plot3DPainter extends CustomPainter {
     if (function.isComplex) return;
     final List<PlotExpression> curves = _lineCurves;
     for (int c = 0; c < curves.length; c++) {
+      if (curves[c].hidden) continue;
       _addOneStandingCurveTo(scene, size, focalLength, curves[c], c, curves);
     }
   }
@@ -3360,8 +3312,11 @@ class Plot3DPainter extends CustomPainter {
     final double valueRange = alongZ ? rangeX : rangeZ;
     final double valueScale = alongZ ? scaleX : scaleZ;
 
-    final Color curveColor =
-        curves.length == 1 ? colors.accent : _theme.seriesColor(index);
+    // Always the palette, never the accent. A lone standing curve used to be
+    // the app accent and a palette colour the moment a second line appeared, so
+    // adding a plot recoloured the one already there — and no swatch could have
+    // matched it.
+    final Color curveColor = _theme.seriesColor(parser.seriesIndex);
 
     final paint =
         Paint()
@@ -3746,10 +3701,35 @@ class Plot3DPainter extends CustomPainter {
     Size size,
     double focalLength,
   ) {
-    if (vectorParser == null) return;
+    // One shaded lattice per field, each on its own ramp and with its own
+    // scale — the last of the vector renderers to still draw a single field on
+    // the full rainbow. Two fields sharing that rainbow put every magnitude in
+    // both, which is unreadable however they are laid out.
+    final List<VectorFieldParser> fields = fieldsToDraw;
+    for (int n = 0; n < fields.length; n++) {
+      _drawOneMagnitudeField3D(
+        canvas,
+        size,
+        focalLength,
+        fields[n],
+        surfaceColormap(n, of: fields.length),
+        surfaceRampStops(n, of: fields.length),
+        n,
+      );
+    }
+  }
 
+  void _drawOneMagnitudeField3D(
+    Canvas canvas,
+    Size size,
+    double focalLength,
+    VectorFieldParser field,
+    Color Function(double) ramp,
+    List<Color> rampStops,
+    int row,
+  ) {
     const gridCount = 10;
-    final bool is3DVector = vectorParser!.is3D;
+    final bool is3DVector = field.is3D;
 
     List<FieldPoint3D> points = [];
     double maxMag = 0;
@@ -3762,7 +3742,7 @@ class Plot3DPainter extends CustomPainter {
             final y = -rangeY + (2 * rangeY * j / gridCount);
             final z = -rangeZ + (2 * rangeZ * k / gridCount);
 
-            final mag = vectorParser!.magnitude(x, y, z);
+            final mag = field.magnitude(x, y, z);
             if (!mag.isFinite) continue;
 
             maxMag = max(maxMag, mag);
@@ -3783,7 +3763,7 @@ class Plot3DPainter extends CustomPainter {
           final x = -rangeX + (2 * rangeX * i / (gridCount * 2));
           final y = -rangeY + (2 * rangeY * j / (gridCount * 2));
 
-          final mag = vectorParser!.magnitude(x, y, 0);
+          final mag = field.magnitude(x, y, 0);
           if (!mag.isFinite) continue;
 
           maxMag = max(maxMag, mag);
@@ -3810,7 +3790,7 @@ class Plot3DPainter extends CustomPainter {
       }
 
       final normalized = fp.value / maxMag;
-      final color = plotColormap(normalized);
+      final color = ramp(normalized);
 
       final depthScale = focalLength / (focalLength + fp.point.y);
       final radius = 6.0 * depthScale;
@@ -3828,7 +3808,7 @@ class Plot3DPainter extends CustomPainter {
       );
     }
 
-    _drawColorbar3D(canvas, size, 0, maxMag);
+    _drawColorbar3D(canvas, size, 0, maxMag, stops: rampStops, row: row);
   }
 
   /// Smooth colorbar with labelled ticks.

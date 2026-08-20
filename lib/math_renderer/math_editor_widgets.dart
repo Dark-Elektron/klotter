@@ -353,7 +353,11 @@ class MathEditorInlineState extends State<MathEditorInline>
                 minWidth:
                     widget.minWidth ??
                     (constraints.maxWidth.isFinite ? constraints.maxWidth : 0),
-                minHeight: 40,
+                // The row's tap target. Kept a touch above the glyph height so
+                // a row stays reliably tappable, but no taller: with several
+                // rows stacked, every spare pixel here is a gap repeated down
+                // the list and space taken from the plot.
+                minHeight: 34,
               ),
               child: RepaintBoundary(
                 child: ListenableBuilder(

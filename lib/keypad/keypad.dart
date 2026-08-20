@@ -212,6 +212,28 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
 
   bool get _isTabletLayout => widget.isLandscape || widget.screenWidth > 600;
 
+  /// The width to lay the keys out in, given what the parent offered.
+  ///
+  /// The parent does not always offer a finite one. On the warm-up frame the
+  /// keypad is laid out inside an offstage overlay with unbounded width, and
+  /// dividing infinity by the column count gives an infinite cell; dividing
+  /// that by an aspect ratio derived from the same infinity gives NaN. A NaN
+  /// height reaches SizedBox as `NaN<=h<=NaN`, which is where the launch threw
+  /// — and every "not laid out" and "!_debugDoingThisLayout" after it was
+  /// fallout from that one box.
+  ///
+  /// The widget is told the screen width, so there is a real answer to fall
+  /// back to rather than a guess.
+  double _usableWidth(BoxConstraints constraints) {
+    final double offered = constraints.maxWidth;
+    if (offered.isFinite && offered > 0) return offered;
+    return widget.screenWidth > 0 ? widget.screenWidth : 0;
+  }
+
+  /// How many keypad pages share the width. Derived from the configuration, so
+  /// it is known before the first build and needs no frame to settle.
+  int get _pagesPerView => _isTabletLayout ? 2 : 1;
+
   // One shape everywhere: each half of the keypad is a single 20-key grid, so
   // 10 columns x 2 rows. Splitting the keypad into a swipeable function half
   // and a fixed number half means a 5 x 4 tablet grid would stack to eight
@@ -605,6 +627,8 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
   @override
   void initState() {
     super.initState();
+    _initializeKeypadController(_pagesPerView);
+    _lastPagesPerView = _pagesPerView;
     widget.walkthroughService.onResetKeypad = _resetToNumberKeypad;
     widget.walkthroughService.onNavigateToKeypadPage = _navigateToKeypadPage;
   }
@@ -621,6 +645,14 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
   @override
   void didUpdateWidget(covariant CalculatorKeypad oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // A rotation or a resize changes how many pages share the width. Done here
+    // rather than in build: this runs before the subtree rebuilds, so the new
+    // controller is in place by the time the PageView asks for it, and nothing
+    // is marked dirty while something else is building.
+    if (_pagesPerView != _lastPagesPerView) {
+      _initializeKeypadController(_pagesPerView);
+      _lastPagesPerView = _pagesPerView;
+    }
     if (widget.walkthroughService != oldWidget.walkthroughService) {
       oldWidget.walkthroughService.onResetKeypad = null;
       oldWidget.walkthroughService.onNavigateToKeypadPage = null;
@@ -799,14 +831,17 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
   }
 
   void _handleEnter() {
-    // In klotter the action button always starts a new expression *within the
-    // same cell*, because every line of a cell is drawn as its own curve on
-    // that cell's plot. A whole new plot comes from the swipe strip instead.
-    if (_activeController != null) {
-      _activeController!.insertNewline();
-      widget.onUpdateMathEditor();
-      widget.onSetState();
-    }
+    // Adds an expression row to the current plot. Every row of a plot is drawn
+    // as its own curve on that plot's axes, and a whole new plot still comes
+    // from the swipe strip.
+    //
+    // This used to insert a NewlineNode into the plot's one editor. A line
+    // inside a shared node list can carry nothing of its own — no colour, no
+    // visibility, no identity — which is what stopped it having a swatch and an
+    // eye toggle beside it.
+    widget.onAddDisplay();
+    widget.onUpdateMathEditor();
+    widget.onSetState();
   }
 
   void _onKeypadPageChanged(int newIndex) {
@@ -848,17 +883,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
 
   @override
   Widget build(BuildContext context) {
-    bool isWideScreen = widget.screenWidth > 600;
-    int pagesPerView;
-
-    if (widget.isLandscape) {
-      pagesPerView = 2;
-    } else if (isWideScreen) {
-      pagesPerView = 2;
-    } else {
-      pagesPerView = 1;
-    }
-
+    final int pagesPerView = _pagesPerView;
     final isTablet = pagesPerView >= 2;
     if (widget.walkthroughService.isTabletMode != isTablet) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -866,20 +891,19 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
       });
     }
 
-    if (_lastPagesPerView != pagesPerView) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _initializeKeypadController(pagesPerView);
-          setState(() {});
-        }
-      });
-
-      if (_keypadController == null) {
-        _initializeKeypadController(pagesPerView);
-      }
-
-      _lastPagesPerView = pagesPerView;
-    }
+    // The controller is made in initState and remade in didUpdateWidget,
+    // never here.
+    //
+    // Making it during build attached a PageController while the PageView
+    // under it was building, which marks that subtree dirty mid-build. On its
+    // own that is the "setState() called during build" error; when this build
+    // runs inside a layout pass — anything with a LayoutBuilder above it —
+    // the same marking re-enters layout instead:
+    //
+    //     '!_debugDoingThisLayout': is not true
+    //
+    // Nothing here needed a frame to settle. The page count comes from the
+    // width and the orientation, both known when the widget is configured.
 
     // A tablet shows every key at once: one grid, no swiping, no fixed half.
     if (_isTabletLayout) {
@@ -897,41 +921,63 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
       children: [
         // Swipeable half: functions on top. Two pages now — scientific and
         // extras — because the number pad below is permanent.
-        LayoutBuilder(
-          builder: (context, keypadConstraints) {
-            final double pageWidth = keypadConstraints.maxWidth / pagesPerView;
-            final double cellW = pageWidth / crossAxisCount;
-            final double cellH = cellW / _gridAspectRatioFor(pageWidth);
-            return SizedBox(
-              key: widget.mainKeypadAreaKey,
-              height: cellH * rowCount,
-              width: double.infinity,
-              child:
-                  _keypadController != null
-                      ? ListenableBuilder(
-                        listenable: widget.walkthroughService,
-                        builder: (context, _) {
-                          return EasySnapPageView(
-                            controller: _keypadController!,
-                            onPageChanged: _onKeypadPageChanged,
-                            padEnds: false,
-                            enableTransitions: !isTablet,
-                            children: [
-                              SizedBox.expand(
-                                key: widget.scientificKeypadKey,
-                                child: _buildScientificGrid(widget.isLandscape),
-                              ),
-                              SizedBox.expand(
-                                key: widget.extrasKeypadKey,
-                                child: _buildExtrasGrid(widget.isLandscape),
-                              ),
-                            ],
-                          );
-                        },
-                      )
-                      : const SizedBox.shrink(),
-            );
-          },
+        // The key is on the wrapper, outside the LayoutBuilder, not on the box
+        // inside it. A LayoutBuilder builds during layout, so a GlobalKey
+        // placed in its builder has its element created — and, when this
+        // switches between the phone and tablet arrangements, *moved* — in the
+        // middle of a layout pass. Reparenting there lays out a subtree whose
+        // ancestor is still laying out, which is the assertion seen at
+        // startup:
+        //
+        //     '!_debugDoingThisLayout': is not true
+        //     #5  RenderFlex.performLayout
+        //     #7  RenderLaidOutSubtree.performLayout
+        //
+        // Out here the element is created during build, which is where moving
+        // a GlobalKey is a supported thing to do. The rect is unchanged: a
+        // LayoutBuilder takes its child's size.
+        KeyedSubtree(
+          key: widget.mainKeypadAreaKey,
+          child: LayoutBuilder(
+            builder: (context, keypadConstraints) {
+              final double pageWidth =
+                  _usableWidth(keypadConstraints) / pagesPerView;
+              final double cellW = pageWidth / crossAxisCount;
+              final double cellH = cellW / _gridAspectRatioFor(pageWidth);
+              return SizedBox(
+                height: cellH * rowCount,
+                // The resolved width, not infinity: with an unbounded
+                // parent, `double.infinity` is not a size a box can take.
+                width: _usableWidth(keypadConstraints),
+                child:
+                    _keypadController != null
+                        ? ListenableBuilder(
+                          listenable: widget.walkthroughService,
+                          builder: (context, _) {
+                            return EasySnapPageView(
+                              controller: _keypadController!,
+                              onPageChanged: _onKeypadPageChanged,
+                              padEnds: false,
+                              enableTransitions: !isTablet,
+                              children: [
+                                SizedBox.expand(
+                                  key: widget.scientificKeypadKey,
+                                  child: _buildScientificGrid(
+                                    widget.isLandscape,
+                                  ),
+                                ),
+                                SizedBox.expand(
+                                  key: widget.extrasKeypadKey,
+                                  child: _buildExtrasGrid(widget.isLandscape),
+                                ),
+                              ],
+                            );
+                          },
+                        )
+                        : const SizedBox.shrink(),
+              );
+            },
+          ),
         ),
 
         // Fixed half: the number pad never moves. Digits and operators are
@@ -939,13 +985,13 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
         // keeping them put means swiping never costs you the numbers.
         LayoutBuilder(
           builder: (context, numberConstraints) {
-            final double gridWidth = numberConstraints.maxWidth;
+            final double gridWidth = _usableWidth(numberConstraints);
             final double cellW = gridWidth / crossAxisCount;
             final double cellH = cellW / _gridAspectRatioFor(gridWidth);
             return SizedBox(
               key: widget.numberKeypadKey,
               height: cellH * rowCount,
-              width: double.infinity,
+              width: _usableWidth(numberConstraints),
               child: _buildNumberGrid(widget.isLandscape),
             );
           },
@@ -1248,59 +1294,68 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
   /// groups are not all rectangles — see [_landscapeRowWidths]. Composing the
   /// cells row by row is what lets landscape be a true 3x20.
   Widget _buildTabletKeypad() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final Map<String, Widget> byName = _tabletKeyWidgets();
-        final List<List<String?>> grid = _tabletGrid;
+    // Keyed out here rather than inside the builder, for the reason given on
+    // the phone arrangement above: a GlobalKey created inside a LayoutBuilder
+    // is created, and moved, during layout.
+    return KeyedSubtree(
+      key: widget.mainKeypadAreaKey,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final Map<String, Widget> byName = _tabletKeyWidgets();
+          final List<List<String?>> grid = _tabletGrid;
 
-        final List<Widget> cells = <Widget>[
-          for (final List<String?> row in grid)
-            for (final String? name in row)
-              name == null ? _extrasBlank() : byName[name] ?? _extrasBlank(),
-        ];
+          final List<Widget> cells = <Widget>[
+            for (final List<String?> row in grid)
+              for (final String? name in row)
+                name == null ? _extrasBlank() : byName[name] ?? _extrasBlank(),
+          ];
 
-        // Mirroring is a reflection of the finished grid: reverse every row.
-        // That flips block order and each block's contents in one step.
-        final List<Widget> laidOut =
-            _leftHanded ? _mirrorWidgetRows(cells, _tabletColumns) : cells;
+          // Mirroring is a reflection of the finished grid: reverse every row.
+          // That flips block order and each block's contents in one step.
+          final List<Widget> laidOut =
+              _leftHanded ? _mirrorWidgetRows(cells, _tabletColumns) : cells;
 
-        final double cellW = constraints.maxWidth / _tabletColumns;
-        final double cellH = cellW / _gridAspectRatioFor(constraints.maxWidth);
+          final double cellW = _usableWidth(constraints) / _tabletColumns;
+          final double cellH =
+              cellW / _gridAspectRatioFor(_usableWidth(constraints));
 
-        /// An invisible box over one block, so the walkthrough has something
-        /// with a real rect to highlight.
-        ///
-        /// Laid over the grid rather than wrapped around part of it: the grid
-        /// is one GridView of uniform cells, so a block is a span of columns
-        /// rather than a widget, and there is nothing to attach a key to.
-        Widget blockMarker(GlobalKey? key, String prefix) {
-          if (key == null) return const SizedBox.shrink();
-          final ({int first, int last})? at = _tabletBlockColumns(grid, prefix);
-          if (at == null) return const SizedBox.shrink();
-          return Positioned(
-            key: key,
-            left: at.first * cellW,
-            width: (at.last - at.first + 1) * cellW,
-            top: 0,
+          /// An invisible box over one block, so the walkthrough has something
+          /// with a real rect to highlight.
+          ///
+          /// Laid over the grid rather than wrapped around part of it: the grid
+          /// is one GridView of uniform cells, so a block is a span of columns
+          /// rather than a widget, and there is nothing to attach a key to.
+          Widget blockMarker(GlobalKey? key, String prefix) {
+            if (key == null) return const SizedBox.shrink();
+            final ({int first, int last})? at = _tabletBlockColumns(
+              grid,
+              prefix,
+            );
+            if (at == null) return const SizedBox.shrink();
+            return Positioned(
+              key: key,
+              left: at.first * cellW,
+              width: (at.last - at.first + 1) * cellW,
+              top: 0,
+              height: cellH * _tabletRows,
+              child: const IgnorePointer(child: SizedBox.expand()),
+            );
+          }
+
+          return SizedBox(
             height: cellH * _tabletRows,
-            child: const IgnorePointer(child: SizedBox.expand()),
+            width: _usableWidth(constraints),
+            child: Stack(
+              children: <Widget>[
+                Positioned.fill(child: _tabletGridView(laidOut, cellW, cellH)),
+                blockMarker(widget.numberBlockKey, 'num.'),
+                blockMarker(widget.scientificBlockKey, 'sci.'),
+                blockMarker(widget.extrasBlockKey, 'ext.'),
+              ],
+            ),
           );
-        }
-
-        return SizedBox(
-          key: widget.mainKeypadAreaKey,
-          height: cellH * _tabletRows,
-          width: double.infinity,
-          child: Stack(
-            children: <Widget>[
-              Positioned.fill(child: _tabletGridView(laidOut, cellW, cellH)),
-              blockMarker(widget.numberBlockKey, 'num.'),
-              blockMarker(widget.scientificBlockKey, 'sci.'),
-              blockMarker(widget.extrasBlockKey, 'ext.'),
-            ],
-          ),
-        );
-      },
+        },
+      ),
     );
   }
 

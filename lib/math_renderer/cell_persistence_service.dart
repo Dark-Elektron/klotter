@@ -5,6 +5,18 @@ import '../math_engine/math_expression_serializer.dart';
 import 'renderer.dart';
 
 class CellData {
+  /// Each expression row of the plot, serialized.
+  ///
+  /// A plot used to be one editor whose lines were `NewlineNode` sentinels, so
+  /// one string held the lot. Rows own their editors now, and a row carries
+  /// things a line never could — its own visibility, and an identity that
+  /// survives another row being inserted above it. Saving the joined string
+  /// would bring the curves back but not the rows.
+  final List<String> rowsJson;
+
+  /// Which rows are switched off, aligned with [rowsJson].
+  final List<bool> hidden;
+
   final String expressionJson;
 
   /// Where the cell's plot was last left. Stored beside the expression
@@ -15,10 +27,19 @@ class CellData {
   /// the expression alone for the common case.
   final Map<String, dynamic>? plotView;
 
-  CellData({required this.expressionJson, this.plotView});
+  CellData({
+    required this.expressionJson,
+    this.rowsJson = const <String>[],
+    this.hidden = const <bool>[],
+    this.plotView,
+  });
 
   Map<String, dynamic> toJson() => {
+    // `expression` is still written so a downgrade keeps the maths, even
+    // though it loses the row boundaries.
     'expression': expressionJson,
+    if (rowsJson.isNotEmpty) 'rows': rowsJson,
+    if (hidden.contains(true)) 'hidden': hidden,
     if (plotView != null) 'plotView': plotView,
   };
 
@@ -26,6 +47,17 @@ class CellData {
   /// so an upgrade does not wipe the user's cells.
   factory CellData.fromJson(Map<String, dynamic> json) => CellData(
     expressionJson: json['expression'] as String? ?? '',
+    // Absent on anything saved before rows existed; the caller then splits the
+    // single expression on its newlines, which is the same division the plot
+    // was already making.
+    rowsJson: switch (json['rows']) {
+      final List<dynamic> r => r.whereType<String>().toList(),
+      _ => const <String>[],
+    },
+    hidden: switch (json['hidden']) {
+      final List<dynamic> h => h.map((dynamic v) => v == true).toList(),
+      _ => const <bool>[],
+    },
     plotView: switch (json['plotView']) {
       final Map<String, dynamic> m => m,
       _ => null,
@@ -36,6 +68,37 @@ class CellData {
 class CellPersistence {
   static const String _key = 'calculator_cells';
   static const String _activeKey = 'active_cell';
+
+  /// Save every plot's rows.
+  static Future<void> saveRows(
+    List<List<List<MathNode>>> rowsPerPlot,
+    List<List<bool>> hiddenPerPlot,
+    List<Map<String, dynamic>?> plotViews,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final List<Map<String, dynamic>> cells = <Map<String, dynamic>>[];
+    for (int i = 0; i < rowsPerPlot.length; i++) {
+      final List<List<MathNode>> rows = rowsPerPlot[i];
+      // The joined form too, so an older build still finds its curves.
+      final List<MathNode> joined = <MathNode>[];
+      for (final List<MathNode> row in rows) {
+        if (joined.isNotEmpty) joined.add(NewlineNode());
+        joined.addAll(row);
+      }
+      cells.add(
+        CellData(
+          expressionJson: MathExpressionSerializer.serializeToJson(joined),
+          rowsJson: <String>[
+            for (final List<MathNode> row in rows)
+              MathExpressionSerializer.serializeToJson(row),
+          ],
+          hidden: i < hiddenPerPlot.length ? hiddenPerPlot[i] : const <bool>[],
+          plotView: i < plotViews.length ? plotViews[i] : null,
+        ).toJson(),
+      );
+    }
+    await prefs.setString(_key, jsonEncode(cells));
+  }
 
   static List<Map<String, dynamic>> _buildCellMaps(
     List<List<MathNode>> expressions,

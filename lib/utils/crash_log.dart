@@ -36,7 +36,7 @@ class CrashLog {
   static void install() {
     final FlutterExceptionHandler? previous = FlutterError.onError;
     FlutterError.onError = (FlutterErrorDetails details) {
-      unawaited(record(details.exception, details.stack));
+      unawaited(record(details.exception, details.stack, details: details));
       if (previous != null) {
         previous(details);
       } else {
@@ -51,7 +51,11 @@ class CrashLog {
 
   /// Write [error] down. Never throws: a failure here must not become the
   /// crash being reported.
-  static Future<void> record(Object error, StackTrace? stack) async {
+  static Future<void> record(
+    Object error,
+    StackTrace? stack, {
+    FlutterErrorDetails? details,
+  }) async {
     try {
       final SharedPreferences prefs = await SharedPreferences.getInstance();
       // Trimmed, because a stack can be long and this is stored in
@@ -63,13 +67,23 @@ class CrashLog {
           DateTime.now().toIso8601String(),
           'while $_context',
           '$error',
-          trace.length > 4000 ? trace.substring(0, 4000) : trace,
+          // Rendered as the console renders it, which is where the widget
+          // that caused it appears: "The relevant error-causing widget
+          // was: ...". The exception alone says which rule was broken,
+          // never by whom.
+          if (details != null) _clip(details.toString()),
+          _clip(trace),
         ].join('\n'),
       );
     } catch (_) {
       // Nothing useful to do; the app is already failing.
     }
   }
+
+  /// Long enough to be useful, short enough to sit in preferences beside
+  /// the user's work.
+  static String _clip(String text) =>
+      text.length > 3000 ? text.substring(0, 3000) : text;
 
   /// The stored report, or null if the app has not failed since it was cleared.
   static Future<String?> read({SharedPreferences? prefs}) async {

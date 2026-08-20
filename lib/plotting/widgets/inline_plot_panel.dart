@@ -1,5 +1,6 @@
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import '../models/complex_view.dart';
@@ -8,6 +9,7 @@ import '../models/plot_view_state.dart';
 import 'package:provider/provider.dart';
 import '../../settings/settings_provider.dart';
 import '../../utils/app_colors.dart';
+import '../../utils/render_box.dart';
 import '../../utils/coordinate_system.dart';
 import '../utils/plot_theme.dart';
 import '../parsers/plot_expression.dart';
@@ -32,6 +34,21 @@ class InlinePlotPanel extends StatefulWidget {
   /// reopened cell shows the window the user framed, not the origin.
   final PlotViewState initialView;
 
+  /// How much of the panel's bottom edge is covered by something else.
+  ///
+  /// The expression rows float over the plot now, so the plot's own controls —
+  /// the reset/fit/pan row and the 2D/3D column — would sit underneath them.
+  /// The canvas still fills the whole page, which is the point of the overlay;
+  /// only the controls are lifted clear.
+  final double bottomInset;
+
+  /// Which rows are switched off, by row number.
+  ///
+  /// Carried beside the nodes rather than inside them: a hidden row is still
+  /// compiled and still holds its place in the colour order, so it cannot be
+  /// left out of the node list without recolouring everything after it.
+  final List<bool> hiddenRows;
+
   /// Which symbols the expression is written in. The plot samples Cartesian
   /// space and converts each point into these before evaluating, so a
   /// spherical cell needs no separate renderer.
@@ -50,6 +67,8 @@ class InlinePlotPanel extends StatefulWidget {
     required this.expression,
     required this.nodes,
     this.initialView = PlotViewState.initial,
+    this.hiddenRows = const <bool>[],
+    this.bottomInset = 0,
     this.coordinateSystem = CoordinateSystem.cartesian,
     this.onViewChanged,
   });
@@ -207,6 +226,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     // A change of system re-reads the same text as different symbols, so it
     // has to recompile even when the expression itself has not moved.
     if (oldWidget.expression != widget.expression ||
+        !listEquals(oldWidget.hiddenRows, widget.hiddenRows) ||
         oldWidget.coordinateSystem != widget.coordinateSystem) {
       _parseFunction(widget.expression);
     }
@@ -313,6 +333,11 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     );
 
     setState(() {
+      for (final PlotExpression e in valid) {
+        e.hidden =
+            e.seriesIndex < widget.hiddenRows.length &&
+            widget.hiddenRows[e.seriesIndex];
+      }
       _functions = valid;
       _errorMessage = valid.length == compiled.length ? null : firstError.error;
       _currentFunction = valid.first;
@@ -446,6 +471,24 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   static const double _overlayButtonSize = 40;
   static const double _overlayIconSize = 18;
 
+  /// Whether the plot's side chrome is laid out for a left hand.
+  ///
+  /// The same setting that mirrors the keypad and the expression rows. The
+  /// control column and the parameter chips are the parts of the plot with a
+  /// leading and a trailing side, so they follow it; the toolbar and the mode
+  /// label are centred or full-width and do not.
+  bool get _mirrored =>
+      Provider.of<SettingsProvider>(context).handedness ==
+      Handedness.leftHanded;
+
+  /// How long the overlay controls take to settle when the rows below them
+  /// change height.
+  ///
+  /// They are anchored to the bottom of the plot and the rows float over that
+  /// edge, so adding or removing a row moves every one of them. Jumping read
+  /// as a glitch; sliding reads as the panel making room.
+  static const Duration _insetSlide = Duration(milliseconds: 220);
+
   /// How a parametric sweep arrives, before the user has said otherwise.
   ///
   /// In 3D, coloured by magnitude: a surface swept in u and v is nearly always
@@ -476,6 +519,13 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   /// Switch dimension without hunting for the toolbar button.
   @visibleForTesting
   void setShow3DForTest(bool value) => _setShow3D(value);
+
+  /// Which 3D tool is active.
+  @visibleForTesting
+  Tool3DMode get toolModeForTest => _tool3DMode;
+
+  @visibleForTesting
+  ZoomAxis get zoomAxisForTest => _zoomAxis;
 
   /// What the plot is coloured by, and whether that was asked for.
   @visibleForTesting
@@ -599,25 +649,16 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
         height: _overlayButtonSize,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color:
-              on
-                  ? _plotTheme(context).controlFill
-                  : Colors.black.withValues(alpha: 0.5),
+          color: on ? _theme.controlFill : Colors.black.withValues(alpha: 0.5),
           border: Border.all(
-            color:
-                on
-                    ? _plotTheme(context).controlActive
-                    : _plotTheme(context).controlOutline,
+            color: on ? _theme.controlActive : _theme.controlOutline,
             width: on ? 2 : 1,
           ),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color:
-                on
-                    ? _plotTheme(context).controlActive
-                    : _plotTheme(context).controlIdle,
+            color: on ? _theme.controlActive : _theme.controlIdle,
             fontSize: 12,
             fontWeight: FontWeight.w600,
           ),
@@ -718,6 +759,17 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   /// Built once here and passed down, so the painters do not rebuild it on
   /// every paint. Watches settings so changing the plot colour mode or the app
   /// theme repaints the plot.
+  /// The theme for the frame being built.
+  ///
+  /// [_plotTheme] builds a whole `PlotThemeData` — palettes, gradients, a
+  /// couple of dozen derived colours — and it was being called twenty-eight
+  /// times per build, once for every control that wanted a colour off it. That
+  /// is twenty-eight identical objects per frame, and the plot repaints on
+  /// every drag frame.
+  PlotThemeData? _frameTheme;
+
+  PlotThemeData get _theme => _frameTheme ??= _plotTheme(context);
+
   PlotThemeData _plotTheme(BuildContext context) {
     final settings = Provider.of<SettingsProvider>(context);
     return PlotThemeData.fromColors(
@@ -729,6 +781,8 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
 
   @override
   Widget build(BuildContext context) {
+    // Rebuilt once per frame; every control below reads this one.
+    _frameTheme = _plotTheme(context);
     return LayoutBuilder(
       builder: (context, constraints) {
         final bool showOverlays = constraints.maxHeight > 140;
@@ -745,7 +799,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                     visible: _show3D,
                     child: Plot3DScreen(
                       key: _plot3DKey,
-                      plotTheme: _plotTheme(context),
+                      plotTheme: _theme,
                       functions: _functions,
                       function: _currentFunction,
                       is3DFunction: _is3DFunction,
@@ -753,6 +807,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                       plotMode: _plotMode,
                       fieldType: _fieldType,
                       vectorParser: _vectorParser,
+                      bottomInset: widget.bottomInset,
                       vectorFields: _vectorFields,
                       vectorSeriesBase: _functions.length,
                       uRange: _uRange,
@@ -768,7 +823,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                     visible: !_show3D,
                     child: Plot2DScreen(
                       key: _plot2DKey,
-                      plotTheme: _plotTheme(context),
+                      plotTheme: _theme,
                       functions: _functions,
                       function: _currentFunction,
                       is3DFunction: _is3DFunction,
@@ -790,9 +845,12 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
             ),
 
             if (showOverlays)
-              Positioned(
-                right: 0,
-                bottom: 8,
+              AnimatedPositioned(
+                duration: _insetSlide,
+                curve: Curves.easeOutCubic,
+                left: _mirrored ? 0 : null,
+                right: _mirrored ? null : 0,
+                bottom: 8 + widget.bottomInset,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -817,13 +875,13 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                     _buildModeButton(
                       label: '3D',
                       isSelected: _show3D,
-                      selectedColor: _plotTheme(context).controlActive,
+                      selectedColor: _theme.controlActive,
                       onTap: () => _setShow3D(true),
                     ),
                     _buildModeButton(
                       label: '2D',
                       isSelected: !_show3D,
-                      selectedColor: _plotTheme(context).controlActive,
+                      selectedColor: _theme.controlActive,
                       onTap: () => _setShow3D(false),
                     ),
                   ],
@@ -835,10 +893,12 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
             // the right, which change *what* is drawn rather than how you move
             // around it.
             if (showOverlays)
-              Positioned(
+              AnimatedPositioned(
+                duration: _insetSlide,
+                curve: Curves.easeOutCubic,
                 left: 0,
                 right: 0,
-                bottom: 8,
+                bottom: 8 + widget.bottomInset,
                 child: Center(
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -846,7 +906,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                       _buildModeButton(
                         icon: Icons.home,
                         isSelected: false,
-                        selectedColor: _plotTheme(context).controlActive,
+                        selectedColor: _theme.controlActive,
                         onTap: _resetView,
                         tooltip: 'Reset view',
                       ),
@@ -854,7 +914,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                         _buildModeButton(
                           icon: Icons.crop_free,
                           isSelected: false,
-                          selectedColor: _plotTheme(context).controlActive,
+                          selectedColor: _theme.controlActive,
                           onTap: _editRanges,
                           tooltip: 'Set range',
                         ),
@@ -863,14 +923,14 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                         _buildModeButton(
                           icon: Icons.pan_tool,
                           isSelected: _tool3DMode == Tool3DMode.pan,
-                          selectedColor: _plotTheme(context).controlActive,
+                          selectedColor: _theme.controlActive,
                           onTap: _togglePan,
                           tooltip: 'Pan',
                         ),
                         _buildModeButton(
                           icon: Icons.crop_free,
                           isSelected: false,
-                          selectedColor: _plotTheme(context).controlActive,
+                          selectedColor: _theme.controlActive,
                           onTap: _edit3DRanges,
                           tooltip: 'Set range',
                         ),
@@ -886,7 +946,8 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
             if (showOverlays)
               Positioned(
                 top: _errorMessage != null ? 32 : 8,
-                left: 8,
+                left: _mirrored ? null : 8,
+                right: _mirrored ? 8 : null,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 8,
@@ -898,10 +959,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                   ),
                   child: Text(
                     _getModeDescription(),
-                    style: TextStyle(
-                      color: _plotTheme(context).controlIdle,
-                      fontSize: 11,
-                    ),
+                    style: TextStyle(color: _theme.controlIdle, fontSize: 11),
                   ),
                 ),
               ),
@@ -911,9 +969,12 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
             // and the arrows say where it is going — so these are toggles
             // rather than a menu.
             if (showOverlays && _currentFunction.isComplex)
-              Positioned(
-                left: 8,
-                bottom: _overlayButtonSize + 14,
+              AnimatedPositioned(
+                duration: _insetSlide,
+                curve: Curves.easeOutCubic,
+                left: _mirrored ? null : 8,
+                right: _mirrored ? 8 : null,
+                bottom: _overlayButtonSize + 14 + widget.bottomInset,
                 // Stacked, like the mode buttons on the right. Three of them
                 // side by side reached most of the way across the plot.
                 child: Column(
@@ -974,10 +1035,16 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
             // has nothing to say about v, so showing both would offer a
             // control that changes nothing.
             if (showOverlays && _usesParameter('u'))
-              Positioned(
-                left: 8,
+              AnimatedPositioned(
+                duration: _insetSlide,
+                curve: Curves.easeOutCubic,
+                left: _mirrored ? null : 8,
+                right: _mirrored ? 8 : null,
                 bottom:
-                    _overlayButtonSize + 14 + (_usesParameter('v') ? 26 : 0),
+                    _overlayButtonSize +
+                    14 +
+                    (_usesParameter('v') ? 26 : 0) +
+                    widget.bottomInset,
                 child: ParameterRangeChip(
                   name: 'u',
                   range: _uRange,
@@ -989,9 +1056,12 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
               ),
 
             if (showOverlays && _usesParameter('v'))
-              Positioned(
-                left: 8,
-                bottom: _overlayButtonSize + 14,
+              AnimatedPositioned(
+                duration: _insetSlide,
+                curve: Curves.easeOutCubic,
+                left: _mirrored ? null : 8,
+                right: _mirrored ? 8 : null,
+                bottom: _overlayButtonSize + 14 + widget.bottomInset,
                 child: ParameterRangeChip(
                   name: 'v',
                   range: _vRange,
@@ -1044,8 +1114,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                   ? selectedColor.withValues(alpha: 0.3)
                   : Colors.black.withValues(alpha: 0.5),
           border: Border.all(
-            color:
-                isSelected ? selectedColor : _plotTheme(context).controlOutline,
+            color: isSelected ? selectedColor : _theme.controlOutline,
             width: isSelected ? 2 : 1,
           ),
         ),
@@ -1054,19 +1123,13 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
               icon != null
                   ? Icon(
                     icon,
-                    color:
-                        isSelected
-                            ? selectedColor
-                            : _plotTheme(context).controlIdle,
+                    color: isSelected ? selectedColor : _theme.controlIdle,
                     size: _overlayIconSize,
                   )
                   : Text(
                     label!,
                     style: TextStyle(
-                      color:
-                          isSelected
-                              ? selectedColor
-                              : _plotTheme(context).controlIdle,
+                      color: isSelected ? selectedColor : _theme.controlIdle,
                       fontWeight: FontWeight.bold,
                       fontSize: 13,
                     ),
@@ -1076,7 +1139,22 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     );
 
     if (tooltip != null) {
-      return Tooltip(message: tooltip, child: button);
+      // Manual trigger, so the tooltip stops competing for the gesture.
+      //
+      // A Tooltip claims long press on touch, and these controls sit in a
+      // stack that already has the plot's own long-press-to-trace recogniser
+      // in it. A tap held even slightly is then won by the tooltip: the label
+      // appears and the button never fires — which is exactly the reported
+      // symptom, a control that "only shows a tooltip text".
+      //
+      // The label is still available to screen readers through the button's
+      // semantics; what is given up is the press-and-hold hint, which these
+      // controls do not need — they are icons with a visible selected state.
+      return Tooltip(
+        message: tooltip,
+        triggerMode: TooltipTriggerMode.manual,
+        child: button,
+      );
     }
     return button;
   }
@@ -1116,73 +1194,105 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   ///
   /// Tapping selects the zoom axis from a menu; the chosen axis shows as a
   /// badge so the current constraint is visible without opening it.
+  final GlobalKey _zoomButtonKey = GlobalKey();
+
   Widget _build3DZoomButton() {
     final colors = _colorsNoListen(context);
     final bool isSelected = _tool3DMode == Tool3DMode.zoom;
-    final Color tint =
-        isSelected
-            ? _plotTheme(context).controlActive
-            : _plotTheme(context).controlIdle;
+    final Color tint = isSelected ? _theme.controlActive : _theme.controlIdle;
 
-    return Tooltip(
-      message: 'Zoom axis',
-      child: PopupMenuButton<ZoomAxis>(
-        onSelected: _setZoomAxis,
+    // Tap switches back to zoom, or opens the axis menu when zoom is already
+    // the mode. Long press opens it either way.
+    //
+    // Tap used to only ever switch mode, which left the menu reachable solely
+    // by long press: once in zoom mode the button appeared to do nothing at
+    // all, and there was no way to find Free/X/Y/Z without guessing at a
+    // gesture. Selecting a mode and configuring it are the same control here,
+    // so the second tap is the one that configures.
+    //
+    // This was a PopupMenuButton, so the *only* way back from pan was through
+    // a menu — and when that menu did not open there was no way back at all.
+    // Leaning the mode switch on a route being pushed made the one control you
+    // need to escape pan the one control that could fail. Tapping now does the
+    // job on its own, and the axis menu is a separate, optional gesture.
+    //
+    // It also makes zoom and pan symmetric: both are taps, both toggle.
+    Future<void> chooseAxis() async {
+      // The button's own box, not the panel's. `context` here is the panel, so
+      // the menu was placed at the panel's top-left corner — the top of the
+      // screen — rather than beside the control that opened it.
+      final RenderBox? box = laidOutBox(_zoomButtonKey.currentContext);
+      if (box == null) return;
+      final Offset origin = box.localToGlobal(Offset.zero);
+      final ZoomAxis? picked = await showMenu<ZoomAxis>(
+        context: context,
         color: colors.containerBackground,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        padding: EdgeInsets.zero,
-        itemBuilder:
-            (BuildContext context) => <PopupMenuEntry<ZoomAxis>>[
-              _buildZoomMenuItem(ZoomAxis.free, 'Free', Icons.zoom_out_map),
-              _buildZoomMenuItem(ZoomAxis.x, 'X', Icons.swap_horiz),
-              _buildZoomMenuItem(ZoomAxis.y, 'Y', Icons.swap_vert),
-              _buildZoomMenuItem(ZoomAxis.z, 'Z', Icons.height),
-            ],
-        child: Container(
-          width: _overlayButtonSize,
-          height: _overlayButtonSize,
-          decoration: BoxDecoration(
-            color:
-                isSelected
-                    ? _plotTheme(context).controlFill
-                    : Colors.black.withValues(alpha: 0.5),
-            border: Border.all(
-              color:
-                  isSelected
-                      ? _plotTheme(context).controlActive
-                      : _plotTheme(context).controlOutline,
-              width: isSelected ? 2 : 1,
-            ),
+        position: RelativeRect.fromRect(
+          origin & box.size,
+          Offset.zero & MediaQuery.of(context).size,
+        ),
+        items: <PopupMenuEntry<ZoomAxis>>[
+          _buildZoomMenuItem(ZoomAxis.free, 'Free', Icons.zoom_out_map),
+          _buildZoomMenuItem(ZoomAxis.x, 'X', Icons.swap_horiz),
+          _buildZoomMenuItem(ZoomAxis.y, 'Y', Icons.swap_vert),
+          _buildZoomMenuItem(ZoomAxis.z, 'Z', Icons.height),
+        ],
+      );
+      if (picked != null) _setZoomAxis(picked);
+    }
+
+    return GestureDetector(
+      key: _zoomButtonKey,
+      onTap: () {
+        if (_tool3DMode != Tool3DMode.zoom) {
+          setState(() => _tool3DMode = Tool3DMode.zoom);
+          return;
+        }
+        chooseAxis();
+      },
+      onLongPress: chooseAxis,
+      child: Container(
+        width: _overlayButtonSize,
+        height: _overlayButtonSize,
+        decoration: BoxDecoration(
+          color:
+              isSelected
+                  ? _theme.controlFill
+                  : Colors.black.withValues(alpha: 0.5),
+          border: Border.all(
+            color: isSelected ? _theme.controlActive : _theme.controlOutline,
+            width: isSelected ? 2 : 1,
           ),
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              Icon(Icons.zoom_out_map, color: tint, size: _overlayIconSize),
-              if (_zoomAxis != ZoomAxis.free)
-                Positioned(
-                  right: 3,
-                  bottom: 3,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 3,
-                      vertical: 1,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _plotTheme(context).controlActive,
-                      borderRadius: BorderRadius.circular(3),
-                    ),
-                    child: Text(
-                      _getZoomAxisShortLabel(),
-                      style: const TextStyle(
-                        color: Colors.black,
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold,
-                      ),
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: <Widget>[
+            Icon(Icons.zoom_out_map, color: tint, size: _overlayIconSize),
+            if (_zoomAxis != ZoomAxis.free)
+              Positioned(
+                right: 3,
+                bottom: 3,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 3,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _theme.controlActive,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  child: Text(
+                    _getZoomAxisShortLabel(),
+                    style: TextStyle(
+                      color: colors.containerBackground,
+                      fontSize: 8,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
       ),
     );
@@ -1252,23 +1362,17 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
         decoration: BoxDecoration(
           color:
               isSelected
-                  ? _plotTheme(context).controlFill
+                  ? _theme.controlFill
                   : Colors.black.withValues(alpha: 0.5),
           border: Border.all(
-            color:
-                isSelected
-                    ? _plotTheme(context).controlActive
-                    : _plotTheme(context).controlOutline,
+            color: isSelected ? _theme.controlActive : _theme.controlOutline,
             width: isSelected ? 2 : 1,
           ),
         ),
         child: Center(
           child: Icon(
             Icons.landscape,
-            color:
-                isSelected
-                    ? _plotTheme(context).controlActive
-                    : _plotTheme(context).controlIdle,
+            color: isSelected ? _theme.controlActive : _theme.controlIdle,
             size: 20,
           ),
         ),

@@ -24,6 +24,27 @@ class SettingsScreen extends StatefulWidget {
 
   const SettingsScreen({super.key, this.onShowTutorial});
 
+  /// Whether settings offers the crash report.
+  ///
+  /// Off everywhere unless asked for. A stack trace is for whoever is working
+  /// on the app, not for someone who has just installed a calculator from the
+  /// Play Store, and asking that person to copy one and send it on is not a
+  /// reasonable thing for a settings page to do.
+  ///
+  /// Tying this to debug builds was the obvious thing and the wrong one: every
+  /// hot restart is a debug build, so the section stayed on screen through all
+  /// ordinary use of the app. It is off by default now and turned on
+  /// deliberately, in any build mode:
+  ///
+  ///     flutter run --dart-define=SHOW_DIAGNOSTICS=true
+  ///
+  /// The recorder itself stays installed either way — `CrashLog.install()` in
+  /// main — so a crash is still written down while this is off, and is there
+  /// to read the next time it is switched on. Hiding the section stops it
+  /// being shown, not kept.
+  @visibleForTesting
+  static bool showDiagnostics = const bool.fromEnvironment('SHOW_DIAGNOSTICS');
+
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
@@ -42,6 +63,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
+    // Read either way, and gated once where it is shown. Guarding here as
+    // well looked like extra safety and was the opposite: with two guards each
+    // able to hide the section on its own, no test could tell whether the one
+    // that matters still worked — removing either left every test passing.
     CrashLog.read().then((String? report) {
       if (mounted) setState(() => _lastCrash = report);
     });
@@ -186,7 +211,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ],
                 ),
-                if (_lastCrash != null) ...<Widget>[
+                if (SettingsScreen.showDiagnostics &&
+                    _lastCrash != null) ...<Widget>[
                   const SizedBox(height: 16),
                   _buildSectionCard(
                     colors: colors,
