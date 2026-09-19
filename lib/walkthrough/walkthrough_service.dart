@@ -7,6 +7,31 @@ class WalkthroughService extends ChangeNotifier {
 
   bool _isActive = false;
   int _currentStep = 0;
+
+  /// How many times the overlay has asked to measure the current step again.
+  ///
+  /// The spotlight is measured while the overlay builds, and on the very first
+  /// run of the tour the thing it points at may not have been laid out yet —
+  /// so it measured nothing, drew no spotlight, and never looked again. Coming
+  /// back to the tour a second time worked, because by then everything had a
+  /// box. Capped, so a step whose target genuinely never appears settles for
+  /// no spotlight instead of asking for ever.
+  int _remeasureAttempts = 0;
+  static const int _maxRemeasureAttempts = 10;
+
+  /// Asks for another frame, so the overlay can measure its target again.
+  ///
+  /// Called only when the step has a target key that has not been laid out
+  /// yet: a step with no target at all must not start this.
+  void requestRemeasure() {
+    if (!_isActive) return;
+    if (_remeasureAttempts >= _maxRemeasureAttempts) return;
+    _remeasureAttempts++;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_isActive) notifyListeners();
+    });
+  }
+
   bool _isInitialized = false;
   bool _isTabletMode = false;
 
@@ -68,6 +93,7 @@ class WalkthroughService extends ChangeNotifier {
       if (completed == null || completed == false) {
         _isActive = true;
         _currentStep = 0;
+        _remeasureAttempts = 0;
 
         WidgetsBinding.instance.addPostFrameCallback((_) {
           onResetKeypad?.call();
@@ -85,6 +111,7 @@ class WalkthroughService extends ChangeNotifier {
       // debugPrint('Walkthrough initialization error: $e');
       _isActive = true;
       _currentStep = 0;
+      _remeasureAttempts = 0;
       _isInitialized = true;
       notifyListeners();
     }
@@ -93,6 +120,7 @@ class WalkthroughService extends ChangeNotifier {
   void startWalkthrough() {
     _isActive = true;
     _currentStep = 0;
+    _remeasureAttempts = 0;
     _isInitialized = true;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -107,6 +135,7 @@ class WalkthroughService extends ChangeNotifier {
   void nextStep() {
     if (_currentStep < steps.length - 1) {
       _currentStep++;
+      _remeasureAttempts = 0;
       // debugPrint(
       //     'Walkthrough step: $_currentStep/${steps.length} - ${steps[_currentStep].id}');
       notifyListeners();
@@ -118,6 +147,7 @@ class WalkthroughService extends ChangeNotifier {
   void previousStep() {
     if (_currentStep > 0) {
       _currentStep--;
+      _remeasureAttempts = 0;
       final step = currentStepData;
 
       // If going back to a swipe step, navigate keypad to expected position
@@ -151,6 +181,7 @@ class WalkthroughService extends ChangeNotifier {
   Future<void> completeWalkthrough() async {
     _isActive = false;
     _currentStep = 0;
+    _remeasureAttempts = 0;
 
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -174,6 +205,7 @@ class WalkthroughService extends ChangeNotifier {
     }
 
     _currentStep = 0;
+    _remeasureAttempts = 0;
     _isActive = true;
     _isInitialized = true;
 

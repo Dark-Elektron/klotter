@@ -52,17 +52,74 @@ class MathEditorInlineState extends State<MathEditorInline>
     widget.controller.setContainerKey(_containerKey);
     widget.controller.onSelectionCleared = _onSelectionCleared;
 
-    // // Schedule cursor recalculation after initial layout is complete
-    // // We use a small delay to ensure the renderer has had time to report layout
-    // WidgetsBinding.instance.addPostFrameCallback((_) {
-    //   if (mounted) {
-    //     Future.delayed(const Duration(milliseconds: 50), () {
-    //       if (mounted) {
-    //         widget.controller.recalculateCursorPosition();
-    //       }
-    //     });
-    //   }
-    // });
+    // The caret is placed as each node reports its layout, which happens while
+    // this frame is still being laid out. On a fresh build there is no such
+    // report for the node the cursor is already in — reopening the app
+    // restores every row from storage with a cursor set — so the caret keeps
+    // whatever rect it had and is drawn away from the expression.
+    //
+    // Asking once the frame is over costs nothing and needs no delay: the
+    // registry is filled by then, and with nothing in it the call is a no-op.
+    _placeCaretAfterLayout();
+  }
+
+  /// True while a check is already queued, so a burst of rebuilds does not
+  /// queue one per build.
+  bool _caretPlacementQueued = false;
+
+  /// The container's size when the nodes last reported their positions.
+  Size? _reportedAt;
+
+  /// Bumped when the box changes, and added to the structure version handed to
+  /// the renderer.
+  ///
+  /// A node reports its position once per structure version and then stops —
+  /// `_lastReportedVersion == widget.structureVersion` in the renderer. That is
+  /// what makes a keystroke the only thing that repairs a stale caret: editing
+  /// changes the version, so every node reports afresh. Clearing the registry
+  /// alone does not, because clearing does not make anything build; it just
+  /// empties the registry and takes tap targeting with it.
+  ///
+  /// Counting the epoch in gives the same effect without inventing an edit.
+  int _layoutEpoch = 0;
+
+  /// Re-measures once the frame is over, and re-registers if the box moved.
+  ///
+  /// Each node reports its rect *relative to the container* while the frame is
+  /// being laid out. That is right for the container it was measured in — but
+  /// on opening the app a row is built before the panel around it has settled
+  /// on a width, and the content is centred, so when the real width arrives
+  /// every glyph shifts right while the registered rects stay where they were.
+  ///
+  /// The glyphs are drawn from the live layout so they look correct; the caret
+  /// is drawn from the registry, so it alone sits out to the left. Tapping does
+  /// not help, because a tap is resolved against the same stale registry —
+  /// only something that clears it does, which is why backspacing a character
+  /// or swiping to another plot and back put it right.
+  void _placeCaretAfterLayout() {
+    if (_caretPlacementQueued) return;
+    _caretPlacementQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _caretPlacementQueued = false;
+      if (!mounted) return;
+
+      final RenderBox? box = laidOutBox(_containerKey.currentContext);
+      final Size? now = box?.size;
+      final Size? before = _reportedAt;
+      _reportedAt = now;
+
+      // A different box than the rects were measured against means they
+      // describe a layout that no longer exists. Asking for a fresh round of
+      // reports puts the registry back in step with what is on screen; the
+      // build that follows clears the old entries as it goes, so nothing is
+      // left empty in between.
+      if (now != null && before != null && now != before) {
+        setState(() => _layoutEpoch++);
+        return;
+      }
+
+      widget.controller.recalculateCursorPosition();
+    });
   }
 
   void _onSelectionCleared() {
@@ -338,6 +395,9 @@ class MathEditorInlineState extends State<MathEditorInline>
 
     return LayoutBuilder(
       builder: (context, constraints) {
+        // Every build, so a box that settles late is noticed. The check itself
+        // is one guarded post-frame callback, not one per build.
+        _placeCaretAfterLayout();
         return Listener(
           behavior: HitTestBehavior.opaque,
           onPointerDown: _handlePointerDown,
@@ -363,10 +423,17 @@ class MathEditorInlineState extends State<MathEditorInline>
                 child: ListenableBuilder(
                   listenable: widget.controller,
                   builder: (context, _) {
-                    final structureVersion = widget.controller.structureVersion;
+                    // The renderer's version, which moves when the structure
+                    // changes and when the box does.
+                    final structureVersion =
+                        widget.controller.structureVersion + _layoutEpoch;
                     if (_lastStructureVersion != structureVersion) {
                       _lastStructureVersion = structureVersion;
                       widget.controller.clearLayoutRegistry();
+                      // Everything the caret was placed by has just been
+                      // thrown away, so place it again once the new layout has
+                      // been reported.
+                      _placeCaretAfterLayout();
                     }
 
                     if (widget.controller.hasSelection &&

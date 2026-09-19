@@ -1,3 +1,4 @@
+import '../math_renderer/math_text_style.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../settings/settings_provider.dart';
@@ -40,6 +41,30 @@ class AppColors {
   });
 
   // classic theme colors
+  /// Dark ink on pale paper.
+  ///
+  /// The one theme where the expression is written in dark ink: every other
+  /// palette here is light-on-dark, which is why the renderer's colour had to
+  /// stop being a constant before this could exist.
+  static const light = AppColors(
+    displayBackground: Color(0xFFF7F7FA),
+    containerBackground: Color(0xFFFFFFFF),
+    textPrimary: Color(0xFF1C1C1E),
+    textSecondary: Color(0xFF6E6E73),
+    textTertiary: Color(0xFF0B6BCB),
+    divider: Color(0xFFD6D6DB),
+    accent: Color(0xFF0B6BCB),
+    keypadBackground: Color(0xFFEFEFF3),
+    keypadButton: Color(0xFFFFFFFF),
+    keypadButtonText: Color(0xFF1C1C1E),
+    keyboardPrimary: Color(0xFFEFEFF3),
+    keyboardSecondary: Color(0xFFFFFFFF),
+    backgroundImage: '',
+    textureIntensity: 0.06,
+    textureScale: 1.6,
+    textureSoftness: 1.0,
+  );
+
   static const classic = AppColors(
     displayBackground: Colors.white38,
     containerBackground: Colors.blueGrey,
@@ -229,13 +254,27 @@ class AppColors {
   );
 
   // Helper to get colors based on context
+  /// The colour an expression is written in under [type].
+  ///
+  /// Read from the palette itself rather than listed separately, so a new
+  /// theme cannot forget it.
+  static Color _inkFor(ThemeType type) =>
+      type == ThemeType.light ? light.textPrimary : Colors.white;
+
   static AppColors of(BuildContext context, {bool listen = true}) {
     final settings = Provider.of<SettingsProvider>(context, listen: listen);
     return fromType(settings.themeType);
   }
 
   static AppColors fromType(ThemeType type) {
+    // Every read of the palette passes through here, so this is where the
+    // expression ink is kept in step with the theme. The renderer cannot ask
+    // for it — its glyph colour used to be the constant `Colors.white` in
+    // thirty-nine places, which is why a light theme was impossible before.
+    MathTextStyle.ink = _inkFor(type);
     switch (type) {
+      case ThemeType.light:
+        return light;
       case ThemeType.classic:
         return classic;
       case ThemeType.dark:

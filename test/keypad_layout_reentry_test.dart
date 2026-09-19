@@ -116,6 +116,66 @@ void main() {
     );
   });
 
+  testWidgets('laid out in a window with no size at all', (tester) async {
+    // What actually happens at launch: the engine reports "Width is zero" and
+    // the warm-up frame runs against a 0x0 window. Zero width made the tile
+    // aspect ratio zero, and dividing a zero cell by it gave NaN — reaching
+    // SizedBox as `NaN<=h<=NaN`. Every "slot == null" and "was not laid out"
+    // after that came from this one box.
+    addTearDown(tester.view.reset);
+    final controller = MathEditorController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<SettingsProvider>.value(
+        value: settings,
+        child: MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 0,
+              height: 0,
+              child: Builder(
+                builder: (context) {
+                  return CalculatorKeypad(
+                    // Zero, as MediaQuery reports it before the window has a
+                    // size — so the fallback has nothing to offer either.
+                    screenWidth: 0,
+                    isLandscape: false,
+                    colors: AppColors.of(context),
+                    activeIndex: 0,
+                    activeController: controller,
+                    settingsProvider: settings,
+                    onUpdateMathEditor: () {},
+                    onAddDisplay: () {},
+                    onRemoveDisplay: (_) {},
+                    onClearAllDisplays: () {},
+                    onSetState: () {},
+                    walkthroughService: WalkthroughService(),
+                    scientificKeypadKey: GlobalKey(),
+                    numberKeypadKey: GlobalKey(),
+                    extrasKeypadKey: GlobalKey(),
+                    commandButtonKey: GlobalKey(),
+                    mainKeypadAreaKey: GlobalKey(),
+                    settingsButtonKey: GlobalKey(),
+                    numberBlockKey: GlobalKey(),
+                    scientificBlockKey: GlobalKey(),
+                    extrasBlockKey: GlobalKey(),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: 'a window with no size still produces a NaN box',
+    );
+  });
+
   testWidgets('laid out with no width offered, as on the warm-up frame', (
     tester,
   ) async {

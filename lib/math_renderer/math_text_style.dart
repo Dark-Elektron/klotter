@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import '../utils/constants.dart';
 
@@ -51,11 +52,67 @@ class MathTextStyle {
   ///
   /// Shared by the editor and the read-only result display so the two cannot
   /// drift apart.
+  /// `z̲` — the complex variable, z with a line under it.
+  ///
+  /// The line is thickened deliberately. At the default thickness it is a hair
+  /// at editor sizes and reads as an artefact of the font rather than part of
+  /// the symbol, which is the whole point of it: a bare `z` is the ordinary
+  /// third axis, and only the line says this one is complex. Two of them next
+  /// to each other have to be told apart at a glance.
+  /// `z̲` drawn as a letter with a rule under it.
+  ///
+  /// The rule is drawn rather than decorated. `TextStyle` has no way to offset
+  /// an underline — it sits where the font puts it, which is tight against the
+  /// glyph — so a thick one read as a leg of the z rather than a mark beneath
+  /// it. Drawing it gives control of both the gap and the weight.
+  ///
+  /// Sized from the font, so it holds wherever this is used: the editor and
+  /// the result display render at different sizes.
+  static Widget complexVariableGlyph(
+    double fontSize,
+    Color color, {
+    TextScaler textScaler = TextScaler.noScaling,
+  }) {
+    final double scaled = textScaler.scale(fontSize);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Text(
+          'z',
+          style: getStyle(fontSize).copyWith(color: color),
+          textScaler: textScaler,
+        ),
+        // Clear of the glyph, and as heavy as its strokes.
+        SizedBox(height: scaled * 0.06),
+        Container(height: scaled * 0.08, color: color),
+      ],
+    );
+  }
+
+  /// The colour every glyph in an expression is drawn in.
+  ///
+  /// The renderer had `Colors.white` written into it in thirty-nine places,
+  /// which is fine while every theme is dark but makes a light one impossible:
+  /// the expression simply disappears. Threading a colour through the ten
+  /// nested builders would be a large change for one value that is the same
+  /// everywhere on screen at once, so it is set from the theme instead.
+  ///
+  /// One value for the whole app is honest here: every expression is drawn in
+  /// the same ink, and the app has one theme at a time.
+  static Color ink = Colors.white;
+
   static TextStyle complexVariableStyle(double fontSize, Color color) =>
       getStyle(fontSize).copyWith(
         color: color,
         decoration: TextDecoration.underline,
         decorationColor: color,
+        // A multiple of the font's own underline hairline, not a pixel count,
+        // so it holds at every size. Set to match the weight of the letter's
+        // strokes: the line is the only thing separating z̲ from a plain z,
+        // and at anything lighter it reads as a rendering artefact rather
+        // than part of the symbol.
+        decorationThickness: 4.0,
       );
 
   static const Set<String> _allMultiplySigns = {multiplyDot, multiplyTimes};

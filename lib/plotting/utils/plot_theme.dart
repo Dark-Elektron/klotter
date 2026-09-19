@@ -42,6 +42,13 @@ class PlotThemeData {
   /// control is legible wherever it is drawn and the highlight is the theme's
   /// own accent.
   final Color controlActive;
+
+  /// The mark on a row that could not be drawn.
+  ///
+  /// Its own colour rather than the series colour: the point of the mark is
+  /// that this row is not on the plot, so wearing the colour of a curve that
+  /// is not there would say the opposite.
+  final Color errorMark;
   final Color controlIdle;
   final Color controlOutline;
   final Color controlFill;
@@ -67,6 +74,7 @@ class PlotThemeData {
 
   const PlotThemeData({
     required this.controlActive,
+    required this.errorMark,
     required this.controlIdle,
     required this.controlOutline,
     required this.controlFill,
@@ -258,6 +266,9 @@ class PlotThemeData {
     final Color accent = colors.accent;
     return PlotThemeData(
       controlActive: accent,
+      // Readable on every theme, which the app's own error red is not on the
+      // darker ones.
+      errorMark: const Color(0xFFE57373),
       controlIdle: lineBase.withValues(alpha: isLight ? 0.55 : 0.60),
       controlOutline: lineBase.withValues(alpha: isLight ? 0.28 : 0.24),
       controlFill: accent.withValues(alpha: isLight ? 0.22 : 0.30),
@@ -376,6 +387,7 @@ class PlotThemeData {
         return isLight ? _pinkLight : _pinkDark;
       case ThemeType.forestMoss:
         return isLight ? _greenLight : _greenDark;
+      case ThemeType.light:
       case ThemeType.classic:
       case ThemeType.dark:
         return isLight ? _neutralLight : _neutralDark;

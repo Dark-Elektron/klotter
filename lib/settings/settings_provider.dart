@@ -12,6 +12,8 @@ enum NumberFormat {
 }
 
 enum ThemeType {
+  /// Dark ink on pale paper. The default.
+  light,
   classic,
   dark,
   softPink,
@@ -66,7 +68,9 @@ class SettingsProvider extends ChangeNotifier {
   static const double maxButtonSpacing = 12.0;
 
   double _precision = PRECISION.toDouble();
-  ThemeType _themeType = ThemeType.classic;
+
+  /// Light is the default: dark ink on pale paper.
+  ThemeType _themeType = ThemeType.light;
   bool _isRadians = false;
   bool _hapticFeedback = true;
   bool _soundEffects = false;
@@ -86,6 +90,7 @@ class SettingsProvider extends ChangeNotifier {
   double get precision => _precision;
   ThemeType get themeType => _themeType;
   bool get isDarkTheme =>
+      _themeType != ThemeType.light &&
       _themeType != ThemeType.classic &&
       _themeType != ThemeType.softPink &&
       _themeType != ThemeType.desertSand &&
@@ -125,7 +130,7 @@ class SettingsProvider extends ChangeNotifier {
   SettingsProvider._();
 
   SettingsProvider._forTesting({
-    ThemeType themeType = ThemeType.classic,
+    ThemeType themeType = ThemeType.light,
     String multiplicationSign = '×',
     NumberFormat numberFormat = NumberFormat.automatic,
     bool useScientificNotationButton = false,
@@ -140,7 +145,7 @@ class SettingsProvider extends ChangeNotifier {
 
   // Factory constructor for tests
   static SettingsProvider forTesting({
-    ThemeType themeType = ThemeType.classic,
+    ThemeType themeType = ThemeType.light,
     String multiplicationSign = '×',
     NumberFormat numberFormat = NumberFormat.automatic,
     bool useScientificNotationButton = false,
@@ -167,13 +172,18 @@ class SettingsProvider extends ChangeNotifier {
     if (themeStr != null) {
       _themeType = ThemeType.values.firstWhere(
         (e) => e.name == themeStr,
-        orElse: () => ThemeType.classic,
+        orElse: () => ThemeType.light,
       );
-    } else {
-      // Migrate from old isDarkTheme bool if it exists
-      bool oldIsDark = prefs.getBool('isDarkTheme') ?? false;
-      _themeType = oldIsDark ? ThemeType.dark : ThemeType.classic;
+    } else if (prefs.containsKey('isDarkTheme')) {
+      // An older install, from before themes were named. Keep the two it knew
+      // about: classic was what "not dark" meant then, and someone who chose
+      // it should not be moved to a different theme by an update.
+      _themeType =
+          (prefs.getBool('isDarkTheme') ?? false)
+              ? ThemeType.dark
+              : ThemeType.classic;
     }
+    // Otherwise a fresh install, which keeps the default: light.
 
     _isRadians = prefs.getBool('isRadians') ?? false;
     _hapticFeedback = prefs.getBool('hapticFeedback') ?? true;

@@ -126,6 +126,17 @@ class WalkthroughOverlay extends StatelessWidget {
 
     Rect? targetRect = _getTargetRect(step.id);
 
+    // The target exists but has no box yet — first run of the tour, before the
+    // thing being pointed at has been laid out. Ask for another frame rather
+    // than drawing no spotlight and never looking again, which is why the tour
+    // lit nothing the first time round and was right on a second visit.
+    //
+    // Only when the step actually has a key: a step with no target is meant to
+    // have no spotlight, and must not set this going.
+    if (targetRect == null && targetKeys[_getTargetKeyId(step.id)] != null) {
+      walkthroughService.requestRemeasure();
+    }
+
     return Stack(
       children: [
         // Overlay background

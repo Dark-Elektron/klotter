@@ -49,6 +49,9 @@ class Plot3DScreen extends StatefulWidget {
   final ParameterRange uRange;
   final ParameterRange vRange;
   final bool showContour;
+
+  /// Draw the surface's own grid over it.
+  final bool showMesh;
   final SurfaceMode surfaceMode;
   final ZoomAxis zoomAxis; // New
   final AppColors colors;
@@ -73,6 +76,7 @@ class Plot3DScreen extends StatefulWidget {
     this.uRange = defaultParameterRange,
     this.vRange = defaultParameterRange,
     required this.showContour,
+    this.showMesh = false,
     required this.surfaceMode,
     required this.zoomAxis, // New
     required this.colors,
@@ -239,6 +243,15 @@ class Plot3DScreenState extends State<Plot3DScreen>
     if (rX > 0) xRange = rX;
     if (rY > 0) yRange = rY;
     if (rZ > 0) zRange = rZ;
+    // A restored view is a chosen view, so nothing may re-fit over it.
+    //
+    // Swiping away and back rebuilds the panel, which recompiles the cell and
+    // hands over a *new* parser object for the same text. The screen compares
+    // parsers by identity, so it read that as a changed sweep and framed the
+    // figure again — throwing away the view that had just been restored. It
+    // showed up on parametric plots because they are the ones with framing of
+    // their own to fall back on.
+    _manualZ = true;
   }
 
   /// How far the 3D box may be zoomed.
@@ -301,7 +314,8 @@ class Plot3DScreenState extends State<Plot3DScreen>
     });
   }
 
-  /// Once the height has been set by hand, stop re-fitting it on every edit.
+  /// Once the window has been chosen — set by hand, or restored from a saved
+  /// view — stop re-fitting it on every edit.
   bool _manualZ = false;
 
   /// Re-fit the box height to the current surface and window.
@@ -311,6 +325,10 @@ class Plot3DScreenState extends State<Plot3DScreen>
   void resetView() {
     setState(() {
       _stopSpin();
+      // Home is how you give up the window you chose, so the fit below is
+      // allowed to run again — whether that window was set by hand or came
+      // back with a restored view.
+      _manualZ = false;
       rotationX = 0.6;
       rotationZ = 0.8;
       xRange = 5.0;
@@ -824,6 +842,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
                   vectorFields: widget.vectorFields,
                   vectorSeriesBase: widget.vectorSeriesBase,
                   showContour: widget.showContour,
+                  showMesh: widget.showMesh,
                   surfaceMode: widget.surfaceMode,
                   colors: widget.colors,
                 ),

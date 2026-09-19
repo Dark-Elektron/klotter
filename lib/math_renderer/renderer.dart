@@ -13,6 +13,7 @@ export 'math_editor_widgets.dart';
 
 // Import the modules we depend on
 import 'math_nodes.dart';
+import 'complex_variable_glyph.dart';
 import 'math_text_style.dart';
 import '../utils/render_box.dart';
 
@@ -49,11 +50,17 @@ class MathRenderer extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: _renderNodeList(
-                    lineInfo.nodes,
-                    lineInfo.startIndex,
-                    fontSize: FONTSIZE,
-                  ),
+                  children:
+                      lineInfo.nodes.isEmpty
+                          // An empty line keeps its height without putting
+                          // anything in the layout registry. See
+                          // [_splitIntoLines].
+                          ? const <Widget>[SizedBox(width: 2, height: FONTSIZE)]
+                          : _renderNodeList(
+                            lineInfo.nodes,
+                            lineInfo.startIndex,
+                            fontSize: FONTSIZE,
+                          ),
                 ),
               ),
             );
@@ -61,7 +68,15 @@ class MathRenderer extends StatelessWidget {
     );
   }
 
-  /// Splits expression into lines at NewlineNode boundaries
+  /// Splits expression into lines at NewlineNode boundaries.
+  ///
+  /// An empty line stays empty rather than being filled with a placeholder
+  /// literal. The placeholder was a freshly minted node that was not in the
+  /// expression, and it rendered at `startIndex` — which for an empty line is
+  /// the `NewlineNode` itself, or one past the end of the list. Tapping it set
+  /// the caret to an index holding no literal, and from there typing and
+  /// backspace both silently did nothing. The caller draws a spacer instead,
+  /// so the line keeps its height and registers no tap target.
   List<_LineInfo> _splitIntoLines(List<MathNode> nodes) {
     List<_LineInfo> lines = [];
     List<MathNode> currentLine = [];
@@ -70,9 +85,6 @@ class MathRenderer extends StatelessWidget {
     for (int i = 0; i < nodes.length; i++) {
       if (nodes[i] is NewlineNode) {
         // End current line
-        if (currentLine.isEmpty) {
-          currentLine.add(LiteralNode(text: ''));
-        }
         lines.add(
           _LineInfo(nodes: List.from(currentLine), startIndex: startIndex),
         );
@@ -84,9 +96,6 @@ class MathRenderer extends StatelessWidget {
     }
 
     // Add last line
-    if (currentLine.isEmpty) {
-      currentLine.add(LiteralNode(text: ''));
-    }
     lines.add(_LineInfo(nodes: currentLine, startIndex: startIndex));
 
     return lines;
@@ -254,10 +263,24 @@ class MathRenderer extends StatelessWidget {
     }
 
     if (node is ConstantNode) {
-      return Text(
-        MathTextStyle.toDisplayText(node.constant),
-        style: MathTextStyle.getStyle(fontSize).copyWith(color: Colors.white),
+      return AtomWidget(
+        key: ValueKey('${node.id}_$structureVersion'),
+        node: node,
+        parentId: parentId,
+        path: path,
+        index: index,
+        rootKey: rootKey,
+        controller: controller,
+        structureVersion: structureVersion,
+        fontSize: fontSize,
         textScaler: textScaler,
+        child: Text(
+          MathTextStyle.toDisplayText(node.constant),
+          style: MathTextStyle.getStyle(
+            fontSize,
+          ).copyWith(color: MathTextStyle.ink),
+          textScaler: textScaler,
+        ),
       );
     }
 
@@ -267,18 +290,44 @@ class MathRenderer extends StatelessWidget {
     // -only result display has its own copy of this, which is why they showed
     // up in results but never in the expression being typed.
     if (node is ComplexVariableNode) {
-      return Text(
-        'z',
-        style: MathTextStyle.complexVariableStyle(fontSize, Colors.white),
+      return AtomWidget(
+        key: ValueKey('${node.id}_$structureVersion'),
+        node: node,
+        parentId: parentId,
+        path: path,
+        index: index,
+        rootKey: rootKey,
+        controller: controller,
+        structureVersion: structureVersion,
+        fontSize: fontSize,
         textScaler: textScaler,
+        child: ComplexVariableGlyph(
+          fontSize: fontSize,
+          color: MathTextStyle.ink,
+          textScaler: textScaler,
+        ),
       );
     }
 
     if (node is UnitVectorNode) {
-      return Text(
-        '${node.axis}\u0302',
-        style: MathTextStyle.getStyle(fontSize).copyWith(color: Colors.white),
+      return AtomWidget(
+        key: ValueKey('${node.id}_$structureVersion'),
+        node: node,
+        parentId: parentId,
+        path: path,
+        index: index,
+        rootKey: rootKey,
+        controller: controller,
+        structureVersion: structureVersion,
+        fontSize: fontSize,
         textScaler: textScaler,
+        child: Text(
+          '${node.axis}\u0302',
+          style: MathTextStyle.getStyle(
+            fontSize,
+          ).copyWith(color: MathTextStyle.ink),
+          textScaler: textScaler,
+        ),
       );
     }
 
@@ -343,7 +392,7 @@ class MathRenderer extends StatelessWidget {
               Container(
                 height: math.max(1.5, fontSize * 0.06),
                 width: double.infinity,
-                color: Colors.white,
+                color: MathTextStyle.ink,
                 margin: EdgeInsets.symmetric(vertical: fontSize * 0.15),
               ),
 
@@ -572,7 +621,7 @@ class MathRenderer extends StatelessWidget {
               ScalableParenthesis(
                 isOpening: true,
                 fontSize: fontSize,
-                color: Colors.white,
+                color: MathTextStyle.ink,
                 textScaler: textScaler,
               ),
               Padding(
@@ -590,7 +639,7 @@ class MathRenderer extends StatelessWidget {
               ScalableParenthesis(
                 isOpening: false,
                 fontSize: fontSize,
-                color: Colors.white,
+                color: MathTextStyle.ink,
                 textScaler: textScaler,
               ),
             ],
@@ -665,7 +714,7 @@ class MathRenderer extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                ScalableAbsBar(fontSize: fontSize, color: Colors.white),
+                ScalableAbsBar(fontSize: fontSize, color: MathTextStyle.ink),
                 Padding(
                   padding: EdgeInsets.symmetric(
                     horizontal: fontSize * 0.15,
@@ -678,7 +727,7 @@ class MathRenderer extends StatelessWidget {
                     children: [argWidget],
                   ),
                 ),
-                ScalableAbsBar(fontSize: fontSize, color: Colors.white),
+                ScalableAbsBar(fontSize: fontSize, color: MathTextStyle.ink),
               ],
             ),
           ),
@@ -703,7 +752,7 @@ class MathRenderer extends StatelessWidget {
                     node.function,
                     style: MathTextStyle.getStyle(
                       fontSize,
-                    ).copyWith(color: Colors.white),
+                    ).copyWith(color: MathTextStyle.ink),
                     textScaler: textScaler,
                   ),
                 ),
@@ -716,7 +765,7 @@ class MathRenderer extends StatelessWidget {
                     ScalableParenthesis(
                       isOpening: true,
                       fontSize: fontSize,
-                      color: Colors.white,
+                      color: MathTextStyle.ink,
                       textScaler: textScaler,
                     ),
                     Padding(
@@ -734,7 +783,7 @@ class MathRenderer extends StatelessWidget {
                     ScalableParenthesis(
                       isOpening: false,
                       fontSize: fontSize,
-                      color: Colors.white,
+                      color: MathTextStyle.ink,
                       textScaler: textScaler,
                     ),
                   ],
@@ -867,7 +916,7 @@ class MathRenderer extends StatelessWidget {
                       width: fontSize * 0.6,
                       child: CustomPaint(
                         painter: RadicalSymbolPainter(
-                          color: Colors.white,
+                          color: MathTextStyle.ink,
                           strokeWidth: math.max(1.5, fontSize * 0.06),
                         ),
                       ),
@@ -876,7 +925,7 @@ class MathRenderer extends StatelessWidget {
                       decoration: BoxDecoration(
                         border: Border(
                           top: BorderSide(
-                            color: Colors.white,
+                            color: MathTextStyle.ink,
                             width: math.max(1.5, fontSize * 0.06),
                           ),
                         ),
@@ -1027,7 +1076,7 @@ class MathRenderer extends StatelessWidget {
                         node.isNaturalLog ? 'ln' : 'log',
                         style: MathTextStyle.getStyle(
                           fontSize,
-                        ).copyWith(color: Colors.white),
+                        ).copyWith(color: MathTextStyle.ink),
                         textScaler: textScaler,
                       ),
                       if (!node.isNaturalLog && baseWidget != null)
@@ -1055,7 +1104,7 @@ class MathRenderer extends StatelessWidget {
                     ScalableParenthesis(
                       isOpening: true,
                       fontSize: fontSize,
-                      color: Colors.white,
+                      color: MathTextStyle.ink,
                       textScaler: textScaler,
                     ),
                     Padding(
@@ -1073,7 +1122,7 @@ class MathRenderer extends StatelessWidget {
                     ScalableParenthesis(
                       isOpening: false,
                       fontSize: fontSize,
-                      color: Colors.white,
+                      color: MathTextStyle.ink,
                       textScaler: textScaler,
                     ),
                   ],
@@ -1190,7 +1239,7 @@ class MathRenderer extends StatelessWidget {
               'P',
               style: MathTextStyle.getStyle(
                 fontSize,
-              ).copyWith(color: Colors.white),
+              ).copyWith(color: MathTextStyle.ink),
               textScaler: textScaler,
             ),
             // r (subscript position)
@@ -1308,7 +1357,7 @@ class MathRenderer extends StatelessWidget {
               'C',
               style: MathTextStyle.getStyle(
                 fontSize,
-              ).copyWith(color: Colors.white),
+              ).copyWith(color: MathTextStyle.ink),
               textScaler: textScaler,
             ),
             // r (subscript position)
@@ -1384,7 +1433,7 @@ class MathRenderer extends StatelessWidget {
               '=',
               style: MathTextStyle.getStyle(
                 smallSize,
-              ).copyWith(color: Colors.white),
+              ).copyWith(color: MathTextStyle.ink),
               textScaler: textScaler,
             ),
           ),
@@ -1549,7 +1598,7 @@ class MathRenderer extends StatelessWidget {
                 SumProdSymbol(
                   type: isSum ? SumProdType.sum : SumProdType.product,
                   fontSize: fontSize,
-                  color: Colors.white,
+                  color: MathTextStyle.ink,
                 ),
                 SizedBox(height: fontSize * 0.1),
                 lowerWidget,
@@ -1569,7 +1618,7 @@ class MathRenderer extends StatelessWidget {
                     ScalableParenthesis(
                       isOpening: true,
                       fontSize: fontSize,
-                      color: Colors.white,
+                      color: MathTextStyle.ink,
                       textScaler: textScaler,
                     ),
                     Padding(
@@ -1587,7 +1636,7 @@ class MathRenderer extends StatelessWidget {
                     ScalableParenthesis(
                       isOpening: false,
                       fontSize: fontSize,
-                      color: Colors.white,
+                      color: MathTextStyle.ink,
                       textScaler: textScaler,
                     ),
                   ],
@@ -1780,7 +1829,7 @@ class MathRenderer extends StatelessWidget {
             MathTextStyle.toDisplayText(displayVarText),
             style: MathTextStyle.getStyle(
               evalSize,
-            ).copyWith(color: Colors.white),
+            ).copyWith(color: MathTextStyle.ink),
             textScaler: textScaler,
           ),
           Padding(
@@ -1789,7 +1838,7 @@ class MathRenderer extends StatelessWidget {
               '=',
               style: MathTextStyle.getStyle(
                 evalSize,
-              ).copyWith(color: Colors.white),
+              ).copyWith(color: MathTextStyle.ink),
               textScaler: textScaler,
             ),
           ),
@@ -1812,7 +1861,7 @@ class MathRenderer extends StatelessWidget {
                   'd',
                   style: MathTextStyle.getStyle(
                     symbolSize,
-                  ).copyWith(color: Colors.white),
+                  ).copyWith(color: MathTextStyle.ink),
                   textScaler: textScaler,
                 ),
               ],
@@ -1820,7 +1869,7 @@ class MathRenderer extends StatelessWidget {
             Container(
               height: barHeight,
               width: double.infinity,
-              color: Colors.white,
+              color: MathTextStyle.ink,
               margin: EdgeInsets.symmetric(vertical: barMargin),
             ),
             Row(
@@ -1831,7 +1880,7 @@ class MathRenderer extends StatelessWidget {
                   'd',
                   style: MathTextStyle.getStyle(
                     symbolSize,
-                  ).copyWith(color: Colors.white),
+                  ).copyWith(color: MathTextStyle.ink),
                   textScaler: textScaler,
                 ),
                 const SizedBox(width: 1),
@@ -1849,7 +1898,7 @@ class MathRenderer extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Container(width: barWidth, color: Colors.white),
+            Container(width: barWidth, color: MathTextStyle.ink),
             SizedBox(width: evalSize * 0.15),
             Column(
               mainAxisSize: MainAxisSize.max,
@@ -1870,7 +1919,7 @@ class MathRenderer extends StatelessWidget {
             ScalableParenthesis(
               isOpening: true,
               fontSize: fontSize,
-              color: Colors.white,
+              color: MathTextStyle.ink,
               textScaler: textScaler,
             ),
             Padding(
@@ -1888,7 +1937,7 @@ class MathRenderer extends StatelessWidget {
             ScalableParenthesis(
               isOpening: false,
               fontSize: fontSize,
-              color: Colors.white,
+              color: MathTextStyle.ink,
               textScaler: textScaler,
             ),
           ],
@@ -2148,7 +2197,9 @@ class MathRenderer extends StatelessWidget {
         children: [
           Text(
             'd',
-            style: MathTextStyle.getStyle(dxSize).copyWith(color: Colors.white),
+            style: MathTextStyle.getStyle(
+              dxSize,
+            ).copyWith(color: MathTextStyle.ink),
             textScaler: textScaler,
           ),
           varWidget,
@@ -2159,7 +2210,7 @@ class MathRenderer extends StatelessWidget {
         '∫',
         style: MathTextStyle.getStyle(
           fontSize * 1.4,
-        ).copyWith(color: Colors.white),
+        ).copyWith(color: MathTextStyle.ink),
         textScaler: textScaler,
       );
 
@@ -2171,7 +2222,7 @@ class MathRenderer extends StatelessWidget {
             ScalableParenthesis(
               isOpening: true,
               fontSize: fontSize,
-              color: Colors.white,
+              color: MathTextStyle.ink,
               textScaler: textScaler,
             ),
             Padding(
@@ -2189,7 +2240,7 @@ class MathRenderer extends StatelessWidget {
             ScalableParenthesis(
               isOpening: false,
               fontSize: fontSize,
-              color: Colors.white,
+              color: MathTextStyle.ink,
               textScaler: textScaler,
             ),
           ],
@@ -2423,7 +2474,7 @@ class MathRenderer extends StatelessWidget {
               'P',
               style: MathTextStyle.getStyle(
                 fontSize,
-              ).copyWith(color: Colors.white),
+              ).copyWith(color: MathTextStyle.ink),
               textScaler: textScaler,
             ),
             // r (subscript position)
@@ -2541,7 +2592,7 @@ class MathRenderer extends StatelessWidget {
               'C',
               style: MathTextStyle.getStyle(
                 fontSize,
-              ).copyWith(color: Colors.white),
+              ).copyWith(color: MathTextStyle.ink),
               textScaler: textScaler,
             ),
             // r (subscript position)
@@ -2960,8 +3011,28 @@ class LiteralWidget extends StatefulWidget {
 
 class _LiteralWidgetState extends State<LiteralWidget> {
   int _lastReportedVersion = -1;
+
+  /// The position reported alongside [_lastReportedVersion].
+  ///
+  /// The version alone is not enough. A node's index inside its sibling list
+  /// can change without the version moving — inserting a caret anchor beside
+  /// an atomic symbol used to do exactly that — and the registry is what taps
+  /// are resolved against, so a stale index sends the caret to the wrong node.
+  /// Reported separately so a shift repairs itself even if some future caller
+  /// forgets to bump the version.
+  int? _lastReportedIndex;
+  String? _lastReportedParentId;
+  String? _lastReportedPath;
+
   final GlobalKey _textKey = GlobalKey();
   bool _layoutRetryScheduled = false;
+
+  /// True when what is registered still describes this widget.
+  bool get _reportIsCurrent =>
+      _lastReportedVersion == widget.structureVersion &&
+      _lastReportedIndex == widget.index &&
+      _lastReportedParentId == widget.parentId &&
+      _lastReportedPath == widget.path;
 
   @override
   void initState() {
@@ -2974,14 +3045,17 @@ class _LiteralWidgetState extends State<LiteralWidget> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.structureVersion != widget.structureVersion ||
         oldWidget.node.id != widget.node.id ||
-        oldWidget.node.text != widget.node.text) {
+        oldWidget.node.text != widget.node.text ||
+        oldWidget.index != widget.index ||
+        oldWidget.parentId != widget.parentId ||
+        oldWidget.path != widget.path) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _reportLayout());
     }
   }
 
   void _reportLayout() {
     if (!mounted) return;
-    if (_lastReportedVersion == widget.structureVersion) return;
+    if (_reportIsCurrent) return;
 
     final RenderBox? box = laidOutBox(context);
     if (box == null || !box.attached) {
@@ -3020,6 +3094,9 @@ class _LiteralWidgetState extends State<LiteralWidget> {
     );
 
     _lastReportedVersion = widget.structureVersion;
+    _lastReportedIndex = widget.index;
+    _lastReportedParentId = widget.parentId;
+    _lastReportedPath = widget.path;
   }
 
   void _scheduleLayoutRetry() {
@@ -3029,7 +3106,7 @@ class _LiteralWidgetState extends State<LiteralWidget> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _layoutRetryScheduled = false;
       if (!mounted) return;
-      if (_lastReportedVersion == widget.structureVersion) return;
+      if (_reportIsCurrent) return;
       _reportLayout();
     });
   }
@@ -3055,7 +3132,7 @@ class _LiteralWidgetState extends State<LiteralWidget> {
       displayText,
       style: MathTextStyle.getStyle(
         widget.fontSize,
-      ).copyWith(color: Colors.white),
+      ).copyWith(color: MathTextStyle.ink),
       textScaler: widget.textScaler,
     );
   }
@@ -3149,8 +3226,14 @@ class _ComplexNodeWrapperState extends State<_ComplexNodeWrapper> {
   @override
   void didUpdateWidget(covariant _ComplexNodeWrapper oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // Position too, not just identity: a composite's index inside its sibling
+    // list can shift without the structure version moving, and selection
+    // resolves anchors through the index this registers.
     if (oldWidget.structureVersion != widget.structureVersion ||
-        oldWidget.node.id != widget.node.id) {
+        oldWidget.node.id != widget.node.id ||
+        oldWidget.index != widget.index ||
+        oldWidget.parentId != widget.parentId ||
+        oldWidget.path != widget.path) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _register());
     }
   }
@@ -3370,7 +3453,29 @@ class ComplexNodeInfo {
 /// Layout information for a literal node, used for cursor positioning.
 class NodeLayoutInfo {
   final Rect rect;
-  final LiteralNode node;
+
+  /// The node this box belongs to.
+  ///
+  /// Widened from `LiteralNode`: an atomic symbol — a constant, a unit vector,
+  /// z̲ — has to be in the registry to be selectable, and it is not a literal.
+  /// Readers must not assume there is text to index into; see [isAtomic].
+  final MathNode node;
+
+  /// True for a symbol that is one indivisible object: π, x̂, z̲.
+  ///
+  /// It has a box but no interior. Selection takes the whole of it and the
+  /// caret goes before or after it, never inside.
+  bool get isAtomic => node is! LiteralNode;
+
+  /// The literal this box belongs to, or null for an atomic symbol.
+  LiteralNode? get literal => node is LiteralNode ? node as LiteralNode : null;
+
+  /// The text to index into, empty for an atomic symbol.
+  ///
+  /// Empty is the truthful answer and the useful one: the callers already have
+  /// a path for a box with no text of its own, which is what an atomic symbol
+  /// is — selection takes the whole node and the caret goes to one side of it.
+  String get literalText => literal?.text ?? '';
   final String? parentId;
   final String? path;
   final int index;
@@ -3383,7 +3488,7 @@ class NodeLayoutInfo {
   String? _displayText;
   String get displayText =>
       _displayText ??= MathTextStyle.toDisplayText(
-        node.text,
+        literalText,
         forceLeadingOperatorPadding: forceLeadingOperatorPadding,
       );
 
@@ -3512,5 +3617,142 @@ class RenderCursorOverlay extends RenderProxyBox {
 
       context.canvas.drawRect(_notifier.rect.shift(offset), paint);
     }
+  }
+}
+
+/// Reports the box of a symbol that is one indivisible object: π, x̂, z̲.
+///
+/// These were drawn as bare `Text` and never entered the layout registry, so
+/// nothing could find them: a long press selected the nearest literal instead,
+/// and with one at the start of a cell there was no box to put the caret in
+/// front of. Only `LiteralWidget` reported, so only literals could be reached.
+///
+/// It registers a box and nothing else — no `renderParagraph`, because there
+/// is no interior to index into. The caret goes before or after; selection
+/// takes the whole node.
+class AtomWidget extends StatefulWidget {
+  const AtomWidget({
+    super.key,
+    required this.node,
+    required this.child,
+    required this.parentId,
+    required this.path,
+    required this.index,
+    required this.rootKey,
+    required this.controller,
+    required this.structureVersion,
+    required this.fontSize,
+    required this.textScaler,
+  });
+
+  final MathNode node;
+  final Widget child;
+  final String? parentId;
+  final String? path;
+  final int index;
+  final GlobalKey rootKey;
+  final MathEditorController controller;
+  final int structureVersion;
+  final double fontSize;
+  final TextScaler textScaler;
+
+  @override
+  State<AtomWidget> createState() => _AtomWidgetState();
+}
+
+class _AtomWidgetState extends State<AtomWidget> {
+  int? _lastReportedVersion;
+
+  /// See the same fields on `_LiteralWidgetState`: an index can move without
+  /// the version moving, and a stale index in the registry mislocates taps.
+  int? _lastReportedIndex;
+  String? _lastReportedParentId;
+  String? _lastReportedPath;
+
+  bool _retryScheduled = false;
+
+  bool get _reportIsCurrent =>
+      _lastReportedVersion == widget.structureVersion &&
+      _lastReportedIndex == widget.index &&
+      _lastReportedParentId == widget.parentId &&
+      _lastReportedPath == widget.path;
+
+  @override
+  void initState() {
+    super.initState();
+    // Reported from here rather than only from `build`, which runs before this
+    // subtree has been laid out.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _report());
+  }
+
+  @override
+  void didUpdateWidget(covariant AtomWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.structureVersion != widget.structureVersion ||
+        oldWidget.node.id != widget.node.id ||
+        oldWidget.index != widget.index ||
+        oldWidget.parentId != widget.parentId ||
+        oldWidget.path != widget.path) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _report());
+    }
+  }
+
+  void _scheduleRetry() {
+    if (_retryScheduled) return;
+    _retryScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _retryScheduled = false;
+      if (mounted) _report();
+    });
+  }
+
+  void _report() {
+    if (!mounted) return;
+    if (_reportIsCurrent) return;
+
+    final RenderBox? box = laidOutBox(context);
+    if (box == null || !box.attached) {
+      _scheduleRetry();
+      return;
+    }
+    final RenderBox? rootBox = laidOutBox(widget.rootKey.currentContext);
+    if (rootBox == null || !rootBox.attached) {
+      _scheduleRetry();
+      return;
+    }
+
+    final Offset relative = rootBox.globalToLocal(
+      box.localToGlobal(Offset.zero),
+    );
+    widget.controller.registerNodeLayout(
+      NodeLayoutInfo(
+        rect: relative & box.size,
+        node: widget.node,
+        parentId: widget.parentId,
+        path: widget.path,
+        index: widget.index,
+        fontSize: widget.fontSize,
+        textScaler: widget.textScaler,
+        renderParagraph: null,
+        forceLeadingOperatorPadding: false,
+      ),
+    );
+    _lastReportedVersion = widget.structureVersion;
+    _lastReportedIndex = widget.index;
+    _lastReportedParentId = widget.parentId;
+    _lastReportedPath = widget.path;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Deliberately not reporting from here.
+    //
+    // `build` runs before this frame's layout, so the render box still holds
+    // last frame's geometry. In a release build `laidOutBox` cannot see the
+    // pending-layout flag — that check is inside an `assert` — so the stale
+    // rect was accepted, stamped with the current version, and the correct
+    // post-frame report was then skipped as a duplicate. Reporting only from
+    // `initState`, `didUpdateWidget` and the retry keeps every rect measured.
+    return widget.child;
   }
 }

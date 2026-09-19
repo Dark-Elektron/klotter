@@ -1,5 +1,6 @@
 import 'dart:math' show exp;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:klotter/widgets/confirm_clear_dialog.dart';
@@ -403,6 +404,33 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @visibleForTesting
   bool removeActiveRowForTest() => _removeActiveRow();
 
+  /// How many rows a plot holds, for tests that care about the row model
+  /// surviving something — undo, restore, a page change.
+  @visibleForTesting
+  int rowCountForTest(int plot) => _rows[plot]?.length ?? 0;
+
+  @visibleForTesting
+  int get countForTest => count;
+
+  @visibleForTesting
+  int get activeIndexForTest => activeIndex;
+
+  @visibleForTesting
+  int get undoDepthForTest => _appUndoStack.length;
+
+  /// Every row of a cell as plain text, for tests that describe what the user
+  /// would see rather than a node tree.
+  @visibleForTesting
+  String textOfCellForTest(int plot) => <String>[
+    for (final ExpressionRow r in rowsOf(plot))
+      r.controller.expression
+          .map((MathNode n) => n is LiteralNode ? n.text : '~')
+          .join(),
+  ].join('/');
+
+  @visibleForTesting
+  void addRowForTest() => _addRow();
+
   @visibleForTesting
   void addDisplayForTest({int? insertAt}) => _addDisplay(insertAt: insertAt);
 
@@ -462,6 +490,19 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     row.controller.addListener(() {
       final int? plot = _plotOfRow(row);
       if (plot != null) _autoScrollToEnd(plot);
+      // Undo points are taken here, where the editing actually happens.
+      //
+      // They used to be taken at the end of `updateMathEditor`, on the belief
+      // that every edit passed through it. Most do not: typing reached the
+      // controller and changed the expression without that hook running at
+      // all, so whole runs of keystrokes — and everything typed after a new
+      // cell was added — left no history behind. Undo then jumped back to
+      // whatever the last recorded state happened to be, which looked like it
+      // deleted the cell rather than the last character.
+      //
+      // A controller notifies for caret moves too, but the signature is built
+      // from expressions alone, so those compare equal and record nothing.
+      _recordHistoryPoint();
     });
   }
 
@@ -948,6 +989,10 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
           initialView: _restoredViews[index] ?? PlotViewState.initial,
           coordinateSystem: _variableSystem,
           onViewChanged: (view) => _restoredViews[index] = view,
+          onRowErrors: (Map<int, String> byRow) {
+            if (mapEquals(_rowErrors[index], byRow)) return;
+            setState(() => _rowErrors[index] = byRow);
+          },
         ),
       ),
     );
@@ -1108,8 +1153,41 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   /// Reads the same palette entry the painters do, by row number, so the dot
   /// and the curve cannot disagree. Tapping it moves the caret to that row,
   /// which makes the whole left edge a way of choosing what to edit.
+  /// Which rows of which plot could not be drawn, and why.
+  final Map<int, Map<int, String>> _rowErrors = <int, Map<int, String>>{};
+
   Widget _rowSwatch(int plot, ExpressionRow row, int r) {
     final Color colour = _rowTheme.seriesColor(r);
+    final String? trouble = _rowErrors[plot]?[r];
+
+    // A row that cannot be drawn says so on its own dot. The banner over the
+    // plot names the first problem but not the line it belongs to, which with
+    // several rows stacked is the half you need.
+    if (trouble != null) {
+      return GestureDetector(
+        onTap: () {
+          if (activeIndex != plot || activeRow != r) {
+            setState(() {
+              activeIndex = plot;
+              activeRow = r;
+            });
+          }
+        },
+        behavior: HitTestBehavior.opaque,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          child: Tooltip(
+            message: trouble,
+            child: Icon(
+              Icons.error_outline,
+              size: 13,
+              color: _rowTheme.errorMark,
+            ),
+          ),
+        ),
+      );
+    }
+
     return GestureDetector(
       onTap: () {
         if (activeIndex != plot || activeRow != r) {
@@ -2004,21 +2082,40 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     resultPageProgressNotifiers.clear();
     exactResultVersionNotifiers.clear();
 
-    for (int i = 0; i < state.expressions.length; i++) {
+    for (int i = 0; i < state.cells.length; i++) {
+      // Makes the cell with one row; the rest are added back beside it.
       _createControllers(i);
-      mathEditorControllers[i]?.setExpression(
-        MathClipboard.deepCopyNodes(state.expressions[i]),
-      );
+
+      final List<RowState> saved = state.cells[i];
+      final List<ExpressionRow> live = _rows[i] ?? <ExpressionRow>[];
+      while (live.length < saved.length) {
+        final ExpressionRow extra = ExpressionRow(id: ExpressionRowIds.take());
+        _bindRow(extra);
+        live.add(extra);
+      }
+      _rows[i] = live;
+
+      for (int r = 0; r < saved.length; r++) {
+        live[r].controller.setExpression(
+          MathClipboard.deepCopyNodes(saved[r].nodes),
+        );
+        live[r].visible = saved[r].visible;
+      }
+
       textDisplayControllers[i]?.text = state.answers[i];
     }
 
-    if (state.expressions.isEmpty) {
+    if (state.cells.isEmpty) {
       _createControllers(0);
     }
 
     setState(() {
-      count = state.expressions.isEmpty ? 1 : state.expressions.length;
+      count = state.cells.isEmpty ? 1 : state.cells.length;
       activeIndex = state.activeIndex.clamp(0, count - 1);
+      // Clamped against the cell it lands in, which may hold fewer rows than
+      // the one the caret was in when this state was recorded.
+      final int rowsHere = _rows[activeIndex]?.length ?? 1;
+      activeRow = state.activeRow.clamp(0, rowsHere - 1);
     });
 
     updateMathEditor();
@@ -2038,12 +2135,27 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   /// itself as a fresh edit.
   bool _restoringHistory = false;
 
+  /// Every row of every cell, in the shape undo remembers.
+  ///
+  /// Taken from `_rows` rather than from `mathEditorControllers`, which holds
+  /// only each cell's *active* row — capturing through it remembered one row
+  /// per cell, so undo rebuilt each cell with a single row and dropped the
+  /// others.
+  Map<int, List<RowState>> get _rowsForHistory => <int, List<RowState>>{
+    for (final MapEntry<int, List<ExpressionRow>> e in _rows.entries)
+      e.key: <RowState>[
+        for (final ExpressionRow r in e.value)
+          RowState(nodes: r.controller.expression, visible: r.visible),
+      ],
+  };
+
   /// Note the current state as the baseline, without recording an undo step.
   void _syncHistoryMark() {
     _historyMark = AppState.capture(
-      mathEditorControllers,
+      _rowsForHistory,
       textDisplayControllers,
       activeIndex,
+      activeRow,
     );
     _historySignature = _historyMark!.signature;
   }
@@ -2056,9 +2168,10 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (_restoringHistory) return;
 
     final AppState current = AppState.capture(
-      mathEditorControllers,
+      _rowsForHistory,
       textDisplayControllers,
       activeIndex,
+      activeRow,
     );
     final String signature = current.signature;
 
@@ -2083,9 +2196,10 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void _saveAppStateForUndo() {
     _appUndoStack.add(
       AppState.capture(
-        mathEditorControllers,
+        _rowsForHistory,
         textDisplayControllers,
         activeIndex,
+        activeRow,
       ),
     );
 
@@ -2117,9 +2231,10 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     // Save current state to redo stack
     _appRedoStack.add(
       AppState.capture(
-        mathEditorControllers,
+        _rowsForHistory,
         textDisplayControllers,
         activeIndex,
+        activeRow,
       ),
     );
 
@@ -2140,9 +2255,10 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     // Save current state to undo stack
     _appUndoStack.add(
       AppState.capture(
-        mathEditorControllers,
+        _rowsForHistory,
         textDisplayControllers,
         activeIndex,
+        activeRow,
       ),
     );
 

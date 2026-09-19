@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'sumprod_symbol.dart';
 import 'dart:math' as math;
 import 'math_nodes.dart';
+import 'complex_variable_glyph.dart';
 import 'math_text_style.dart';
 import '../utils/constants.dart';
 
@@ -185,9 +186,9 @@ class MathResultDisplay extends StatelessWidget {
     // thing. The node extends UnitVectorNode so the editor treats it as one
     // indivisible glyph; what it *looks* like has to be decided before that.
     if (node is ComplexVariableNode) {
-      return Text(
-        'z',
-        style: MathTextStyle.complexVariableStyle(fontSize, textColor),
+      return ComplexVariableGlyph(
+        fontSize: fontSize,
+        color: textColor,
         textScaler: textScaler,
       );
     }

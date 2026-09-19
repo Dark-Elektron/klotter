@@ -233,11 +233,43 @@ class MathEditorController extends ChangeNotifier {
     _layoutRegistry[info.node.id] = info;
     _layoutIndex[_makeLayoutKey(info.parentId, info.path, info.index)] = info;
 
+    // The bounds are derived from this registry, so a new box makes the cached
+    // ones wrong. They were only invalidated when the registry was cleared,
+    // and the registry fills over several frames — the retry path in
+    // `_LiteralWidgetState` spreads it out — so a read landing mid-fill cached
+    // a rectangle covering only the nodes that had reported so far, and kept
+    // it until the next structure change. `_processTap` decides "tapped past
+    // the left/right edge" from these, so a tap in the middle of a long
+    // expression could be read as a tap past its end.
+    _contentBoundsValid = false;
+    _cachedContentBounds = null;
+
     _tryUpdateCursorRectFor(info);
   }
 
   void registerComplexNodeLayout(ComplexNodeInfo info) {
     _complexNodeMap[info.node.id] = info;
+  }
+
+  /// Puts the caret where the current cursor position actually is.
+  ///
+  /// The rect is otherwise only refreshed opportunistically, as each node
+  /// reports its layout: [_tryUpdateCursorRectFor] updates it when the node
+  /// registering happens to be the one the cursor sits in. That covers typing,
+  /// where the cursor moves to a node that is about to lay out anyway, but not
+  /// a fresh build — reopening the app rebuilds every row from storage with a
+  /// cursor already set, and if no registering node matches it, the caret
+  /// keeps whatever rect it had and is drawn away from the expression.
+  ///
+  /// Safe to call at any time: with nothing registered yet it leaves the rect
+  /// alone rather than guessing.
+  void recalculateCursorPosition() {
+    if (_layoutRegistry.isEmpty) return;
+    final EditorCursor at = _cursorNotifier.value;
+    final NodeLayoutInfo? info =
+        _layoutIndex[_makeLayoutKey(at.parentId, at.path, at.index)];
+    if (info == null) return;
+    _tryUpdateCursorRectFor(info);
   }
 
   void clearLayoutRegistry() {
@@ -258,7 +290,7 @@ class MathEditorController extends ChangeNotifier {
       return;
     }
 
-    final text = info.node.text;
+    final text = info.literalText;
     final charIndex = cursor.subIndex.clamp(0, text.length);
     double cursorX;
 
@@ -314,7 +346,44 @@ class MathEditorController extends ChangeNotifier {
     return char.isNotEmpty && '0123456789.'.contains(char);
   }
 
+  /// Caret anchors inserted by a cursor move that has not been published yet.
+  ///
+  /// Moving past an atomic symbol, or into a field whose edge is not a
+  /// literal, has to insert an empty literal for the caret to sit in —
+  /// [_positionAfterAtomic] and the four helpers around it all do it. That is
+  /// a change to the tree, but the callers are cursor movements and they only
+  /// ever called `notifyListeners`, which does not bump [structureVersion].
+  ///
+  /// Nothing downstream then noticed. The layout registry is only cleared on a
+  /// version change, and each node re-reports its box only when the version
+  /// changes, so every sibling after the insertion kept the index it had
+  /// before — off by one for the rest of the session. Taps resolved to the
+  /// node before the one touched, and the character went in the wrong place.
+  ///
+  /// Counted here rather than threaded back through the sixty-odd call sites
+  /// of those helpers; [notifyListeners] drains it.
+  int _pendingCaretAnchors = 0;
+
+  /// Publishes a change, upgrading a plain notify to a structure change when
+  /// the work that led here inserted a caret anchor.
+  ///
+  /// Overridden rather than added as a second method so that no caller can
+  /// forget: every path out of the editor ends in a notify, and the ones that
+  /// insert an anchor are spread across the delete handlers, the arrow keys
+  /// and the structure-exit helpers.
+  @override
+  void notifyListeners() {
+    if (_pendingCaretAnchors > 0) {
+      _pendingCaretAnchors = 0;
+      _structureVersion++;
+      _rebuildComplexNodeMap();
+    }
+    super.notifyListeners();
+  }
+
   void _notifyStructureChanged() {
+    // Folded into this bump rather than counted twice.
+    _pendingCaretAnchors = 0;
     _structureVersion++;
     _rebuildComplexNodeMap();
     notifyListeners();
@@ -397,7 +466,22 @@ class MathEditorController extends ChangeNotifier {
 
   void _processTapAtNode(NodeLayoutInfo info, Offset position) {
     _lastTappedNode = info;
-    final text = info.node.text;
+
+    // A symbol that is one object — π, x̂, z̲, ε₀ — has a box but no interior,
+    // so the caret goes to one side of it and never inside it.
+    //
+    // Falling through to the code below put the cursor on the atom's own
+    // index, which is a position nothing can edit: `_updateLiteralAtCursor`
+    // resolves a non-literal and does nothing, `deleteChar` returns, and
+    // `moveRight` is wrapped in a literal test and cannot escape. Tapping a
+    // constant left the keypad apparently dead until the caret was moved some
+    // other way, which is what made it look intermittent.
+    if (info.isAtomic) {
+      _placeCaretBesideAtom(info, position);
+      return;
+    }
+
+    final text = info.literalText;
     int charIndex;
     double cursorX;
 
@@ -468,6 +552,43 @@ class MathEditorController extends ChangeNotifier {
     cursorPaintNotifier.updateRectDirect(
       Rect.fromLTWH(cursorX, info.rect.top, 2, info.rect.height),
     );
+  }
+
+  /// Put the caret on the side of an atomic symbol the tap fell on.
+  ///
+  /// The symbol's live index is looked up rather than taken from [info],
+  /// because a registered box carries the index it had when it was measured
+  /// and the caret helpers insert into the list they are handed — using a
+  /// stale index here would anchor the caret to the wrong sibling.
+  void _placeCaretBesideAtom(NodeLayoutInfo info, Offset position) {
+    final _ParentListInfo? place = _findParentListOf(info.node.id);
+    if (place == null) return;
+
+    final bool after = position.dx >= info.rect.center.dx;
+    if (after) {
+      _positionAfterAtomic(place.list, place.index, place.parentId, place.path);
+    } else {
+      _positionBeforeAtomic(
+        place.list,
+        place.index,
+        place.parentId,
+        place.path,
+      );
+    }
+
+    // Close enough to avoid a visible jump; the exact rect arrives when the
+    // anchor literal reports its box.
+    cursorPaintNotifier.updateRectDirect(
+      Rect.fromLTWH(
+        after ? info.rect.right : info.rect.left,
+        info.rect.top,
+        2,
+        info.rect.height,
+      ),
+    );
+
+    // Upgrades itself to a structure change when an anchor had to be made.
+    notifyListeners();
   }
 
   /// Put the caret at the start of the line, for a tap off the left edge.
@@ -549,7 +670,7 @@ class MathEditorController extends ChangeNotifier {
 
     if (rightmostInfo == null) return;
 
-    final text = rightmostInfo.node.text;
+    final text = rightmostInfo.literalText;
     final charIndex = text.length;
 
     double cursorX;
@@ -630,6 +751,11 @@ class MathEditorController extends ChangeNotifier {
       return;
     }
 
+    // Everything above this line either wraps the selection or hands off to a
+    // method that consumes it itself. From here the character is a plain
+    // insertion, and a plain insertion replaces what is selected.
+    _consumeSelectionForInsert();
+
     // === NEW: Exit container nodes when typing operators ===
     if (_isOperator(char)) {
       _exitContainerIfNeeded();
@@ -673,10 +799,15 @@ class MathEditorController extends ChangeNotifier {
 
   /// Set expression from loaded data
   void setExpression(List<MathNode> nodes) {
-    expression = nodes;
-    _rebuildComplexNodeMap(); // Add this line
-
     expression = nodes.isNotEmpty ? nodes : [LiteralNode()];
+    // Built from the list that is actually kept, not from the argument: an
+    // empty argument is replaced above, and mapping the empty one left the
+    // map describing a tree that was never displayed.
+    _rebuildComplexNodeMap();
+
+    // The old range refers to nodes that are no longer in the tree.
+    clearSelection(notify: false);
+
     expr = MathExpressionSerializer.serialize(expression);
     _structureVersion++;
     // Position cursor at end of root expression
@@ -694,6 +825,10 @@ class MathEditorController extends ChangeNotifier {
       index: lastIndex,
       subIndex: subIndex,
     );
+    // An expression that ends in a fraction, a root or a constant leaves the
+    // caret on a node nothing can type into — which on a restored row means
+    // the keypad is dead from launch until the caret is moved some other way.
+    _ensureCursorInLiteral();
     notifyListeners();
   }
 
@@ -774,6 +909,7 @@ class MathEditorController extends ChangeNotifier {
   // ============= NODE INSERT FUNCTIONS ==============
   void insertSquare() {
     saveStateForUndo();
+    _consumeSelectionForInsert();
 
     final siblings = _resolveSiblingList();
     final current = _resolveCursorNode();
@@ -894,6 +1030,7 @@ class MathEditorController extends ChangeNotifier {
 
   void insertConstant(String constant) {
     saveStateForUndo();
+    _consumeSelectionForInsert();
 
     final siblings = _resolveSiblingList();
     final current = _resolveCursorNode();
@@ -981,6 +1118,7 @@ class MathEditorController extends ChangeNotifier {
 
   void insertUnitVector(String axis, {bool complexVariable = false}) {
     saveStateForUndo();
+    _consumeSelectionForInsert();
 
     final siblings = _resolveSiblingList();
     final current = _resolveCursorNode();
@@ -1053,6 +1191,7 @@ class MathEditorController extends ChangeNotifier {
 
   void insertTrig(String function) {
     saveStateForUndo();
+    _consumeSelectionForInsert();
 
     final siblings = _resolveSiblingList();
     final current = _resolveCursorNode();
@@ -1089,6 +1228,7 @@ class MathEditorController extends ChangeNotifier {
 
   void insertSquareRoot() {
     saveStateForUndo();
+    _consumeSelectionForInsert();
 
     final siblings = _resolveSiblingList();
     final current = _resolveCursorNode();
@@ -1126,6 +1266,7 @@ class MathEditorController extends ChangeNotifier {
 
   void insertNthRoot() {
     saveStateForUndo();
+    _consumeSelectionForInsert();
     final siblings = _resolveSiblingList();
     final current = _resolveCursorNode();
     if (current is! LiteralNode) return;
@@ -1163,6 +1304,7 @@ class MathEditorController extends ChangeNotifier {
 
   void insertLog10() {
     saveStateForUndo();
+    _consumeSelectionForInsert();
     final siblings = _resolveSiblingList();
     final current = _resolveCursorNode();
     if (current is! LiteralNode) return;
@@ -1200,6 +1342,7 @@ class MathEditorController extends ChangeNotifier {
 
   void insertLogN() {
     saveStateForUndo();
+    _consumeSelectionForInsert();
     final siblings = _resolveSiblingList();
     final current = _resolveCursorNode();
     if (current is! LiteralNode) return;
@@ -1237,6 +1380,7 @@ class MathEditorController extends ChangeNotifier {
 
   void insertNaturalLog() {
     saveStateForUndo();
+    _consumeSelectionForInsert();
     final siblings = _resolveSiblingList();
     final current = _resolveCursorNode();
     if (current is! LiteralNode) return;
@@ -1270,6 +1414,7 @@ class MathEditorController extends ChangeNotifier {
 
   void insertAns() {
     saveStateForUndo();
+    _consumeSelectionForInsert();
     final siblings = _resolveSiblingList();
     final current = _resolveCursorNode();
     if (current is! LiteralNode) return;
@@ -1469,6 +1614,7 @@ class MathEditorController extends ChangeNotifier {
 
   void insertPermutation() {
     saveStateForUndo();
+    _consumeSelectionForInsert();
 
     // Check if we're inside a container that should be wrapped entirely
     if (cursor.parentId != null) {
@@ -1600,6 +1746,7 @@ class MathEditorController extends ChangeNotifier {
 
   void insertCombination() {
     saveStateForUndo();
+    _consumeSelectionForInsert();
 
     // Check if we're inside a container that should be wrapped entirely
     if (cursor.parentId != null) {
@@ -1718,6 +1865,7 @@ class MathEditorController extends ChangeNotifier {
 
   void insertSummation() {
     saveStateForUndo();
+    _consumeSelectionForInsert();
     final siblings = _resolveSiblingList();
     final current = _resolveCursorNode();
     if (current is! LiteralNode) return;
@@ -1757,6 +1905,7 @@ class MathEditorController extends ChangeNotifier {
 
   void insertProduct() {
     saveStateForUndo();
+    _consumeSelectionForInsert();
     final siblings = _resolveSiblingList();
     final current = _resolveCursorNode();
     if (current is! LiteralNode) return;
@@ -1796,6 +1945,7 @@ class MathEditorController extends ChangeNotifier {
 
   void insertDerivative({bool definite = false}) {
     saveStateForUndo();
+    _consumeSelectionForInsert();
     final siblings = _resolveSiblingList();
     final current = _resolveCursorNode();
     if (current is! LiteralNode) return;
@@ -1835,6 +1985,7 @@ class MathEditorController extends ChangeNotifier {
 
   void insertIntegral({bool definite = false}) {
     saveStateForUndo();
+    _consumeSelectionForInsert();
     final siblings = _resolveSiblingList();
     final current = _resolveCursorNode();
     if (current is! LiteralNode) return;
@@ -3201,7 +3352,7 @@ class MathEditorController extends ChangeNotifier {
     }
 
     // Calculate cursor position
-    final text = info.node.text;
+    final text = info.literalText;
     final charIndex = c.subIndex.clamp(0, text.length);
     double cursorX;
 
@@ -3242,6 +3393,61 @@ class MathEditorController extends ChangeNotifier {
   void _updateLiteralAtCursor(void Function(LiteralNode) edit) {
     final node = _resolveCursorNode();
     if (node is LiteralNode) edit(node);
+  }
+
+  /// Replace a live selection with whatever is about to be inserted.
+  ///
+  /// Typing over a selection replaces it, as in any text field. Only
+  /// `deleteChar`, `pasteClipboard` and the parenthesis key used to check:
+  /// every other key inserted at the caret and left the selection standing,
+  /// still highlighted, so the next backspace deleted the old selection
+  /// instead of the character just typed. After a select-all that is the whole
+  /// expression.
+  ///
+  /// Callers snapshot for undo first, so the replacement is one undo step.
+  /// This deliberately does not snapshot itself.
+  void _consumeSelectionForInsert() {
+    if (!hasSelection) return;
+    deleteSelection();
+  }
+
+  /// Move the caret off a node it cannot edit.
+  ///
+  /// A cursor whose index lands on anything but a literal is inert: both
+  /// `_updateLiteralAtCursor` and `deleteChar` resolve a non-literal and
+  /// return without doing anything, so the keypad looks dead. Deleting a
+  /// selection can land there — the literal the caret was going to sit in may
+  /// be one of the nodes that just went — so it is checked in one place rather
+  /// than trusted at each.
+  void _ensureCursorInLiteral() {
+    final List<MathNode> siblings = _resolveSiblingList();
+    if (siblings.isEmpty) return;
+
+    final int index = cursor.index;
+    if (index >= 0 &&
+        index < siblings.length &&
+        siblings[index] is LiteralNode) {
+      return;
+    }
+
+    if (index >= siblings.length) {
+      // Past the end: anchor after the last node, making a literal when the
+      // list ends on something else.
+      _positionAfterAtomic(
+        siblings,
+        siblings.length - 1,
+        cursor.parentId,
+        cursor.path,
+      );
+      return;
+    }
+
+    _positionBeforeAtomic(
+      siblings,
+      index.clamp(0, siblings.length - 1),
+      cursor.parentId,
+      cursor.path,
+    );
   }
 
   MathNode? _resolveCursorNode() {
@@ -3719,6 +3925,9 @@ class MathEditorController extends ChangeNotifier {
     expression = [LiteralNode()];
     result = '';
     cursor = const EditorCursor(); // Reset cursor to initial state
+    // The range pointed at nodes that no longer exist; left standing, the next
+    // backspace deleted "the selection" out of the fresh literal.
+    clearSelection(notify: false);
     _notifyStructureChanged();
   }
 
@@ -4211,13 +4420,16 @@ class MathEditorController extends ChangeNotifier {
   void _ensureLiteralEdges(List<MathNode> nodes) {
     if (nodes.isEmpty) {
       nodes.add(LiteralNode(text: ""));
+      _pendingCaretAnchors++;
       return;
     }
     if (nodes.first is! LiteralNode) {
       nodes.insert(0, LiteralNode(text: ""));
+      _pendingCaretAnchors++;
     }
     if (nodes.last is! LiteralNode) {
       nodes.add(LiteralNode(text: ""));
+      _pendingCaretAnchors++;
     }
   }
 
@@ -4266,6 +4478,7 @@ class MathEditorController extends ChangeNotifier {
     } else if (lastNode is ConstantNode || lastNode is UnitVectorNode) {
       final insertIndex = lastIndex + 1;
       nodes.insert(insertIndex, LiteralNode(text: ""));
+      _pendingCaretAnchors++;
       cursor = EditorCursor(
         parentId: parentId,
         path: path,
@@ -4326,6 +4539,7 @@ class MathEditorController extends ChangeNotifier {
       _moveCursorToStartOfList(firstNode.index, firstNode.id, 'index');
     } else if (firstNode is ConstantNode || firstNode is UnitVectorNode) {
       nodes.insert(0, LiteralNode(text: ""));
+      _pendingCaretAnchors++;
       cursor = EditorCursor(
         parentId: parentId,
         path: path,
@@ -4476,6 +4690,7 @@ class MathEditorController extends ChangeNotifier {
     final nextIndex = atomicIndex + 1;
     if (nextIndex >= siblings.length || siblings[nextIndex] is! LiteralNode) {
       siblings.insert(nextIndex, LiteralNode(text: ""));
+      _pendingCaretAnchors++;
     }
     cursor = EditorCursor(
       parentId: parentId,
@@ -4505,6 +4720,7 @@ class MathEditorController extends ChangeNotifier {
       );
     } else {
       siblings.insert(atomicIndex, LiteralNode(text: ""));
+      _pendingCaretAnchors++;
       cursor = EditorCursor(
         parentId: parentId,
         path: path,
@@ -4535,16 +4751,22 @@ class MathEditorController extends ChangeNotifier {
             // Composite previous sibling: step into the end of its last field.
             _moveCursorIntoNodeEnd(prevNode);
           } else {
-            // Atomic previous sibling (constant/unit vector/newline): the caret
-            // sits between it and the target.
-            cursor = EditorCursor(
-              parentId: grandParentId,
-              path: path,
-              index: i,
-              subIndex: 0,
-            );
+            // Atomic previous sibling (constant/unit vector/newline): the
+            // caret sits between it and the target.
+            //
+            // Not on index i, which is the target itself: when the target is
+            // anything but a literal that is a position nothing can type into
+            // or delete from. This reuses the target when it is a literal and
+            // makes an anchor between the two when it is not.
+            _positionAfterAtomic(nodes, i - 1, grandParentId, path);
           }
         } else {
+          // Before the first sibling. The caret needs a literal to sit in, so
+          // make one when the target itself is not one.
+          if (nodes[i] is! LiteralNode) {
+            nodes.insert(0, LiteralNode(text: ""));
+            _pendingCaretAnchors++;
+          }
           cursor = EditorCursor(
             parentId: grandParentId,
             path: path,
@@ -4579,15 +4801,21 @@ class MathEditorController extends ChangeNotifier {
       if (nodes[i].id == targetId) {
         if (i < nodes.length - 1) {
           final nextNode = nodes[i + 1];
-          if (_childListsOf(nextNode).isEmpty) {
-            // Literal or atomic (constant/unit vector/newline): caret sits
-            // just before the next sibling.
+          if (nextNode is LiteralNode) {
+            // The caret goes at the head of the literal that follows.
             cursor = EditorCursor(
               parentId: grandParentId,
               path: path,
               index: i + 1,
               subIndex: 0,
             );
+          } else if (_childListsOf(nextNode).isEmpty) {
+            // Atomic (constant/unit vector/newline): there is nothing to step
+            // into and nothing to type into, and the old code parked the
+            // caret on the symbol's own index — a position `insertCharacter`
+            // and `deleteChar` both silently ignore. Anchor on the literal
+            // before it, which is the node this call is positioning after.
+            _positionBeforeAtomic(nodes, i + 1, grandParentId, path);
           } else {
             _moveCursorIntoNodeStart(nextNode);
           }
@@ -5504,6 +5732,22 @@ class MathEditorController extends ChangeNotifier {
     final siblings = _resolveSiblingList();
     final node = _resolveCursorNode();
 
+    // A cursor that is not in a literal should no longer be reachable, but if
+    // one ever is again this is the only key that can get out of it: the whole
+    // body below is a literal branch, so without this the caret simply stops
+    // responding to the right arrow. Left is already recoverable because it
+    // steps by index rather than by character.
+    if (node != null && node is! LiteralNode) {
+      _positionAfterAtomic(
+        siblings,
+        cursor.index,
+        cursor.parentId,
+        cursor.path,
+      );
+      notifyListeners();
+      return;
+    }
+
     if (node is LiteralNode) {
       if (cursor.subIndex < node.text.length) {
         cursor = cursor.copyWith(subIndex: cursor.subIndex + 1);
@@ -6039,6 +6283,11 @@ class MathEditorController extends ChangeNotifier {
         subIndex: 0,
       );
     }
+
+    // Several branches above can leave the caret on a composite — the literal
+    // it was going to sit in may be one of the nodes just removed — and that
+    // is a position nothing can type into.
+    _ensureCursorInLiteral();
 
     // Clear selection FIRST, then notify
     _selection = null;

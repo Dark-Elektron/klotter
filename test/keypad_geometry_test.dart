@@ -253,8 +253,11 @@ void main() {
       final double redoX = tester.getCenter(undoRedo.last).dx;
       final double undoY = tester.getCenter(undoRedo.first).dy;
 
-      expect(x('i'), lessThan(x('sin')));
-      expect(x('sin'), lessThan(undoX));
+      // sin and asin lead the block, with i and π one column to their right.
+      // They were the fourth column, which put the keys reached most often in
+      // the middle of the block rather than at the edge.
+      expect(x('sin'), lessThan(x('i')));
+      expect(x('i'), lessThan(undoX));
       expect(undoX, lessThan(redoX));
       expect(redoX, lessThan(x('⌧')));
       expect(undoY, closeTo(y('i'), 2));

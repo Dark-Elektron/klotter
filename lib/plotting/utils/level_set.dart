@@ -1,3 +1,7 @@
+import 'dart:math';
+import 'dart:typed_data';
+
+import '../models/plane_slice.dart';
 import '../models/point_3d.dart';
 import '../parsers/plot_expression.dart';
 
@@ -6,6 +10,16 @@ typedef LevelSegment = ({double x1, double y1, double x2, double y2});
 
 /// A triangle of an implicit surface, in data coordinates.
 typedef LevelTriangle = ({Point3D a, Point3D b, Point3D c});
+
+/// A marched surface: its triangles, and the unit surface normal at each of
+/// their corners — nine floats a triangle, `(x, y, z)` per vertex, in the same
+/// data coordinates as the triangles.
+///
+/// Packed floats rather than three more [Point3D] on [LevelTriangle]. The
+/// marched result is cached, and a hyperboloid marches to 33,000 triangles, so
+/// carrying normals as objects would have put another 100,000 of them in the
+/// cache per entry; as floats it is 1.2 MB and no allocations at all.
+typedef LevelSurface = ({List<LevelTriangle> triangles, Float32List normals});
 
 /// Remembers the last few marched results.
 ///
@@ -40,8 +54,7 @@ class _MarchCache<T> {
 
 final _MarchCache<List<LevelSegment>> _squaresCache =
     _MarchCache<List<LevelSegment>>(4);
-final _MarchCache<List<LevelTriangle>> _tetsCache =
-    _MarchCache<List<LevelTriangle>>(3);
+final _MarchCache<LevelSurface> _tetsCache = _MarchCache<LevelSurface>(3);
 
 /// Identity of the expression plus the box, which is all the geometry depends
 /// on. The expression is compiled once per edit, so its identity is a sound
@@ -58,6 +71,81 @@ double _crossing(double fa, double fb) {
   final double d = fa - fb;
   if (d == 0 || !d.isFinite) return 0.5;
   return (fa / d).clamp(0.0, 1.0);
+}
+
+/// How many times a crossing is corrected before it is kept.
+///
+/// Linear interpolation places a crossing by pretending f runs straight
+/// between the two samples, and on anything steep it does not. The error is
+/// small measured against the lattice — a twentieth of a cell — which is how
+/// it went unnoticed, but a cell is about 22 screen pixels at phone width, so
+/// on `x⁴+y⁴+z⁴−x²−y²−z²+0.4` the surface and the grid drawn on it wandered
+/// 1.95 px at the median and 6.18 px at the worst, either side of a line 1.8 px
+/// wide. That is the jaggedness.
+///
+/// Two steps of a guarded secant, which keeps the bracket the sign change
+/// gives, take that surface to 0.02 px at the median and 0.45 px at its worst
+/// — under a pixel everywhere. A third step reaches 0.003 px, which no screen
+/// can show.
+///
+/// It costs two evaluations of the expression per crossing edge. On the march
+/// that is +63% for the surface above and +130% for the densest one measured,
+/// in the test VM; compiled it is nearer +6% and +40%, since what is added is
+/// expression evaluation and what is already there is mostly array work. None
+/// of it is paid per frame either way: the march is cached against the window,
+/// so it runs when the box changes and not while the plot is being turned.
+const int _crossingRefinements = 2;
+
+/// Where f actually crosses zero on the segment from a to b.
+///
+/// [fa] is negative and [fb] is not, so the root is bracketed to begin with and
+/// every step keeps it bracketed: a secant step is taken only when it lands
+/// inside the bracket, and bisection is used when it does not. That is what
+/// stops a steep or badly behaved f from throwing the crossing off the edge
+/// entirely, which plain secant iteration will do.
+double _solveCrossing(
+  PlotExpression f,
+  double ax,
+  double ay,
+  double az,
+  double bx,
+  double by,
+  double bz,
+  double fa,
+  double fb,
+) {
+  if (fa == 0) return 0;
+  if (fb == 0) return 1;
+
+  double t = _crossing(fa, fb);
+  double lo = 0;
+  double hi = 1;
+  double atLo = fa;
+  double atHi = fb;
+
+  for (int step = 0; step < _crossingRefinements; step++) {
+    final double v = f.evaluate(
+      ax + (bx - ax) * t,
+      ay + (by - ay) * t,
+      az + (bz - az) * t,
+    );
+    // Undefined partway along, or already exact: keep the best t so far rather
+    // than stepping somewhere arbitrary.
+    if (!v.isFinite || v == 0) return t;
+
+    if (v.isNegative == atLo.isNegative) {
+      lo = t;
+      atLo = v;
+    } else {
+      hi = t;
+      atHi = v;
+    }
+
+    final double spread = atLo - atHi;
+    t = spread == 0 ? (lo + hi) / 2 : lo + (hi - lo) * (atLo / spread);
+    if (!(t > lo) || !(t < hi)) t = (lo + hi) / 2;
+  }
+  return t;
 }
 
 /// Trace `F(x, y) = 0` across the window with marching squares.
@@ -82,17 +170,34 @@ const int marchingSquaresDraggingResolution = 150;
 /// frame. Dropping to 150 took an implicit curve from 19.3 ms to 7.6 ms.
 const int marchingSquaresDefaultResolution = 260;
 
+/// [slice] says which plane of a 3D plot is being looked at, and [iso] which
+/// level of f is being traced — 0 for an equation, and the held value for the
+/// contour of a height surface, whose 2D reading at a fixed z is `f(x, y) = z`.
+///
+/// Both join the cache key. They change what is sampled, so a cached trace of
+/// one plane would otherwise be handed back for another and sliding the plane
+/// would appear to do nothing.
 List<LevelSegment> marchingSquares(
   PlotExpression f,
-  double xMin,
-  double xMax,
-  double yMin,
-  double yMax, {
+  double hMin,
+  double hMax,
+  double vMin,
+  double vMax, {
   int resolution = marchingSquaresDefaultResolution,
+  PlaneSlice slice = const PlaneSlice(),
+  double iso = 0,
 }) {
   return _squaresCache.resolve(
-    _marchKey(f, <double>[xMin, xMax, yMin, yMax], resolution),
-    () => _marchingSquares(f, xMin, xMax, yMin, yMax, resolution),
+    _marchKey(f, <double>[
+      hMin,
+      hMax,
+      vMin,
+      vMax,
+      slice.offset,
+      slice.axis.index.toDouble(),
+      iso,
+    ], resolution),
+    () => _marchingSquares(f, hMin, hMax, vMin, vMax, resolution, slice, iso),
   );
 }
 
@@ -103,6 +208,8 @@ List<LevelSegment> _marchingSquares(
   double yMin,
   double yMax,
   int resolution,
+  PlaneSlice slice,
+  double iso,
 ) {
   if (!f.isValid || xMax <= xMin || yMax <= yMin) {
     return const <LevelSegment>[];
@@ -116,7 +223,7 @@ List<LevelSegment> _marchingSquares(
     for (int i = 0; i <= resolution; i++)
       <double>[
         for (int j = 0; j <= resolution; j++)
-          f.evaluate(xMin + i * dx, yMin + j * dy),
+          slice.sample(f, xMin + i * dx, yMin + j * dy) - iso,
       ],
   ];
 
@@ -190,6 +297,32 @@ List<LevelTriangle> marchingTetrahedra(
   double zMin,
   double zMax, {
   int resolution = 40,
+}) =>
+    marchedSurface(
+      f,
+      xMin,
+      xMax,
+      yMin,
+      yMax,
+      zMin,
+      zMax,
+      resolution: resolution,
+    ).triangles;
+
+/// The same march, with the surface normal at every vertex.
+///
+/// Separate from [marchingTetrahedra] only so that callers with no use for
+/// normals keep reading as they did; both go through one cache, so asking for
+/// the normals never marches anything twice.
+LevelSurface marchedSurface(
+  PlotExpression f,
+  double xMin,
+  double xMax,
+  double yMin,
+  double yMax,
+  double zMin,
+  double zMax, {
+  int resolution = 40,
 }) {
   return _tetsCache.resolve(
     _marchKey(f, <double>[xMin, xMax, yMin, yMax, zMin, zMax], resolution),
@@ -198,7 +331,24 @@ List<LevelTriangle> marchingTetrahedra(
   );
 }
 
-List<LevelTriangle> _marchingTetrahedra(
+/// One component of the gradient, from a sample and its neighbours on that
+/// axis.
+///
+/// Central where there is a sample either side, one-sided at the faces of the
+/// lattice and wherever a neighbour came back undefined — which happens all
+/// round a singularity, exactly where a surface most needs a normal it can
+/// still use. Flat is the last resort.
+double _slope(double before, double here, double after, double step) {
+  final bool haveBefore = before.isFinite;
+  final bool haveAfter = after.isFinite;
+  if (haveBefore && haveAfter) return (after - before) / (2 * step);
+  if (!here.isFinite) return 0;
+  if (haveAfter) return (after - here) / step;
+  if (haveBefore) return (here - before) / step;
+  return 0;
+}
+
+LevelSurface _marchingTetrahedra(
   PlotExpression f,
   double xMin,
   double xMax,
@@ -213,7 +363,7 @@ List<LevelTriangle> _marchingTetrahedra(
       yMax <= yMin ||
       zMax <= zMin ||
       resolution < 1) {
-    return const <LevelTriangle>[];
+    return (triangles: const <LevelTriangle>[], normals: Float32List(0));
   }
 
   final double dx = (xMax - xMin) / resolution;
@@ -237,9 +387,48 @@ List<LevelTriangle> _marchingTetrahedra(
   }
 
   final List<LevelTriangle> out = <LevelTriangle>[];
+  final List<double> normals = <double>[];
 
   Point3D corner(int i, int j, int k) =>
       Point3D(xMin + i * dx, yMin + j * dy, zMin + k * dz);
+
+  // The surface normal is the gradient of f, and the lattice the marcher has
+  // already sampled hands it over for nothing — a difference of neighbouring
+  // samples, no further calls into the expression.
+  //
+  // Worth the trouble over the obvious alternative of one normal per triangle,
+  // taken from its own corners. Marching tetrahedra makes slivers — around a
+  // tenth of the triangles come out under a hundredth of a cell in area — and
+  // a sliver's cross product is mostly rounding error. Measured against the
+  // true normal, a face normal is 4 to 8 degrees out at the median but 30 to
+  // 90 degrees out at the 99th percentile, which on a 38,000 triangle surface
+  // is a few hundred triangles lit at random: precisely the speckle that
+  // shading is meant to clear up. From the lattice the error has no tail at
+  // all — 0 to 3 degrees median, and never worse than 11.
+  final Float64List gradA = Float64List(3);
+  final Float64List gradB = Float64List(3);
+
+  void gradientAt(int i, int j, int k, Float64List into) {
+    final double here = samples[idx(i, j, k)];
+    into[0] = _slope(
+      i > 0 ? samples[idx(i - 1, j, k)] : double.nan,
+      here,
+      i < n - 1 ? samples[idx(i + 1, j, k)] : double.nan,
+      dx,
+    );
+    into[1] = _slope(
+      j > 0 ? samples[idx(i, j - 1, k)] : double.nan,
+      here,
+      j < n - 1 ? samples[idx(i, j + 1, k)] : double.nan,
+      dy,
+    );
+    into[2] = _slope(
+      k > 0 ? samples[idx(i, j, k - 1)] : double.nan,
+      here,
+      k < n - 1 ? samples[idx(i, j, k + 1)] : double.nan,
+      dz,
+    );
+  }
 
   // Cube split into six tetrahedra sharing the 0-6 body diagonal. Sharing one
   // diagonal across every cube keeps neighbouring cells consistent, so the
@@ -263,20 +452,100 @@ List<LevelTriangle> _marchingTetrahedra(
     <int>[0, 1, 1],
   ];
 
-  Point3D lerp(Point3D a, Point3D b, double fa, double fb) {
-    final double t = _crossing(fa, fb);
-    return Point3D(
-      a.x + (b.x - a.x) * t,
-      a.y + (b.y - a.y) * t,
-      a.z + (b.z - a.z) * t,
+  // A crossing: where the surface cuts the edge between two cube corners, and
+  // the normal there. Corners are named by their index into [cubeOffsets] so
+  // that the lattice position — and so the gradient — can be recovered from
+  // them; carrying `Point3D`s alone lost that.
+  late int cubeI, cubeJ, cubeK;
+  late List<Point3D> p;
+  late List<double> fv;
+
+  ({Point3D at, double nx, double ny, double nz}) crossing(int c1, int c2) {
+    final double fa = fv[c1];
+    final double fb = fv[c2];
+    final Point3D a = p[c1];
+    final Point3D b = p[c2];
+    final double t = _solveCrossing(f, a.x, a.y, a.z, b.x, b.y, b.z, fa, fb);
+
+    final List<int> o1 = cubeOffsets[c1];
+    final List<int> o2 = cubeOffsets[c2];
+    gradientAt(cubeI + o1[0], cubeJ + o1[1], cubeK + o1[2], gradA);
+    gradientAt(cubeI + o2[0], cubeJ + o2[1], cubeK + o2[2], gradB);
+
+    return (
+      at: Point3D(
+        a.x + (b.x - a.x) * t,
+        a.y + (b.y - a.y) * t,
+        a.z + (b.z - a.z) * t,
+      ),
+      // The gradient is interpolated along the edge just as the position is,
+      // so two triangles meeting on that edge agree about which way the
+      // surface faces there and the shading runs smoothly across the join.
+      nx: gradA[0] + (gradB[0] - gradA[0]) * t,
+      ny: gradA[1] + (gradB[1] - gradA[1]) * t,
+      nz: gradA[2] + (gradB[2] - gradA[2]) * t,
     );
+  }
+
+  /// Keep a triangle and its three normals, each scaled to unit length.
+  void emit(
+    ({Point3D at, double nx, double ny, double nz}) a,
+    ({Point3D at, double nx, double ny, double nz}) b,
+    ({Point3D at, double nx, double ny, double nz}) c,
+  ) {
+    out.add((a: a.at, b: b.at, c: c.at));
+
+    // Somewhere flat, or where a singularity left nothing to difference, the
+    // gradient is no use. The triangle's own plane is the fallback, and a
+    // triangle with no plane either is lit as though it faced straight up —
+    // it has no area, so nothing is drawn for it anyway.
+    double faceX = 0, faceY = 0, faceZ = 0;
+    bool faceKnown = false;
+    void takeFace() {
+      if (faceKnown) return;
+      faceKnown = true;
+      final double ux = b.at.x - a.at.x;
+      final double uy = b.at.y - a.at.y;
+      final double uz = b.at.z - a.at.z;
+      final double vx = c.at.x - a.at.x;
+      final double vy = c.at.y - a.at.y;
+      final double vz = c.at.z - a.at.z;
+      faceX = uy * vz - uz * vy;
+      faceY = uz * vx - ux * vz;
+      faceZ = ux * vy - uy * vx;
+      final double len = sqrt(faceX * faceX + faceY * faceY + faceZ * faceZ);
+      if (len == 0 || !len.isFinite) {
+        faceX = 0;
+        faceY = 0;
+        faceZ = 1;
+      } else {
+        faceX /= len;
+        faceY /= len;
+        faceZ /= len;
+      }
+    }
+
+    for (final ({Point3D at, double nx, double ny, double nz}) v
+        in <({Point3D at, double nx, double ny, double nz})>[a, b, c]) {
+      final double len = sqrt(v.nx * v.nx + v.ny * v.ny + v.nz * v.nz);
+      if (len > 0 && len.isFinite) {
+        normals.add(v.nx / len);
+        normals.add(v.ny / len);
+        normals.add(v.nz / len);
+      } else {
+        takeFace();
+        normals.add(faceX);
+        normals.add(faceY);
+        normals.add(faceZ);
+      }
+    }
   }
 
   for (int i = 0; i < resolution; i++) {
     for (int j = 0; j < resolution; j++) {
       for (int k = 0; k < resolution; k++) {
-        final List<Point3D> p = <Point3D>[];
-        final List<double> fv = <double>[];
+        p = <Point3D>[];
+        fv = <double>[];
         bool usable = true;
         for (final List<int> o in cubeOffsets) {
           final double value = samples[idx(i + o[0], j + o[1], k + o[2])];
@@ -290,20 +559,19 @@ List<LevelTriangle> _marchingTetrahedra(
         // A cube touching an undefined sample is skipped, leaving a hole
         // rather than a surface stitched across a singularity.
         if (!usable) continue;
+        cubeI = i;
+        cubeJ = j;
+        cubeK = k;
 
         for (final List<int> t in tets) {
-          final List<Point3D> below = <Point3D>[];
-          final List<double> belowF = <double>[];
-          final List<Point3D> above = <Point3D>[];
-          final List<double> aboveF = <double>[];
+          final List<int> below = <int>[];
+          final List<int> above = <int>[];
 
           for (final int c in t) {
             if (fv[c] < 0) {
-              below.add(p[c]);
-              belowF.add(fv[c]);
+              below.add(c);
             } else {
-              above.add(p[c]);
-              aboveF.add(fv[c]);
+              above.add(c);
             }
           }
 
@@ -311,30 +579,28 @@ List<LevelTriangle> _marchingTetrahedra(
 
           if (below.length == 1 || above.length == 1) {
             // One corner cut off: the cut is a single triangle.
-            final Point3D apex = below.length == 1 ? below[0] : above[0];
-            final double apexF = below.length == 1 ? belowF[0] : aboveF[0];
-            final List<Point3D> others = below.length == 1 ? above : below;
-            final List<double> othersF = below.length == 1 ? aboveF : belowF;
-            out.add((
-              a: lerp(apex, others[0], apexF, othersF[0]),
-              b: lerp(apex, others[1], apexF, othersF[1]),
-              c: lerp(apex, others[2], apexF, othersF[2]),
-            ));
+            final int apex = below.length == 1 ? below[0] : above[0];
+            final List<int> others = below.length == 1 ? above : below;
+            emit(
+              crossing(apex, others[0]),
+              crossing(apex, others[1]),
+              crossing(apex, others[2]),
+            );
           } else {
             // Two-two split: the cut is a quad, emitted as two triangles.
-            final Point3D q0 = lerp(below[0], above[0], belowF[0], aboveF[0]);
-            final Point3D q1 = lerp(below[0], above[1], belowF[0], aboveF[1]);
-            final Point3D q2 = lerp(below[1], above[1], belowF[1], aboveF[1]);
-            final Point3D q3 = lerp(below[1], above[0], belowF[1], aboveF[0]);
-            out.add((a: q0, b: q1, c: q2));
-            out.add((a: q0, b: q2, c: q3));
+            final q0 = crossing(below[0], above[0]);
+            final q1 = crossing(below[0], above[1]);
+            final q2 = crossing(below[1], above[1]);
+            final q3 = crossing(below[1], above[0]);
+            emit(q0, q1, q2);
+            emit(q0, q2, q3);
           }
         }
       }
     }
   }
 
-  return out;
+  return (triangles: out, normals: Float32List.fromList(normals));
 }
 
 /// The y values where an implicit curve crosses the vertical line at [x].
@@ -356,8 +622,11 @@ List<double> levelSetYAt(
   double yMin,
   double yMax, {
   int samples = 600,
+  PlaneSlice slice = const PlaneSlice(),
+  double iso = 0,
 }) {
   if (!f.isValid || yMax <= yMin) return const <double>[];
+  double valueAt(double h, double v) => slice.sample(f, h, v) - iso;
 
   final List<double> roots = <double>[];
   void add(double y) {
@@ -370,12 +639,12 @@ List<double> levelSetYAt(
   }
 
   double previousY = yMin;
-  double previous = f.evaluate(x, yMin);
+  double previous = valueAt(x, yMin);
   if (previous == 0) add(yMin);
 
   for (int i = 1; i <= samples; i++) {
     final double y = yMin + (yMax - yMin) * i / samples;
-    final double value = f.evaluate(x, y);
+    final double value = valueAt(x, y);
 
     if (value == 0) {
       add(y);
@@ -388,7 +657,7 @@ List<double> levelSetYAt(
       double atLo = previous;
       for (int step = 0; step < 60; step++) {
         final double mid = (lo + hi) / 2;
-        final double atMid = f.evaluate(x, mid);
+        final double atMid = valueAt(x, mid);
         if (!atMid.isFinite) break;
         if (atMid.isNegative == atLo.isNegative) {
           lo = mid;

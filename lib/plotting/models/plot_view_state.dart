@@ -1,3 +1,5 @@
+import 'plane_slice.dart';
+
 /// How a cell's plot is currently being looked at.
 ///
 /// Kept apart from the expression because it survives differently: the
@@ -24,7 +26,22 @@ class PlotViewState {
     this.vMax = 1,
     this.surfaceMode,
     this.complexView,
+    this.showMesh = false,
+    this.sliceAxis,
+    this.sliceOffset = 0,
   });
+
+  /// Which plane the 2D view is cutting, by [SliceAxis] index, or null if the
+  /// reader never chose.
+  ///
+  /// Null carries meaning here, as it does for [surfaceMode]: the two plot
+  /// types default to different planes — an equation to z = 0 and a surface to
+  /// y = 0 — so an untouched plot has no one answer, and storing a number
+  /// would force one on it.
+  final int? sliceAxis;
+
+  /// What that variable is held at. Only meaningful once [sliceAxis] is set.
+  final double sliceOffset;
 
   /// Which view the cell was left showing.
   final bool show3D;
@@ -43,6 +60,13 @@ class PlotViewState {
   /// the user has chosen — including choosing to turn it off — that choice is
   /// theirs and no amount of swiping away and back should overrule it.
   final int? surfaceMode;
+
+  /// Whether the surface is drawn with its grid over it.
+  ///
+  /// Part of the view, like the colouring: turning the mesh on is something
+  /// you asked for, and swiping to the next plot and back used to hand it
+  /// silently back to off.
+  final bool showMesh;
 
   /// Which complex readings are on show, packed, or null if untouched.
   ///
@@ -77,6 +101,9 @@ class PlotViewState {
       vMin == initial.vMin &&
       vMax == initial.vMax &&
       surfaceMode == initial.surfaceMode &&
+      showMesh == initial.showMesh &&
+      sliceAxis == initial.sliceAxis &&
+      sliceOffset == initial.sliceOffset &&
       complexView == initial.complexView;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -97,6 +124,9 @@ class PlotViewState {
     'vMin': vMin,
     'vMax': vMax,
     'surfaceMode': surfaceMode,
+    'showMesh': showMesh,
+    'sliceAxis': sliceAxis,
+    'sliceOffset': sliceOffset,
     'complexView': complexView,
   };
 
@@ -169,6 +199,12 @@ class PlotViewState {
         final int i when i >= 0 => i,
         _ => null,
       },
+      showMesh: json['showMesh'] == true,
+      sliceAxis: switch (json['sliceAxis']) {
+        final int i when i >= 0 && i < SliceAxis.values.length => i,
+        _ => null,
+      },
+      sliceOffset: read('sliceOffset', initial.sliceOffset),
       complexView: switch (json['complexView']) {
         final int i when i >= 0 => i,
         _ => null,
@@ -195,6 +231,10 @@ class PlotViewState {
     double? vMax,
     int? surfaceMode,
     int? complexView,
+    bool? showMesh,
+    int? sliceAxis,
+    double? sliceOffset,
+    bool clearSlice = false,
   }) {
     return PlotViewState(
       show3D: show3D ?? this.show3D,
@@ -214,6 +254,11 @@ class PlotViewState {
       vMin: vMin ?? this.vMin,
       vMax: vMax ?? this.vMax,
       surfaceMode: surfaceMode ?? this.surfaceMode,
+      showMesh: showMesh ?? this.showMesh,
+      // Going back to "never chose" has to be sayable, and passing null cannot
+      // say it — null is what copyWith reads as "leave alone".
+      sliceAxis: clearSlice ? null : (sliceAxis ?? this.sliceAxis),
+      sliceOffset: clearSlice ? 0 : (sliceOffset ?? this.sliceOffset),
       complexView: complexView ?? this.complexView,
     );
   }

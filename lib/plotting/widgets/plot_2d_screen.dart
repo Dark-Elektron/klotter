@@ -1,15 +1,13 @@
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 import '../models/complex_view.dart';
 import '../models/enums.dart';
+import '../models/plane_slice.dart';
 import '../../utils/app_colors.dart';
 import '../parsers/vector_field_parser.dart';
 import '../utils/parametric.dart';
 import '../parsers/plot_expression.dart';
 import '../painters/plot_2d_painter.dart';
 import '../utils/curve_features.dart';
-import '../utils/level_extent.dart';
 import '../utils/pinch_tracker.dart';
 import '../utils/plot_theme.dart';
 
@@ -18,6 +16,9 @@ class Plot2DScreen extends StatefulWidget {
 
   /// One curve per line of the cell.
   final List<PlotExpression> functions;
+
+  /// How much of the panel's bottom the expression rows cover.
+  final double bottomInset;
   final bool is3DFunction;
   final PlotMode plotMode;
   final FieldType fieldType;
@@ -45,10 +46,23 @@ class Plot2DScreen extends StatefulWidget {
   /// colour mode and the theme's series palette.
   final PlotThemeData plotTheme;
 
+  /// Which plane of a 3D plot to cut, or null to leave each line on the one
+  /// its own kind has always used.
+  final PlaneSlice? slice;
+
+  /// True while something outside the plot is moving it — the slice slider.
+  ///
+  /// Sampling is cached against the plane, so every frame of a slide is a
+  /// fresh march of the whole window. The plot's own gestures already drop to
+  /// a coarser lattice for exactly this reason, and a slide has to say so too
+  /// or it pays 68,000 samples a frame and drags.
+  final bool externallyInteracting;
+
   const Plot2DScreen({
     super.key,
     required this.function,
     this.functions = const <PlotExpression>[],
+    this.bottomInset = 0,
     required this.is3DFunction,
     required this.plotMode,
     required this.fieldType,
@@ -62,6 +76,8 @@ class Plot2DScreen extends StatefulWidget {
     required this.surfaceMode,
     required this.colors,
     required this.plotTheme,
+    this.slice,
+    this.externallyInteracting = false,
   });
 
   @override
@@ -69,7 +85,7 @@ class Plot2DScreen extends StatefulWidget {
 }
 
 class Plot2DScreenState extends State<Plot2DScreen> {
-  double xMin = -5, xMax = 5;
+  double xMin = -Plot2DScreenState.homeX, xMax = Plot2DScreenState.homeX;
 
   /// Apply a restored window without the validation [setRanges] does — the
   /// values have already been checked on the way out of storage.
@@ -84,7 +100,9 @@ class Plot2DScreenState extends State<Plot2DScreen> {
     _traceX = null;
   }
 
-  double yMin = -5, yMax = 5;
+  // Opens in the same frame home returns to, so the first view and the
+  // one you get back are the same window.
+  double yMin = -Plot2DScreenState.homeY, yMax = Plot2DScreenState.homeY;
 
   /// Pinch is decomposed per axis, so a vertical pinch stretches y and a
   /// horizontal one stretches x, measured from where the fingers actually are.
@@ -120,7 +138,6 @@ class Plot2DScreenState extends State<Plot2DScreen> {
   @override
   void initState() {
     super.initState();
-    _autoScaleIfNeeded();
   }
 
   @override
@@ -129,11 +146,17 @@ class Plot2DScreenState extends State<Plot2DScreen> {
     if (oldWidget.function != widget.function ||
         oldWidget.functions != widget.functions ||
         oldWidget.fieldType != widget.fieldType ||
+        // Cutting a different plane gives a different curve, so the roots and
+        // turning points found on the old one no longer describe it.
+        oldWidget.slice != widget.slice ||
         oldWidget.is3DFunction != widget.is3DFunction) {
       // The curve changed, so any cached roots and turning points are stale.
+      //
+      // The window is deliberately left alone. Editing a line used to refit
+      // the plot, so everything already on screen jumped as you typed and you
+      // lost the view you had chosen. Home is how you ask for a fresh one.
       _features = null;
       _snappedFeature = null;
-      _autoScaleIfNeeded();
     }
   }
 
@@ -210,132 +233,26 @@ class Plot2DScreenState extends State<Plot2DScreen> {
     return true;
   }
 
+  /// The window home returns to: x from -5 to 5, y from -10 to 10.
+  ///
+  /// A fixed frame, not a fit. Home used to measure the curves and size itself
+  /// around them, which meant the same key gave a different window depending
+  /// on what was plotted — and for a curve far from the origin, an unhelpful
+  /// one. A known frame you can predict is worth more than a clever one you
+  /// cannot, and the origin is always in the middle of it.
+  static const double homeX = 5;
+  static const double homeY = 10;
+
   void resetView() {
     setState(() {
-      xMin = -5;
-      xMax = 5;
-      yMin = -5;
-      yMax = 5;
+      xMin = -homeX;
+      xMax = homeX;
+      yMin = -homeY;
+      yMax = homeY;
       _traceX = null;
       _snappedFeature = null;
       _features = null;
     });
-    _autoScaleIfNeeded();
-  }
-
-  /// How far the implicit curves in this cell reach, or null if there are none.
-  ///
-  /// An implicit curve is drawn where `F = 0`, and `F` says nothing about where
-  /// that is, so it cannot be framed by sampling. [levelSetExtent] looks for
-  /// where `F` changes sign instead.
-  LevelExtent? _levelSetSpan(List<PlotExpression> curves) {
-    double x = 0, y = 0;
-    bool found = false;
-    for (final PlotExpression curve in curves) {
-      if (!curve.isValid || curve.hidden || !curve.isLevelSet) continue;
-      // A flat plot, so z plays no part: `volume: false` keeps the search in
-      // the plane instead of hunting a surface that is not being drawn.
-      final LevelExtent? at = levelSetExtent(curve, volume: false);
-      if (at == null) continue;
-      found = true;
-      x = max(x, at.x);
-      y = max(y, at.y);
-    }
-    return found ? (x: x, y: y, z: 0.0) : null;
-  }
-
-  void _autoScaleIfNeeded() {
-    if (widget.fieldType != FieldType.scalar) return;
-    // A complex function has no curve to frame. Its domain is the plane, and
-    // the window should stay centred on the origin — the Argand diagram is
-    // the picture, not a graph of something against x.
-    //
-    // Fitting it anyway read a real-valued sample of it: `evaluate(x, 0, 0)`
-    // of (x + yi)² is x², so the window came out as -2.5 to 27.5 and the
-    // origin sat near the bottom of the plot.
-    if (widget.function.isComplex) return;
-    try {
-      final curves =
-          widget.functions.isEmpty
-              ? <PlotExpression>[widget.function]
-              : widget.functions;
-      double? minY;
-      double? maxY;
-      const int samples = 80;
-      // Fit every curve, not just the first, or added lines land off-screen.
-      for (final parser in curves) {
-        if (!parser.isValid || parser.hidden) continue;
-        // An implicit curve is handled below. Sampling it here fits the window
-        // to F's values rather than to the curve: for x²+y²=1, evaluate(x,0,0)
-        // is x²-1, which over ±5 asks for y from -1 to 24 and pushes the unit
-        // circle into the bottom corner.
-        if (parser.isLevelSet) continue;
-        // A surface has no curve to frame in the flat view either — it is
-        // drawn as a field, and evaluate(x, 0, 0) is one slice through the
-        // middle of it. This was a check on the whole cell, which is why an
-        // implicit curve never reached the fit at all: it is flagged 3D
-        // merely for mentioning y. Per curve, so a plain f(x) sharing the
-        // cell with one is still framed.
-        if (parser.usesY) continue;
-        for (int i = 0; i <= samples; i++) {
-          final t = i / samples;
-          final x = xMin + (xMax - xMin) * t;
-          final y = parser.evaluate(x, 0, 0);
-          if (y.isNaN || y.isInfinite) continue;
-          minY = minY == null ? y : (y < minY ? y : minY);
-          maxY = maxY == null ? y : (y > maxY ? y : maxY);
-        }
-      }
-      final LevelExtent? level = _levelSetSpan(curves);
-      if (level == null) {
-        if (minY == null || maxY == null) return;
-        if ((maxY - minY).abs() < 1e-6) {
-          maxY = maxY + 1;
-          minY = minY - 1;
-        }
-        final padding = (maxY - minY) * 0.1;
-        setState(() {
-          yMin = minY! - padding;
-          yMax = maxY! + padding;
-        });
-        return;
-      }
-
-      // A little room around the shape.
-      //
-      // An axis the curve does not extend along at all — a single point, or a
-      // curve flat in y — would collapse the window to nothing, so it borrows
-      // the shape's overall size instead. A fixed floor was tried here first
-      // and was wrong: clamping to 1 meant x²+y²=0.1 asked for 0.56 and got
-      // 1, and anything smaller stopped scaling altogether.
-      const double margin = 1.4;
-      final double reach = max(level.x, level.y);
-      if (reach <= 0) return;
-      double fit(double extent) => (extent > 0 ? extent : reach) * margin;
-      final double halfX = fit(level.x);
-      final double halfY = fit(level.y);
-
-      // The union of both kinds, so a cell holding a circle and a parabola
-      // shows both. A plain curve has no natural x extent, so it keeps the
-      // default width unless the implicit curve needs more.
-      final double? fitLow = minY;
-      final double? fitHigh = maxY;
-      final bool onlyLevelSets = fitLow == null || fitHigh == null;
-      final double left = onlyLevelSets ? -halfX : min(xMin, -halfX);
-      final double right = onlyLevelSets ? halfX : max(xMax, halfX);
-      final double low = onlyLevelSets ? -halfY : min(fitLow, -halfY);
-      final double high = onlyLevelSets ? halfY : max(fitHigh, halfY);
-      final double padding = (high - low) * 0.1;
-
-      setState(() {
-        xMin = left;
-        xMax = right;
-        yMin = low - padding;
-        yMax = high + padding;
-      });
-    } catch (_) {
-      // Keep defaults on parse/eval failure
-    }
   }
 
   @override
@@ -448,6 +365,7 @@ class Plot2DScreenState extends State<Plot2DScreen> {
               child: CustomPaint(
                 size: Size(constraints.maxWidth, constraints.maxHeight),
                 painter: Plot2DPainter(
+                  bottomInset: widget.bottomInset,
                   complexView: widget.complexView,
                   uRange: widget.uRange,
                   vRange: widget.vRange,
@@ -468,7 +386,8 @@ class Plot2DScreenState extends State<Plot2DScreen> {
                   showContour: widget.showContour,
                   surfaceMode: widget.surfaceMode,
                   colors: widget.colors,
-                  interacting: _interacting,
+                  slice: widget.slice,
+                  interacting: _interacting || widget.externallyInteracting,
                 ),
               ),
             ),

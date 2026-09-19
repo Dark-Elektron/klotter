@@ -573,6 +573,14 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
   /// 48dp floor), so deriving it from a different width than the grid receives
   /// would size the container and the tiles inconsistently and clip a row.
   double _gridAspectRatioFor(double availableWidth) {
+    // Nothing sane can be derived from a width of zero, and the answer must
+    // never be zero itself: the callers divide by it, so a zero ratio turns a
+    // zero cell into 0/0 — a NaN height, which reaches SizedBox as
+    // `NaN<=h<=NaN` and brings the launch down. The window really is 0x0 on
+    // the warm-up frame ("Width is zero" from the engine), so this is the
+    // ordinary case at startup, not a defensive flourish. It is also passed
+    // straight to GridView as childAspectRatio, where zero is just as invalid.
+    if (!availableWidth.isFinite || availableWidth <= 0) return 1.0;
     // Tablets use the same grid in both orientations, so the keys keep the
     // same shape too — landscape simply makes them bigger, because each block
     // gets a third of a wider screen.
@@ -583,7 +591,8 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
       _minPhoneTileHeight,
       tileWidth / _phonePortraitTileAspect,
     );
-    return tileWidth / tileHeight;
+    final double ratio = tileWidth / tileHeight;
+    return ratio.isFinite && ratio > 0 ? ratio : 1.0;
   }
   // -----------------------------------------------------------------------
 
@@ -596,7 +605,11 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
   int _deleteSpeed = 150;
   bool _deletedContentInCurrentBackspaceSession = false;
 
-  int _currentKeypadIndex = 1;
+  /// Which of the swipeable pages is showing: scientific (0) or extras (1).
+  ///
+  /// Starts at the first page. It started at 1 — the number pad's index back
+  /// when the number pad was a page — which now names the extras.
+  int _currentKeypadIndex = 0;
 
   bool _isNavigatingProgrammatically = false;
 
@@ -629,7 +642,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     super.initState();
     _initializeKeypadController(_pagesPerView);
     _lastPagesPerView = _pagesPerView;
-    widget.walkthroughService.onResetKeypad = _resetToNumberKeypad;
+    widget.walkthroughService.onResetKeypad = _resetToFirstKeypadPage;
     widget.walkthroughService.onNavigateToKeypadPage = _navigateToKeypadPage;
   }
 
@@ -656,7 +669,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     if (widget.walkthroughService != oldWidget.walkthroughService) {
       oldWidget.walkthroughService.onResetKeypad = null;
       oldWidget.walkthroughService.onNavigateToKeypadPage = null;
-      widget.walkthroughService.onResetKeypad = _resetToNumberKeypad;
+      widget.walkthroughService.onResetKeypad = _resetToFirstKeypadPage;
       widget.walkthroughService.onNavigateToKeypadPage = _navigateToKeypadPage;
     }
   }
@@ -690,13 +703,20 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     }
   }
 
-  void _resetToNumberKeypad() {
-    final int targetPage;
-    if (_lastPagesPerView != null && _lastPagesPerView! >= 2) {
-      targetPage = 0;
-    } else {
-      targetPage = 1;
-    }
+  /// Puts the swipeable rows back on their first page, which is scientific.
+  ///
+  /// This sent a phone to page 1 and was named for a layout that no longer
+  /// exists: the number pad used to be a page of its own, and page 1 was how
+  /// you reached it. The number pad is permanent now and the pages are
+  /// [scientific, extras], so page 1 is extras — the tour opened there, and
+  /// its "swipe the top rows LEFT" step had nothing to the left to reach. You
+  /// had to swipe right to scientific first, then left again, to satisfy a
+  /// step that was meant to be the first swipe you ever made.
+  ///
+  /// The first page is the right target for both arrangements, so there is no
+  /// longer anything to decide.
+  void _resetToFirstKeypadPage() {
+    const int targetPage = 0;
 
     if (_keypadController != null && _keypadController!.hasClients) {
       // Set flag to bypass directional physics during programmatic navigation
@@ -936,48 +956,54 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
         // Out here the element is created during build, which is where moving
         // a GlobalKey is a supported thing to do. The rect is unchanged: a
         // LayoutBuilder takes its child's size.
-        KeyedSubtree(
-          key: widget.mainKeypadAreaKey,
-          child: LayoutBuilder(
-            builder: (context, keypadConstraints) {
-              final double pageWidth =
-                  _usableWidth(keypadConstraints) / pagesPerView;
-              final double cellW = pageWidth / crossAxisCount;
-              final double cellH = cellW / _gridAspectRatioFor(pageWidth);
-              return SizedBox(
-                height: cellH * rowCount,
-                // The resolved width, not infinity: with an unbounded
-                // parent, `double.infinity` is not a size a box can take.
-                width: _usableWidth(keypadConstraints),
-                child:
-                    _keypadController != null
-                        ? ListenableBuilder(
-                          listenable: widget.walkthroughService,
-                          builder: (context, _) {
-                            return EasySnapPageView(
-                              controller: _keypadController!,
-                              onPageChanged: _onKeypadPageChanged,
-                              padEnds: false,
-                              enableTransitions: !isTablet,
-                              children: [
-                                SizedBox.expand(
-                                  key: widget.scientificKeypadKey,
-                                  child: _buildScientificGrid(
-                                    widget.isLandscape,
-                                  ),
-                                ),
-                                SizedBox.expand(
-                                  key: widget.extrasKeypadKey,
-                                  child: _buildExtrasGrid(widget.isLandscape),
-                                ),
-                              ],
-                            );
-                          },
-                        )
-                        : const SizedBox.shrink(),
-              );
-            },
-          ),
+        // The key goes on the box, never on a wrapper around the
+        // LayoutBuilder. Hoisting it outside made it resolve to the
+        // LayoutBuilder's own render object, and `laidOutBox` refuses one that
+        // is pending layout — which a _RenderLayoutBuilder routinely is. The
+        // walkthrough spotlight got no rect, so nothing was lit and, with no
+        // cut-out, the overlay swallowed the very swipe it was asking for.
+        LayoutBuilder(
+          builder: (context, keypadConstraints) {
+            final double available = _usableWidth(keypadConstraints);
+            // No width to lay keys out in — the warm-up frame, before the
+            // window has a size. An empty box now, the real keypad on the
+            // frame after.
+            if (available <= 0) return const SizedBox.shrink();
+            final double pageWidth = available / pagesPerView;
+            final double cellW = pageWidth / crossAxisCount;
+            final double cellH = cellW / _gridAspectRatioFor(pageWidth);
+            return SizedBox(
+              key: widget.mainKeypadAreaKey,
+              height: cellH * rowCount,
+              // The resolved width, not infinity: with an unbounded
+              // parent, `double.infinity` is not a size a box can take.
+              width: _usableWidth(keypadConstraints),
+              child:
+                  _keypadController != null
+                      ? ListenableBuilder(
+                        listenable: widget.walkthroughService,
+                        builder: (context, _) {
+                          return EasySnapPageView(
+                            controller: _keypadController!,
+                            onPageChanged: _onKeypadPageChanged,
+                            padEnds: false,
+                            enableTransitions: !isTablet,
+                            children: [
+                              SizedBox.expand(
+                                key: widget.scientificKeypadKey,
+                                child: _buildScientificGrid(widget.isLandscape),
+                              ),
+                              SizedBox.expand(
+                                key: widget.extrasKeypadKey,
+                                child: _buildExtrasGrid(widget.isLandscape),
+                              ),
+                            ],
+                          );
+                        },
+                      )
+                      : const SizedBox.shrink(),
+            );
+          },
         ),
 
         // Fixed half: the number pad never moves. Digits and operators are
@@ -986,6 +1012,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
         LayoutBuilder(
           builder: (context, numberConstraints) {
             final double gridWidth = _usableWidth(numberConstraints);
+            if (gridWidth <= 0) return const SizedBox.shrink();
             final double cellW = gridWidth / crossAxisCount;
             final double cellH = cellW / _gridAspectRatioFor(gridWidth);
             return SizedBox(
@@ -1297,65 +1324,61 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     // Keyed out here rather than inside the builder, for the reason given on
     // the phone arrangement above: a GlobalKey created inside a LayoutBuilder
     // is created, and moved, during layout.
-    return KeyedSubtree(
-      key: widget.mainKeypadAreaKey,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final Map<String, Widget> byName = _tabletKeyWidgets();
-          final List<List<String?>> grid = _tabletGrid;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final Map<String, Widget> byName = _tabletKeyWidgets();
+        final List<List<String?>> grid = _tabletGrid;
 
-          final List<Widget> cells = <Widget>[
-            for (final List<String?> row in grid)
-              for (final String? name in row)
-                name == null ? _extrasBlank() : byName[name] ?? _extrasBlank(),
-          ];
+        final List<Widget> cells = <Widget>[
+          for (final List<String?> row in grid)
+            for (final String? name in row)
+              name == null ? _extrasBlank() : byName[name] ?? _extrasBlank(),
+        ];
 
-          // Mirroring is a reflection of the finished grid: reverse every row.
-          // That flips block order and each block's contents in one step.
-          final List<Widget> laidOut =
-              _leftHanded ? _mirrorWidgetRows(cells, _tabletColumns) : cells;
+        // Mirroring is a reflection of the finished grid: reverse every row.
+        // That flips block order and each block's contents in one step.
+        final List<Widget> laidOut =
+            _leftHanded ? _mirrorWidgetRows(cells, _tabletColumns) : cells;
 
-          final double cellW = _usableWidth(constraints) / _tabletColumns;
-          final double cellH =
-              cellW / _gridAspectRatioFor(_usableWidth(constraints));
+        final double tabletWidth = _usableWidth(constraints);
+        if (tabletWidth <= 0) return const SizedBox.shrink();
+        final double cellW = tabletWidth / _tabletColumns;
+        final double cellH = cellW / _gridAspectRatioFor(tabletWidth);
 
-          /// An invisible box over one block, so the walkthrough has something
-          /// with a real rect to highlight.
-          ///
-          /// Laid over the grid rather than wrapped around part of it: the grid
-          /// is one GridView of uniform cells, so a block is a span of columns
-          /// rather than a widget, and there is nothing to attach a key to.
-          Widget blockMarker(GlobalKey? key, String prefix) {
-            if (key == null) return const SizedBox.shrink();
-            final ({int first, int last})? at = _tabletBlockColumns(
-              grid,
-              prefix,
-            );
-            if (at == null) return const SizedBox.shrink();
-            return Positioned(
-              key: key,
-              left: at.first * cellW,
-              width: (at.last - at.first + 1) * cellW,
-              top: 0,
-              height: cellH * _tabletRows,
-              child: const IgnorePointer(child: SizedBox.expand()),
-            );
-          }
-
-          return SizedBox(
+        /// An invisible box over one block, so the walkthrough has something
+        /// with a real rect to highlight.
+        ///
+        /// Laid over the grid rather than wrapped around part of it: the grid
+        /// is one GridView of uniform cells, so a block is a span of columns
+        /// rather than a widget, and there is nothing to attach a key to.
+        Widget blockMarker(GlobalKey? key, String prefix) {
+          if (key == null) return const SizedBox.shrink();
+          final ({int first, int last})? at = _tabletBlockColumns(grid, prefix);
+          if (at == null) return const SizedBox.shrink();
+          return Positioned(
+            key: key,
+            left: at.first * cellW,
+            width: (at.last - at.first + 1) * cellW,
+            top: 0,
             height: cellH * _tabletRows,
-            width: _usableWidth(constraints),
-            child: Stack(
-              children: <Widget>[
-                Positioned.fill(child: _tabletGridView(laidOut, cellW, cellH)),
-                blockMarker(widget.numberBlockKey, 'num.'),
-                blockMarker(widget.scientificBlockKey, 'sci.'),
-                blockMarker(widget.extrasBlockKey, 'ext.'),
-              ],
-            ),
+            child: const IgnorePointer(child: SizedBox.expand()),
           );
-        },
-      ),
+        }
+
+        return SizedBox(
+          key: widget.mainKeypadAreaKey,
+          height: cellH * _tabletRows,
+          width: tabletWidth,
+          child: Stack(
+            children: <Widget>[
+              Positioned.fill(child: _tabletGridView(laidOut, cellW, cellH)),
+              blockMarker(widget.numberBlockKey, 'num.'),
+              blockMarker(widget.scientificBlockKey, 'sci.'),
+              blockMarker(widget.extrasBlockKey, 'ext.'),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -1586,12 +1609,15 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     VoidCallback? onTap, {
     bool mirrored = false,
     double? fontSize,
+    bool enabled = true,
   }) {
+    // A key with nothing to do says so rather than looking live and doing
+    // nothing when pressed: dimmed, and not tappable.
     final Widget button = MyButton(
-      buttontapped: onTap,
+      buttontapped: enabled ? onTap : null,
       buttonText: label,
       color: _kpButton,
-      textColor: _kpButtonText,
+      textColor: enabled ? _kpButtonText : _kpButtonText.withValues(alpha: 0.3),
       fontSize: fontSize ?? 22,
     );
     // Redo is undo's mirror image. Unicode has no flipped twin of U+238C, so
@@ -1796,11 +1822,13 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     final Widget kUndo = _extrasAction(
       '⎌',
       () => widget.onUndoAppState?.call(),
+      enabled: widget.canUndoAppState,
     );
     final Widget kRedo = _extrasAction(
       '⎌',
       () => widget.onRedoAppState?.call(),
       mirrored: true,
+      enabled: widget.canRedoAppState,
     );
     final Widget kClearAll = _extrasAction('⌧', widget.onClearAllDisplays);
     // U+21EA, an upward arrow out of a tray: the plot leaving the app. It sits
@@ -1831,12 +1859,17 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     );
 
     // The grid fills row-major, so this list is the two rows back to back.
+    //
+    // sin and asin lead, and i, π and the rest follow one column right of
+    // where they were. The trig pair sat in the fourth column, which put the
+    // keys reached most often in the middle of the block rather than at the
+    // edge the thumb starts from.
     return <Widget>[
       // row 1
-      kI, kU, kSquare, kSin, kFactorial, kPerm, kDeriv, kUndo, kRedo,
+      kSin, kI, kU, kSquare, kFactorial, kPerm, kDeriv, kUndo, kRedo,
       kClearAll,
       // row 2
-      kPi, kV, kRoot, kAsin, kAbs, kSum, kIntegral, kExport, kHelp,
+      kAsin, kPi, kV, kRoot, kAbs, kSum, kIntegral, kExport, kHelp,
       kSettings,
     ];
   }

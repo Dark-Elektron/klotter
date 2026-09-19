@@ -4,6 +4,7 @@ import '../../utils/app_colors.dart';
 import 'package:flutter/material.dart';
 import '../models/complex_view.dart';
 import '../models/enums.dart';
+import '../models/plane_slice.dart';
 import '../parsers/plot_expression.dart';
 import '../utils/parametric.dart';
 import '../parsers/vector_field_parser.dart';
@@ -99,13 +100,135 @@ class Plot2DPainter extends CustomPainter {
     this.uRange = defaultParameterRange,
     this.vRange = defaultParameterRange,
     this.complexView = ComplexView.initial,
+    this.bottomInset = 0,
+    this.slice,
   });
+
+  /// Which plane of a 3D plot is on show, or null if the reader has not said.
+  ///
+  /// Null is not the same as `PlaneSlice()`, and the difference is what keeps
+  /// existing plots looking as they did. The two plot types were never showing
+  /// the same plane: an equation was drawn at z = 0, a surface `z = f(x, y)`
+  /// at y = 0. So an untouched plot takes whichever of those its own kind
+  /// always used, and a chosen plane applies to everything on the axes.
+  final PlaneSlice? slice;
+
+  /// True when this line is read as the surface `z = f(x, y)` rather than as a
+  /// curve in the plane.
+  static bool _isHeightSurface(PlotExpression p) =>
+      !p.isLevelSet && p.variables.contains('x') && p.variables.contains('y');
+
+  /// The plane [p] is cut on.
+  PlaneSlice sliceFor(PlotExpression p) =>
+      slice ??
+      (p.isLevelSet ? const PlaneSlice() : const PlaneSlice(axis: SliceAxis.y));
+
+  /// True when [p] is drawn by tracing a level of it rather than by evaluating
+  /// it.
+  ///
+  /// An equation always is. A surface is too, but only when the plane held is
+  /// the horizontal one: `z = f(x, y)` cut at z = c is not a curve that can be
+  /// evaluated, it is the contour `f(x, y) = c`. Cut at x or y it stays a
+  /// function of one variable and is drawn by walking it.
+  bool tracesLevel(PlotExpression p) =>
+      p.isLevelSet || (_isHeightSurface(p) && sliceFor(p).axis == SliceAxis.z);
+
+  /// The level being traced: zero for an equation, and the height being held
+  /// for the contour of a surface.
+  double isoFor(PlotExpression p) => p.isLevelSet ? 0 : sliceFor(p).offset;
+
+  /// What a scalar plot's colouring reads at a point of the view.
+  ///
+  /// Slice-aware only where the view is genuinely a plane of two free
+  /// variables, which is exactly where [tracesLevel] holds. Cut across x or y,
+  /// a surface `z = f(x, y)` is a curve of height against one variable — the
+  /// upright axis is the answer, not an input — so sampling it on the slice
+  /// would give the same value all the way up the plot and paint stripes.
+  /// Those keep reading f over the x-y plane, as they always have.
+  double surfaceValueAt(PlotExpression p, double a, double b) =>
+      tracesLevel(p) ? sliceFor(p).sample(p, a, b) : p.evaluate(a, b);
+
+  /// The plane a vector field is read on.
+  ///
+  /// A field has always been sampled with its third argument left at zero, so
+  /// an untouched plot keeps that — the z = 0 plane, the same one an equation
+  /// opens on.
+  PlaneSlice get fieldSlice => slice ?? const PlaneSlice();
+
+  /// The field at a point on that plane, resolved into it.
+  ///
+  /// A flat view of a 3D field can only draw the part of it lying in the plane
+  /// — and which components those are depends on the plane. Held at z the
+  /// arrows are (Fx, Fy); held at x they are (Fy, Fz), because the plane's own
+  /// axes are y across and z up. The third comes back as [out]: it points
+  /// straight at the reader, so it has no direction to draw, but it is still
+  /// worth colouring by.
+  ({double h, double v, double out}) fieldOnPlane(
+    VectorFieldParser f,
+    double a,
+    double b,
+  ) {
+    final PlaneSlice s = fieldSlice;
+    switch (s.axis) {
+      case SliceAxis.x:
+        final (double fx, double fy, double fz) = f.evaluate(s.offset, a, b);
+        return (h: fy, v: fz, out: fx);
+      case SliceAxis.y:
+        final (double fx, double fy, double fz) = f.evaluate(a, s.offset, b);
+        return (h: fx, v: fz, out: fy);
+      case SliceAxis.z:
+        final (double fx, double fy, double fz) = f.evaluate(a, b, s.offset);
+        return (h: fx, v: fy, out: fz);
+    }
+  }
+
+  /// How strong the field is at a point on the plane.
+  ///
+  /// The whole vector's length, not the part lying in the plane: a field
+  /// running mostly through the slice is still a strong field, and shading it
+  /// as though it were weak would say the opposite.
+  double fieldMagnitude(VectorFieldParser f, double a, double b) {
+    final PlaneSlice s = fieldSlice;
+    return switch (s.axis) {
+      SliceAxis.x => f.magnitude(s.offset, a, b),
+      SliceAxis.y => f.magnitude(a, s.offset, b),
+      SliceAxis.z => f.magnitude(a, b, s.offset),
+    };
+  }
+
+  /// One named component of the field at a point on the plane.
+  ///
+  /// The component asked for is the field's own x, y or z, whichever plane is
+  /// being looked at — picking Fz does not start meaning something else
+  /// because the view turned.
+  double fieldComponent(
+    VectorFieldParser f,
+    SurfaceMode mode,
+    double a,
+    double b,
+  ) {
+    final PlaneSlice s = fieldSlice;
+    return switch (s.axis) {
+      SliceAxis.x => f.componentValue(mode, s.offset, a, b),
+      SliceAxis.y => f.componentValue(mode, a, s.offset, b),
+      SliceAxis.z => f.componentValue(mode, a, b, s.offset),
+    };
+  }
+
+  /// How much of the bottom of the panel is covered by the expression rows.
+  ///
+  /// The rows float over the plot, so the panel is taller than the part you
+  /// can see. The curve is drawn into what is left, which is what keeps it in
+  /// view as rows are added — the 3D box already does this, and a flat plot
+  /// simply ran on underneath them.
+  final double bottomInset;
 
   @override
   void paint(Canvas canvas, Size size) {
     double toScreenX(double x) => (x - xMin) / (xMax - xMin) * size.width;
+    final double visible = max(1.0, size.height - bottomInset);
     double toScreenY(double y) =>
-        size.height - (y - yMin) / (yMax - yMin) * size.height;
+        visible - (y - yMin) / (yMax - yMin) * visible;
     final bool showSurface = surfaceMode != SurfaceMode.none;
 
     _drawGrid(canvas, size, toScreenX, toScreenY);
@@ -125,7 +248,7 @@ class Plot2DPainter extends CustomPainter {
             surfaceMode,
           );
         }
-      } else if (fieldType == FieldType.scalar && !function.isLevelSet) {
+      } else if (fieldType == FieldType.scalar) {
         // A level set has no height to shade — F is only a means of locating
         // the curve, so shading it would colour the plot by "distance from the
         // answer" rather than by anything the user asked for.
@@ -144,7 +267,13 @@ class Plot2DPainter extends CustomPainter {
       // are written the same way. Only the variables tell them apart: `y x̂ − x ŷ`
       // is an arrow at every point, `cos(u) x̂ + sin(u) ŷ` is one point swept
       // into a curve.
-      if (function.isComplex) {
+      // Hidden means hidden, for a complex line as much as any other.
+      //
+      // Only the eye is consulted here: a visible complex line takes exactly
+      // the path it always did, so nothing about how it is drawn changes. A
+      // hidden one falls through to the rest of the cell instead, which is
+      // what closing the eye should leave you with.
+      if (function.isComplex && !function.hidden) {
         // Before everything: a complex line is not a curve of x, and sampling
         // it as one gives NaN at every point.
         if (complexView.showsColouring) {
@@ -305,10 +434,13 @@ class Plot2DPainter extends CustomPainter {
     double Function(double) toScreenY,
   ) {
     final parser = function;
-    if (!parser.usesY) return;
+    // A curve y = f(x) has nothing to colour — it is one-dimensional. A level
+    // set always has, whichever two of x, y and z the plane leaves free, so
+    // the y test would wrongly turn away something like x² + z² = 1 cut at y.
+    if (!tracesLevel(parser) && !parser.usesY) return;
 
     final List<List<double>> corners = _sampleHeatmap(
-      (x, y) => parser.evaluate(x, y),
+      (x, y) => surfaceValueAt(parser, x, y),
     );
 
     double minVal = double.infinity;
@@ -344,10 +476,10 @@ class Plot2DPainter extends CustomPainter {
         case SurfaceMode.x:
         case SurfaceMode.y:
         case SurfaceMode.z:
-          return field.componentValue(surfaceMode, x, y).abs();
+          return fieldComponent(field, surfaceMode, x, y).abs();
         case SurfaceMode.magnitude:
         case SurfaceMode.none:
-          return field.magnitude(x, y);
+          return fieldMagnitude(field, x, y);
       }
     }
 
@@ -376,7 +508,7 @@ class Plot2DPainter extends CustomPainter {
     if (field == null) return;
 
     final List<List<double>> corners = _sampleHeatmap(
-      (x, y) => field.componentValue(mode, x, y),
+      (x, y) => fieldComponent(field, mode, x, y),
     );
 
     double minVal = double.infinity;
@@ -415,7 +547,7 @@ class Plot2DPainter extends CustomPainter {
       for (int j = 0; j <= gridSize; j++) {
         final x = xMin + (xMax - xMin) * i / gridSize;
         final y = yMin + (yMax - yMin) * j / gridSize;
-        final mag = vectorParser!.magnitude(x, y);
+        final mag = fieldMagnitude(vectorParser!, x, y);
         if (mag.isFinite) {
           row.add(mag);
           maxMag = max(maxMag, mag);
@@ -475,7 +607,7 @@ class Plot2DPainter extends CustomPainter {
       for (int j = 0; j <= gridSize; j++) {
         final x = xMin + (xMax - xMin) * i / gridSize;
         final y = yMin + (yMax - yMin) * j / gridSize;
-        final val = vectorParser!.componentValue(mode, x, y);
+        final val = fieldComponent(vectorParser!, mode, x, y);
         if (val.isFinite) {
           row.add(val);
           minVal = min(minVal, val);
@@ -966,7 +1098,7 @@ class Plot2DPainter extends CustomPainter {
       // By row, not by position in this list. The list is filtered, so
       // position would shift whenever a line above became invalid.
       final Color color = plotTheme.seriesColor(parser.seriesIndex);
-      if (parser.isLevelSet) {
+      if (tracesLevel(parser)) {
         // An inequality is an area, so it is shaded first and the boundary
         // drawn over it.
         if (parser.relation.isRegion) {
@@ -1005,7 +1137,11 @@ class Plot2DPainter extends CustomPainter {
       final double x = xMin + (i + 0.5) * dx;
       for (int j = 0; j < cells; j++) {
         final double y = yMin + (j + 0.5) * dy;
-        if (!parser.relation.holds(parser.evaluate(x, y))) continue;
+        if (!parser.relation.holds(
+          sliceFor(parser).sample(parser, x, y) - isoFor(parser),
+        )) {
+          continue;
+        }
         region.addRect(
           Rect.fromLTWH(
             toScreenX(xMin + i * dx),
@@ -1051,6 +1187,8 @@ class Plot2DPainter extends CustomPainter {
           interacting
               ? marchingSquaresDraggingResolution
               : marchingSquaresDefaultResolution,
+      slice: sliceFor(parser),
+      iso: isoFor(parser),
     );
     if (segments.isEmpty) return;
 
@@ -1112,7 +1250,11 @@ class Plot2DPainter extends CustomPainter {
       final x = xMin + i * (xMax - xMin) / steps;
       double y;
       try {
-        y = parser.evaluate(x, 0);
+        // The second argument is not the vertical coordinate but the other
+        // held variable: cut at y = c this reads f(x, c), and cut at x = c it
+        // reads f(c, x) with x running along the y axis. What comes back is
+        // the height either way.
+        y = sliceFor(parser).sample(parser, x, 0);
       } catch (e) {
         started = false;
         lastY = null;
@@ -1180,9 +1322,16 @@ class Plot2DPainter extends CustomPainter {
       // Solving can also return nothing, which is the right answer: the unit
       // circle simply has no y at x = 1.33.
       final List<double> ys =
-          c.isLevelSet
-              ? levelSetYAt(c, tx, yMin, yMax)
-              : <double>[c.evaluate(tx, 0)];
+          tracesLevel(c)
+              ? levelSetYAt(
+                c,
+                tx,
+                yMin,
+                yMax,
+                slice: sliceFor(c),
+                iso: isoFor(c),
+              )
+              : <double>[sliceFor(c).sample(c, tx, 0)];
 
       for (final double y in ys) {
         if (!y.isFinite) continue;
@@ -1264,7 +1413,7 @@ class Plot2DPainter extends CustomPainter {
         final x = xMin + (xMax - xMin) * i / gridCount;
         final y = yMin + (yMax - yMin) * j / gridCount;
         try {
-          final val = parser.evaluate(x, y);
+          final val = surfaceValueAt(parser, x, y);
           if (val.isFinite) {
             minVal = min(minVal, val);
             maxVal = max(maxVal, val);
@@ -1282,7 +1431,7 @@ class Plot2DPainter extends CustomPainter {
         final y = yMin + (yMax - yMin) * j / gridCount;
 
         try {
-          final val = parser.evaluate(x, y);
+          final val = surfaceValueAt(parser, x, y);
           if (!val.isFinite) continue;
 
           final normalized = (val - minVal) / (maxVal - minVal);
@@ -1343,7 +1492,7 @@ class Plot2DPainter extends CustomPainter {
         final y = yMin + (yMax - yMin) * j / gridSize;
         double val;
         try {
-          val = parser.evaluate(x, y);
+          val = surfaceValueAt(parser, x, y);
           if (!val.isFinite) val = 0;
         } catch (e) {
           val = 0;
@@ -1493,7 +1642,7 @@ class Plot2DPainter extends CustomPainter {
       for (int j = 0; j <= gridCount; j++) {
         final x = xMin + (xMax - xMin) * i / gridCount;
         final y = yMin + (yMax - yMin) * j / gridCount;
-        final mag = field.magnitude(x, y);
+        final mag = fieldMagnitude(field, x, y);
         if (mag.isFinite) maxMag = max(maxMag, mag);
       }
     }
@@ -1505,23 +1654,37 @@ class Plot2DPainter extends CustomPainter {
         final x = xMin + (xMax - xMin) * i / gridCount;
         final y = yMin + (yMax - yMin) * j / gridCount;
 
-        final (fx, fy, fz) = field.evaluate(x, y);
-        double vx = fx;
-        double vy = fy;
-        double mag = field.magnitude(x, y);
+        final ({double h, double v, double out}) f = fieldOnPlane(field, x, y);
+        double vx = f.h;
+        double vy = f.v;
+        double mag = fieldMagnitude(field, x, y);
 
-        if (surfaceMode == SurfaceMode.x) {
-          vx = fx;
-          vy = 0;
-          mag = fx.abs();
-        } else if (surfaceMode == SurfaceMode.y) {
-          vx = 0;
-          vy = fy;
-          mag = fy.abs();
-        } else if (surfaceMode == SurfaceMode.z) {
-          vx = 0;
-          vy = 0;
-          mag = fz.abs();
+        // Asking for one component draws only that component. Which of the
+        // three lies across the view, which lies up it and which points out of
+        // it depends on the plane, so the choice is matched by name rather
+        // than assumed to be x across and y up.
+        final PlaneSlice plane = fieldSlice;
+        final String? wanted = switch (surfaceMode) {
+          SurfaceMode.x => 'x',
+          SurfaceMode.y => 'y',
+          SurfaceMode.z => 'z',
+          SurfaceMode.magnitude || SurfaceMode.none => null,
+        };
+        if (wanted != null) {
+          if (wanted == plane.horizontalName) {
+            vy = 0;
+            mag = f.h.abs();
+          } else if (wanted == plane.verticalName) {
+            vx = 0;
+            mag = f.v.abs();
+          } else {
+            // The component pointing at the reader. There is no direction to
+            // draw it in, so the arrow goes and only the colour is left — the
+            // same thing Fz has always done on the z = 0 plane.
+            vx = 0;
+            vy = 0;
+            mag = f.out.abs();
+          }
         }
 
         if (!mag.isFinite || mag < 1e-10) continue;
@@ -1591,7 +1754,7 @@ class Plot2DPainter extends CustomPainter {
       for (int j = 0; j <= gridCount; j++) {
         final x = xMin + (xMax - xMin) * i / gridCount;
         final y = yMin + (yMax - yMin) * j / gridCount;
-        final mag = vectorParser!.magnitude(x, y);
+        final mag = fieldMagnitude(vectorParser!, x, y);
         if (mag.isFinite) maxMag = max(maxMag, mag);
       }
     }
@@ -1603,7 +1766,7 @@ class Plot2DPainter extends CustomPainter {
         final x = xMin + (xMax - xMin) * i / gridCount;
         final y = yMin + (yMax - yMin) * j / gridCount;
 
-        final mag = vectorParser!.magnitude(x, y);
+        final mag = fieldMagnitude(vectorParser!, x, y);
         if (!mag.isFinite) continue;
 
         final normalized = mag / maxMag;
@@ -1776,6 +1939,9 @@ class Plot2DPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant Plot2DPainter old) =>
+      // A row appearing or going changes how much of the panel is visible, and
+      // so where the curve is drawn.
+      old.bottomInset != bottomInset ||
       old.xMin != xMin ||
       old.xMax != xMax ||
       old.yMin != yMin ||
@@ -1788,5 +1954,6 @@ class Plot2DPainter extends CustomPainter {
       old.traceX != traceX ||
       old.traceFeature != traceFeature ||
       old.functions != functions ||
+      old.slice != slice ||
       old.colors != colors;
 }

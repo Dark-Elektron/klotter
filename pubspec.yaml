@@ -1,5 +1,5 @@
 name: klotter
-description: "A scientific calculator that graphs what you type."
+description: "A scientific graphing calculator."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: "none" # Remove this line if you wish to publish to pub.dev
@@ -16,7 +16,7 @@ publish_to: "none" # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 0.1.0+26
+version: 0.1.0+33
 
 environment:
   sdk: ^3.7.0
@@ -65,13 +65,22 @@ flutter_native_splash:
   web: false
   color: "#ede4eb"
   icon_background_color: "#ede4eb"
-  image: "assets/icons/playstore.png"
-  branding: "assets/icons/branding.png"
+  image: "assets/icons/splash_android12.png"
+  branding: "assets/icons/branding_splash.png"
   android_12:
     color: "#ede4eb"
-    image: "assets/icons/playstore.png"
-    branding: "assets/icons/branding.png"
-    icon_background_color: "#bfcfcc"
+    # The icon is drawn on a transparent plate 1152 wide with the artwork kept
+    # inside the middle 640. Android 12 masks the splash icon to a circle, so
+    # the old image — artwork filling 60% of a square with its own opaque
+    # background — had its axis arrows clipped by the mask, which read as the
+    # icon sitting off centre inside the rounded square.
+    image: "assets/icons/splash_android12.png"
+    # Sized to the space it is given rather than scaled up from 1794 wide,
+    # which is what made the wordmark look stretched.
+    branding: "assets/icons/branding_splash.png"
+    # A shade darker than the #ede4eb background, so the rounded square reads
+    # as its own surface rather than nearly disappearing into the page.
+    icon_background_color: "#c6b3c4"
 
 flutter_launcher_icons:
   android: "launcher_icon"

@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:klotter/math_renderer/math_nodes.dart';
+import 'package:klotter/plotting/models/point_3d.dart';
 import 'package:klotter/plotting/parsers/plot_expression.dart';
 import 'package:klotter/plotting/utils/level_set.dart';
 
@@ -153,6 +154,56 @@ void main() {
 
     test('a degenerate box yields nothing rather than throwing', () {
       expect(marchingTetrahedra(fn('xx+yy+zz=1'), 0, 0, -2, 2, -2, 2), isEmpty);
+    });
+  });
+
+  group('a steep surface still lands on itself', () {
+    // A sphere is the case marching gets right by luck — f runs straight
+    // enough between two samples that interpolating along the edge is nearly
+    // exact. A quartic does not, and that is where the crossing has to be
+    // solved for rather than guessed at.
+    const String steep = 'xxxx+yyyy+zzzz-xx-yy-zz+0.4=0';
+    const double cell = 6.0 / 40;
+
+    /// How far a point is from the true surface, in cells, from `|f| / |grad f|`.
+    List<double> offSurface(String src) {
+      final PlotExpression f = fn(src);
+      final List<double> out = <double>[];
+      const double h = 1e-5;
+      for (final t in marchingTetrahedra(f, -3, 3, -3, 3, -3, 3)) {
+        for (final Point3D v in <Point3D>[t.a, t.b, t.c]) {
+          final double x = v.x;
+          final double y = v.y;
+          final double z = v.z;
+          final double value = f.evaluate(x, y, z);
+          final double gx =
+              (f.evaluate(x + h, y, z) - f.evaluate(x - h, y, z)) / (2 * h);
+          final double gy =
+              (f.evaluate(x, y + h, z) - f.evaluate(x, y - h, z)) / (2 * h);
+          final double gz =
+              (f.evaluate(x, y, z + h) - f.evaluate(x, y, z - h)) / (2 * h);
+          final double g = math.sqrt(gx * gx + gy * gy + gz * gz);
+          if (g > 0) out.add(value.abs() / g / cell);
+        }
+      }
+      out.sort();
+      return out;
+    }
+
+    test('its vertices sit on it, not near it', () {
+      final List<double> off = offSurface(steep);
+      expect(off, isNotEmpty);
+      double q(double p) => off[(p * (off.length - 1)).round()];
+
+      // Measured at 0.00098, 0.0158 and 0.0201 of a cell. Interpolating along
+      // the edge and stopping there gives 0.053, 0.190 and 0.275 — which reads
+      // as a twentieth of a cell and sounds harmless, and is not: a cell is
+      // about 22 screen pixels at phone width, so that is the surface and the
+      // grid drawn on it wandering 1.2 px at the median and 6.2 px at the
+      // worst, either side of a line drawn 1.8 px wide.
+      expect(q(0.5), lessThan(0.005), reason: 'median ${q(0.5)} cells off');
+      expect(q(0.99), lessThan(0.05), reason: 'p99 ${q(0.99)} cells off');
+      expect(q(1.0), lessThan(0.1), reason: 'worst ${q(1.0)} cells off');
     });
   });
 }

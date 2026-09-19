@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -219,6 +220,65 @@ class _SelectionOverlayWidgetState extends State<SelectionOverlayWidget> {
   static const double _menuOffset = 12.0;
   static const double _handleSize = 18.0;
 
+  /// How close to the viewport edge a dragged handle starts scrolling.
+  static const double _autoScrollMargin = 36.0;
+
+  /// Pixels per tick while auto-scrolling.
+  static const double _autoScrollStep = 6.0;
+
+  // ============== SCROLL TRACKING ==============
+
+  /// The row's horizontal scroll, watched so the overlay follows the glyphs.
+  ///
+  /// A long expression scrolls inside a `SingleChildScrollView`, but this
+  /// overlay lives in the `Overlay` and computes its geometry in global
+  /// coordinates at build time. Nothing rebuilt it when the row scrolled, so
+  /// the highlight and both handles stayed pinned to the screen while the
+  /// expression slid out from under them — the handles then pointed at
+  /// whatever happened to be beneath them.
+  ScrollPosition? _watchedScroll;
+
+  /// The scrollable the editor sits in, or null when it is not in one.
+  ScrollableState? get _scrollable {
+    final BuildContext? host = widget.containerKey.currentContext;
+    if (host == null) return null;
+    return Scrollable.maybeOf(host);
+  }
+
+  /// Subscribe to the row's scroll, or move the subscription if it changed.
+  ///
+  /// Idempotent, and safe to call from `build`: it only ever adds or removes a
+  /// listener, never calls `setState`.
+  void _syncScrollSubscription() {
+    final ScrollPosition? position = _scrollable?.position;
+    if (identical(position, _watchedScroll)) return;
+    _watchedScroll?.removeListener(_onScrolled);
+    _watchedScroll = position;
+    _watchedScroll?.addListener(_onScrolled);
+  }
+
+  void _onScrolled() {
+    if (mounted) setState(() {});
+  }
+
+  /// The visible window, in global coordinates, that the expression scrolls
+  /// inside. Null when the editor is not in a scrollable.
+  Rect? _viewportGlobalRect() {
+    final ScrollableState? scrollable = _scrollable;
+    if (scrollable == null) return null;
+    final RenderBox? box = laidOutBox(scrollable.context);
+    if (box == null) return null;
+    return box.localToGlobal(Offset.zero) & box.size;
+  }
+
+  @override
+  void dispose() {
+    _stopAutoScroll();
+    _watchedScroll?.removeListener(_onScrolled);
+    _watchedScroll = null;
+    super.dispose();
+  }
+
   // ============== BOUNDING BOX HELPERS ==============
 
   Set<String> _collectAllNodeIds(MathNode node) {
@@ -340,28 +400,27 @@ class _SelectionOverlayWidgetState extends State<SelectionOverlayWidget> {
     double minY = double.infinity;
     double maxY = double.negativeInfinity;
 
-    for (final info in widget.controller.layoutRegistry.values) {
-      if (nodeIds.contains(info.node.id)) {
-        minX = math.min(minX, info.rect.left);
-        maxX = math.max(maxX, info.rect.right);
-        minY = math.min(minY, info.rect.top);
-        maxY = math.max(maxY, info.rect.bottom);
-      }
+    // Looked up per descendant rather than by scanning the whole registry:
+    // this is called once per selected node, and the whole build runs on every
+    // pointer move of a handle drag.
+    for (final String id in nodeIds) {
+      final info = widget.controller.layoutRegistry[id];
+      if (info == null) continue;
+      minX = math.min(minX, info.rect.left);
+      maxX = math.max(maxX, info.rect.right);
+      minY = math.min(minY, info.rect.top);
+      maxY = math.max(maxY, info.rect.bottom);
     }
 
     if (minX == double.infinity) return null;
     return Rect.fromLTRB(minX, minY, maxX, maxY);
   }
 
-  NodeLayoutInfo? _findLayoutInfo(MathNode node) {
-    for (final info in widget.controller.layoutRegistry.values) {
-      if (info.node.id == node.id) return info;
-    }
-    return null;
-  }
+  NodeLayoutInfo? _findLayoutInfo(MathNode node) =>
+      widget.controller.layoutRegistry[node.id];
 
   double _getCursorOffset(NodeLayoutInfo info, int charIndex) {
-    final text = info.node.text;
+    final text = info.literalText;
     if (text.isEmpty || charIndex <= 0) return 0.0;
 
     final displayText = info.displayText;
@@ -525,7 +584,7 @@ class _SelectionOverlayWidgetState extends State<SelectionOverlayWidget> {
           info.path == cursor.path &&
           info.index == cursor.index) {
         double cursorX;
-        if (info.node.text.isEmpty) {
+        if (info.literalText.isEmpty) {
           cursorX = info.rect.left;
         } else {
           cursorX = info.rect.left + _getCursorOffset(info, cursor.subIndex);
@@ -552,31 +611,196 @@ class _SelectionOverlayWidgetState extends State<SelectionOverlayWidget> {
 
   // ============== HANDLE DRAG ==============
 
-  void _onHandleDragStart(bool isStart) {
+  /// Which handle is being dragged, or null when none is.
+  ///
+  /// A handle scrolled out of view is hidden, but never the one under the
+  /// finger: removing its `GestureDetector` mid-drag would cancel the drag.
+  bool? _draggingHandle;
+
+  /// The touch point, offset so the handle tracks the selection edge it was
+  /// grabbed by rather than jumping to wherever the finger landed.
+  ///
+  /// The touch target is 34px square and sits below and to one side of the
+  /// edge it belongs to, so the raw pointer position is up to 17px off
+  /// horizontally and up to 34px off vertically. The only compensation used to
+  /// be a fixed 30px on y inside `SelectionManager`, which on a tall row — a
+  /// fraction, an integral — could land the compensated point in a different
+  /// sub-context and collapse the selection. Measuring the grab instead makes
+  /// it exact for whatever the geometry happens to be.
+  Offset _grabOffset = Offset.zero;
+
+  Offset? _lastHandleGlobal;
+  Timer? _autoScrollTimer;
+
+  void _onHandleDragStart(bool isStart, Offset globalPosition, Rect bounds) {
+    _draggingHandle = isStart;
+
+    // The edge this handle stands for, in global coordinates.
+    final Offset anchor = Offset(
+      isStart ? bounds.left : bounds.right,
+      bounds.bottom,
+    );
+    _grabOffset = anchor - globalPosition;
+
     widget.controller.startHandleDrag(isStart);
   }
 
   void _onHandleDragUpdate(bool isStart, Offset globalPosition) {
+    _lastHandleGlobal = globalPosition;
+    _applyHandleAt(isStart, globalPosition);
+    _updateAutoScroll(isStart, globalPosition);
+  }
+
+  void _applyHandleAt(bool isStart, Offset globalPosition) {
     final containerBox = laidOutBox(widget.containerKey.currentContext);
     if (containerBox == null) return;
 
-    final localPos = containerBox.globalToLocal(globalPosition);
+    final localPos = containerBox.globalToLocal(globalPosition + _grabOffset);
     widget.controller.updateSelectionHandle(isStart, localPos);
 
     setState(() {});
   }
 
   void _onHandleDragEnd() {
+    _stopAutoScroll();
+    _draggingHandle = null;
+    _lastHandleGlobal = null;
+    _grabOffset = Offset.zero;
     widget.controller.endHandleDrag();
+  }
+
+  /// Start, keep or stop scrolling the row while a handle sits near an edge.
+  ///
+  /// Without this the hidden part of a long expression could not be selected
+  /// at all: the handle stops at the viewport edge and there is no other way
+  /// to bring the rest of the expression into reach.
+  void _updateAutoScroll(bool isStart, Offset globalPosition) {
+    if (_autoScrollDelta(globalPosition) == 0) {
+      _stopAutoScroll();
+      return;
+    }
+    if (_autoScrollTimer != null) return;
+
+    _autoScrollTimer = Timer.periodic(
+      const Duration(milliseconds: 16),
+      (_) => _autoScrollTick(isStart),
+    );
+  }
+
+  void _stopAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+  }
+
+  /// How far to scroll this tick, in scroll-offset pixels, sign included.
+  /// Zero when the handle is not in either edge zone or there is no room left.
+  double _autoScrollDelta(Offset globalPosition) {
+    final ScrollableState? scrollable = _scrollable;
+    final ScrollPosition? position = scrollable?.position;
+    final Rect? viewport = _viewportGlobalRect();
+    if (scrollable == null || position == null || viewport == null) return 0;
+
+    double delta;
+    if (globalPosition.dx > viewport.right - _autoScrollMargin) {
+      delta = _autoScrollStep; // reveal content further right
+    } else if (globalPosition.dx < viewport.left + _autoScrollMargin) {
+      delta = -_autoScrollStep; // reveal content further left
+    } else {
+      return 0;
+    }
+
+    // The rows scroll in reverse, where a larger offset means content from the
+    // other end. Asking the axis rather than assuming keeps this right if that
+    // ever changes.
+    if (axisDirectionIsReversed(scrollable.axisDirection)) delta = -delta;
+
+    final double target = (position.pixels + delta).clamp(
+      position.minScrollExtent,
+      position.maxScrollExtent,
+    );
+    return target - position.pixels;
+  }
+
+  void _autoScrollTick(bool isStart) {
+    if (!mounted) {
+      _stopAutoScroll();
+      return;
+    }
+
+    final Offset? at = _lastHandleGlobal;
+    final ScrollPosition? position = _scrollable?.position;
+    if (at == null || position == null) {
+      _stopAutoScroll();
+      return;
+    }
+
+    final double delta = _autoScrollDelta(at);
+    if (delta == 0) {
+      _stopAutoScroll();
+      return;
+    }
+
+    position.jumpTo(position.pixels + delta);
+    // Re-resolve at the same point on screen: the content moved under it, so
+    // the selection keeps growing while the finger is held still.
+    _applyHandleAt(isStart, at);
   }
 
   // ============== BUILD ==============
 
+  /// The highlight, clipped to [viewport]; nothing when it is fully scrolled
+  /// out. Returned as a list so the caller can spread it.
+  List<Widget> _highlight(Rect rect, Rect? viewport) {
+    Rect visible = rect;
+    if (viewport != null) {
+      if (!rect.overlaps(viewport)) return const <Widget>[];
+      visible = rect.intersect(viewport);
+    }
+    if (visible.width <= 0 || visible.height <= 0) return const <Widget>[];
+
+    return <Widget>[
+      Positioned(
+        left: visible.left,
+        top: visible.top,
+        width: visible.width,
+        height: visible.height,
+        child: IgnorePointer(
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.yellow.withValues(alpha: 0.35),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        ),
+      ),
+    ];
+  }
+
+  /// Whether a handle should be drawn.
+  ///
+  /// A handle whose edge has scrolled out of the row is hidden rather than
+  /// left sitting at the viewport edge lying about where the selection starts.
+  /// The one currently under the finger always stays: removing it mid-drag
+  /// would take its `GestureDetector` with it and cancel the drag, which is
+  /// exactly what happens while auto-scrolling past the edge.
+  bool _handleIsVisible(bool isStart, Rect bounds, Rect? viewport) {
+    if (_draggingHandle == isStart) return true;
+    if (viewport == null) return true;
+    final double x = isStart ? bounds.left : bounds.right;
+    return x >= viewport.left - _handleSize &&
+        x <= viewport.right + _handleSize;
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Cheap and idempotent; done here so a row that gains or replaces its
+    // scroll view is picked up without the overlay being rebuilt from scratch.
+    _syncScrollSubscription();
+
     final selectionBounds = _calculateSelectionBounds();
     final hasSelection = widget.controller.hasSelection;
     final screenSize = MediaQuery.of(context).size;
+    final Rect? viewport = _viewportGlobalRect();
     final hasClipboard =
         MathEditorController.clipboard != null &&
         !MathEditorController.clipboard!.isEmpty;
@@ -634,49 +858,45 @@ class _SelectionOverlayWidgetState extends State<SelectionOverlayWidget> {
             ),
           ),
 
-        // Selection highlight
+        // Selection highlight, trimmed to the part of the row that is on
+        // screen. The overlay sits above everything and is not clipped by the
+        // scroll view, so without this the highlight painted over the colour
+        // swatch, the eye toggle and the neighbouring rows.
         if (hasSelection && selectionBounds != null)
-          Positioned(
-            left: selectionBounds.rect.left,
-            top: selectionBounds.rect.top,
-            width: selectionBounds.rect.width,
-            height: selectionBounds.rect.height,
-            child: IgnorePointer(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.yellow.withValues(alpha: 0.35),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-          ),
+          ..._highlight(selectionBounds.rect, viewport),
 
         // Selection handles
         if (hasSelection && selectionBounds != null) ...[
           // Left (start) handle
-          Positioned(
-            left: selectionBounds.rect.left - _handleSize,
-            top: selectionBounds.rect.bottom,
-            child: _SelectionHandle(
-              isStart: true,
-              size: _handleSize,
-              onDragStart: () => _onHandleDragStart(true),
-              onDragUpdate: (pos) => _onHandleDragUpdate(true, pos),
-              onDragEnd: _onHandleDragEnd,
+          if (_handleIsVisible(true, selectionBounds.rect, viewport))
+            Positioned(
+              left: selectionBounds.rect.left - _handleSize,
+              top: selectionBounds.rect.bottom,
+              child: _SelectionHandle(
+                isStart: true,
+                size: _handleSize,
+                onDragStart:
+                    (pos) =>
+                        _onHandleDragStart(true, pos, selectionBounds.rect),
+                onDragUpdate: (pos) => _onHandleDragUpdate(true, pos),
+                onDragEnd: _onHandleDragEnd,
+              ),
             ),
-          ),
           // Right (end) handle
-          Positioned(
-            left: selectionBounds.rect.right,
-            top: selectionBounds.rect.bottom,
-            child: _SelectionHandle(
-              isStart: false,
-              size: _handleSize,
-              onDragStart: () => _onHandleDragStart(false),
-              onDragUpdate: (pos) => _onHandleDragUpdate(false, pos),
-              onDragEnd: _onHandleDragEnd,
+          if (_handleIsVisible(false, selectionBounds.rect, viewport))
+            Positioned(
+              left: selectionBounds.rect.right,
+              top: selectionBounds.rect.bottom,
+              child: _SelectionHandle(
+                isStart: false,
+                size: _handleSize,
+                onDragStart:
+                    (pos) =>
+                        _onHandleDragStart(false, pos, selectionBounds.rect),
+                onDragUpdate: (pos) => _onHandleDragUpdate(false, pos),
+                onDragEnd: _onHandleDragEnd,
+              ),
             ),
-          ),
         ],
 
         // Menu
@@ -777,7 +997,7 @@ class _SelectionBounds {
 class _SelectionHandle extends StatelessWidget {
   final bool isStart;
   final double size;
-  final VoidCallback onDragStart;
+  final Function(Offset globalPosition) onDragStart;
   final Function(Offset globalPosition) onDragUpdate;
   final VoidCallback onDragEnd;
 
@@ -795,10 +1015,12 @@ class _SelectionHandle extends StatelessWidget {
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onPanStart: (details) {
-        onDragStart();
-        onDragUpdate(details.globalPosition);
-      },
+      // No update on start. Touching a handle used to re-resolve the selection
+      // against the raw touch point straight away, so merely grabbing one —
+      // before any movement — moved the edge by however far the finger happened
+      // to be from it inside the 34px target. The grab is measured instead, and
+      // the first real change comes with the first real movement.
+      onPanStart: (details) => onDragStart(details.globalPosition),
       onPanUpdate: (details) {
         onDragUpdate(details.globalPosition);
       },

@@ -16,6 +16,8 @@ import '../parsers/plot_expression.dart';
 import '../parsers/vector_field_parser.dart';
 import '../utils/parametric.dart';
 import 'parameter_range_panel.dart';
+import 'plane_slice_gutter.dart';
+import '../models/plane_slice.dart';
 import '../../math_renderer/math_nodes.dart';
 import 'axis_range_sheet.dart';
 import 'plot_2d_screen.dart';
@@ -49,6 +51,13 @@ class InlinePlotPanel extends StatefulWidget {
   /// left out of the node list without recolouring everything after it.
   final List<bool> hiddenRows;
 
+  /// Which rows could not be plotted, by row number, with the reason.
+  ///
+  /// The panel already names the first problem in a banner over the plot. With
+  /// several rows stacked, that says what is wrong without saying which line
+  /// it is about, so the rows themselves are marked too.
+  final void Function(Map<int, String> byRow)? onRowErrors;
+
   /// Which symbols the expression is written in. The plot samples Cartesian
   /// space and converts each point into these before evaluating, so a
   /// spherical cell needs no separate renderer.
@@ -68,6 +77,7 @@ class InlinePlotPanel extends StatefulWidget {
     required this.nodes,
     this.initialView = PlotViewState.initial,
     this.hiddenRows = const <bool>[],
+    this.onRowErrors,
     this.bottomInset = 0,
     this.coordinateSystem = CoordinateSystem.cartesian,
     this.onViewChanged,
@@ -82,6 +92,23 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   List<PlotExpression> _functions = const <PlotExpression>[];
   String? _errorMessage;
   bool _is3DFunction = false;
+
+  /// Which plane the 2D view cuts, or null while the reader has not said.
+  ///
+  /// Null is meaningful, as it is for the colouring: the two plot types have
+  /// always cut different planes by default, so there is no single answer to
+  /// store for a plot nobody has touched.
+  PlaneSlice? _slice;
+
+  /// Whether the slice strip is taking width off the plot this frame.
+  ///
+  /// Worked out once at the top of build and read by both the padding and the
+  /// strip itself, so the two cannot disagree about whether the space is
+  /// reserved — which would either overlap the curve or leave a blank band.
+  bool _sliceStripShowing = false;
+
+  /// True while the slice slider is under a finger.
+  bool _slidingSlice = false;
 
   /// Whether the user has switched this plot to 3D.
   ///
@@ -100,6 +127,10 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   /// first; the controls that describe "the field" still mean that one.
   List<VectorFieldParser> _vectorFields = const <VectorFieldParser>[];
 
+  /// Whether the row at [row] has its eye closed.
+  bool _rowHidden(int row) =>
+      row < widget.hiddenRows.length && widget.hiddenRows[row];
+
   /// What u and v are swept over. Per panel rather than per app: two plots
   /// open at once are usually two different curves.
   ///
@@ -108,6 +139,9 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   late ParameterRange _uRange;
   late ParameterRange _vRange;
   bool _showContour = false;
+
+  /// Whether surfaces are drawn with their own grid over them.
+  bool _showMesh = false;
   SurfaceMode _surfaceMode = SurfaceMode.none;
 
   /// Whether the colouring is the user's choice rather than a default.
@@ -139,12 +173,16 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     final p3 = _plot3DKey.currentState;
     PlotViewState view = widget.initialView.copyWith(
       show3D: _show3D,
+      showMesh: _showMesh,
       uMin: _uRange.min,
       uMax: _uRange.max,
       vMin: _vRange.min,
       vMax: _vRange.max,
       surfaceMode: _surfaceModeChosen ? _surfaceMode.index : null,
       complexView: _complexViewChosen ? _complexView.bits : null,
+      sliceAxis: _slice?.axis.index,
+      sliceOffset: _slice?.offset,
+      clearSlice: _slice == null,
     );
     if (p2 != null) {
       final (xMin, xMax, yMin, yMax) = p2.ranges;
@@ -202,6 +240,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   void initState() {
     super.initState();
     _show3D = widget.initialView.show3D;
+    _showMesh = widget.initialView.showMesh;
     final int? savedMode = widget.initialView.surfaceMode;
     if (savedMode != null && savedMode < SurfaceMode.values.length) {
       _surfaceMode = SurfaceMode.values[savedMode];
@@ -211,6 +250,13 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     if (savedComplex != null) {
       _complexView = ComplexView.fromBits(savedComplex);
       _complexViewChosen = true;
+    }
+    final int? savedSlice = widget.initialView.sliceAxis;
+    if (savedSlice != null && savedSlice < SliceAxis.values.length) {
+      _slice = PlaneSlice(
+        axis: SliceAxis.values[savedSlice],
+        offset: widget.initialView.sliceOffset,
+      );
     }
     _uRange = (min: widget.initialView.uMin, max: widget.initialView.uMax);
     _vRange = (min: widget.initialView.vMin, max: widget.initialView.vMax);
@@ -232,6 +278,19 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     }
   }
 
+  /// The last set reported, so an unchanged set is not sent every rebuild.
+  Map<int, String> _lastRowErrors = const <int, String>{};
+
+  void _reportRowErrors(Map<int, String> byRow) {
+    if (mapEquals(byRow, _lastRowErrors)) return;
+    _lastRowErrors = byRow;
+    // After the frame: this runs from a parse that is itself inside a build,
+    // and the owner rebuilds when it hears.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.onRowErrors?.call(byRow);
+    });
+  }
+
   void _parseFunction(String expr) {
     final trimmed = expr.trim();
     if (trimmed.isEmpty) {
@@ -243,10 +302,10 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
         _functions = const <PlotExpression>[];
         _vectorParser = null;
         _vectorFields = const <VectorFieldParser>[];
-        _vectorFields = const <VectorFieldParser>[];
         _fieldType = FieldType.scalar;
         _errorMessage = null;
       });
+      _reportRowErrors(const <int, String>{});
       return;
     }
 
@@ -259,15 +318,23 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     // and what was left was the sweep with the other lines' terms folded into
     // its components. The cell drew nothing and called itself vector arrows.
     final List<List<MathNode>> lines = PlotExpression.splitLines(widget.nodes);
-    final List<List<MathNode>> vectorLines =
-        lines.where(VectorFieldParser.isVectorFieldNodes).toList();
-
     // All of them. Two fields on one set of axes get two sets of arrows and a
     // colour ramp each, the same way two surfaces do — sharing the full
     // rainbow would put every magnitude in both and neither could be followed.
+    //
+    // Walked by row rather than filtered, because a hidden row has to be left
+    // out and the row number is the only thing that says which is which. It
+    // was filtered before, which threw the numbering away: a field or a sweep
+    // could not be hidden at all, since nothing downstream knew which row it
+    // came from. Unlike a surface, a field is not a PlotExpression and carries
+    // no `hidden` of its own — leaving it out here is what hiding means.
     final List<VectorFieldParser> fields = <VectorFieldParser>[
-      for (final List<MathNode> line in vectorLines)
-        if (VectorFieldParser.fromNodes(line) case final VectorFieldParser f) f,
+      for (int row = 0; row < lines.length; row++)
+        if (VectorFieldParser.isVectorFieldNodes(lines[row]) &&
+            !_rowHidden(row))
+          if (VectorFieldParser.fromNodes(lines[row])
+              case final VectorFieldParser f)
+            f,
     ];
     final VectorFieldParser? vector = fields.isEmpty ? null : fields.first;
 
@@ -275,11 +342,20 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
       // The rest of the cell is still made of plots, and they are drawn
       // alongside rather than thrown away. Compiled one line at a time, since
       // each is its own curve.
+      // By row here too, so these keep their colour slot and their eye. They
+      // were compiled without either, so a curve sharing a cell with a field
+      // could not be hidden and took whatever colour its position happened to
+      // give it.
       final List<PlotExpression> alongside =
           <PlotExpression>[
-            for (final List<MathNode> line in lines)
-              if (!VectorFieldParser.isVectorFieldNodes(line))
-                PlotExpression.compile(line, system: widget.coordinateSystem),
+            for (int row = 0; row < lines.length; row++)
+              if (!VectorFieldParser.isVectorFieldNodes(lines[row]))
+                PlotExpression.compile(
+                    lines[row],
+                    system: widget.coordinateSystem,
+                  )
+                  ..seriesIndex = row
+                  ..hidden = _rowHidden(row),
           ].where((PlotExpression e) => e.isValid).toList();
 
       setState(() {
@@ -314,15 +390,56 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     // Every line of the cell is its own curve on the shared plot, so one bad
     // line does not blank the others — the plot draws what it can and names
     // the first problem.
-    final compiled = PlotExpression.compileAll(
-      widget.nodes,
-      system: widget.coordinateSystem,
-    );
+    //
+    // A line written with unit vectors is never an ordinary expression, so it
+    // is left out rather than compiled and failed. Reaching here means no
+    // field is being drawn — every one of them is hidden — and putting the
+    // hidden line through this parser reported "unknown variable e_x, e_y"
+    // for a row whose eye was closed. A hidden row draws nothing and complains
+    // about nothing.
+    final List<PlotExpression> compiled = <PlotExpression>[
+      for (int row = 0; row < lines.length; row++)
+        if (!VectorFieldParser.isVectorFieldNodes(lines[row]))
+          PlotExpression.compile(lines[row], system: widget.coordinateSystem)
+            ..seriesIndex = row
+            ..hidden = _rowHidden(row),
+    ];
+
+    if (compiled.isEmpty) {
+      // Nothing but hidden fields. Bare axes, and no error: closing an eye is
+      // not a mistake to report.
+      setState(() {
+        _functions = const <PlotExpression>[];
+        _currentFunction = PlotExpression.invalid;
+        _vectorParser = null;
+        _vectorFields = const <VectorFieldParser>[];
+        _fieldType = FieldType.scalar;
+        _errorMessage = null;
+      });
+      _reportRowErrors(const <int, String>{});
+      return;
+    }
+
+    // By row, so the rows themselves can say which line the trouble is on.
+    final Map<int, String> rowErrors = <int, String>{
+      for (final PlotExpression e in compiled)
+        if (!e.isValid) e.seriesIndex: e.error ?? 'Cannot plot this line',
+    };
+    _reportRowErrors(rowErrors);
+
     final valid = compiled.where((e) => e.isValid).toList();
     if (valid.isEmpty) {
       setState(() {
         _functions = const <PlotExpression>[];
         _currentFunction = PlotExpression.invalid;
+        // The fields go too. Hiding the one field in a cell lands exactly
+        // here: with the field left out, the only line left compiles as an
+        // ordinary expression and fails, and this returned without touching
+        // the field list — so the arrows stayed on the plot after the eye had
+        // been closed on them.
+        _vectorParser = null;
+        _vectorFields = const <VectorFieldParser>[];
+        _fieldType = FieldType.scalar;
         _errorMessage = compiled.first.error ?? 'Invalid function';
       });
       return;
@@ -342,6 +459,11 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
       _errorMessage = valid.length == compiled.length ? null : firstError.error;
       _currentFunction = valid.first;
       _vectorParser = null;
+      // And the list with it. Clearing only the parser left the previous
+      // fields standing, so closing the eye on the one field in a cell left
+      // its arrows on the plot: the cell became scalar while the painter was
+      // still handed the field it had before.
+      _vectorFields = const <VectorFieldParser>[];
       _fieldType = FieldType.scalar;
       // A level set in z is a surface even though it has no height to sample,
       // so 3D has to be offered for it explicitly rather than inferred from
@@ -524,6 +646,18 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   @visibleForTesting
   Tool3DMode get toolModeForTest => _tool3DMode;
 
+  /// Whether the colouring menu is on offer — for a field cut to a plane, that
+  /// is what turns the cut surface on.
+  @visibleForTesting
+  bool get canShowSurfaceForTest => _canShowSurface();
+
+  /// Which plane the flat view is cutting.
+  @visibleForTesting
+  PlaneSlice get sliceForTest => _resolvedSlice;
+
+  @visibleForTesting
+  void cycleSliceAxisForTest() => _cycleSliceAxis();
+
   @visibleForTesting
   ZoomAxis get zoomAxisForTest => _zoomAxis;
 
@@ -585,6 +719,84 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     ].any((PlotExpression? c) => c?.variables.contains(name) ?? false);
   }
 
+  /// Whether this plot has a third dimension to slide along.
+  ///
+  /// A curve in the plane has no plane to choose, so the strip stays away
+  /// rather than offering a control that changes nothing — the same reasoning
+  /// as the u and v chips appearing only for the parameters actually used.
+  bool get _canSlice =>
+      _is3DFunction ||
+      (_vectorParser?.is3D ?? false) ||
+      _vectorFields.any((VectorFieldParser f) => f.is3D) ||
+      _functions.any((PlotExpression f) => f.variables.contains('z'));
+
+  /// The plane on show, falling back to whichever one this plot's own kind has
+  /// always used when the reader has not chosen.
+  PlaneSlice get _resolvedSlice {
+    final PlaneSlice? chosen = _slice;
+    if (chosen != null) return chosen;
+    // A field has always been sampled with its third argument left at zero, so
+    // it opens where an equation does. Only a surface z = f(x, y) is different,
+    // because it was drawn by evaluating f(x, 0).
+    if (_fieldType == FieldType.vector) return const PlaneSlice();
+    return _currentFunction.isLevelSet
+        ? const PlaneSlice()
+        : const PlaneSlice(axis: SliceAxis.y);
+  }
+
+  /// How far the held variable runs either side of zero.
+  ///
+  /// Taken from the 3D box rather than from the 2D window, because the plane
+  /// being sled is the third axis — the one the flat view has no room for.
+  double get _sliceExtent {
+    final p3 = _plot3DKey.currentState;
+    return switch (_resolvedSlice.axis) {
+      SliceAxis.x => p3?.xRange ?? widget.initialView.rangeX,
+      SliceAxis.y => p3?.yRange ?? widget.initialView.rangeY,
+      SliceAxis.z => p3?.zRange ?? widget.initialView.rangeZ,
+    };
+  }
+
+  /// How much of the leading strip's foot the parameter knobs and the complex
+  /// toggles have already taken.
+  ///
+  /// They are positioned against the panel, not against the plot, so they come
+  /// down over the slice strip — which had them sitting on its button and
+  /// covering its track. Rather than move them into the pile's hand-computed
+  /// offsets, the strip stands off by however much they use, so its button
+  /// rides up when they appear and drops back when they go.
+  double get _leadingFootHeight {
+    double stack = 0;
+    // Two readings in the flat view, each a square button, stacked.
+    if (_currentFunction.isComplex) stack = 2 * _overlayButtonSize;
+
+    int chips = 0;
+    if (_usesParameter('u')) chips++;
+    if (_usesParameter('v')) chips++;
+    // 26 apart, which is what the chips offset themselves by.
+    final double chipStack = chips * 26.0;
+    if (chipStack > stack) stack = chipStack;
+
+    // Nothing down there: the button can sit at the foot of the plot, since
+    // the navigation toolbar is centred and never reaches this edge.
+    if (stack == 0) return 0;
+    return _overlayButtonSize + 14 + stack;
+  }
+
+  void _cycleSliceAxis() {
+    final PlaneSlice now = _resolvedSlice;
+    final SliceAxis next =
+        SliceAxis.values[(now.axis.index + 1) % SliceAxis.values.length];
+    setState(() => _slice = now.withAxis(next));
+    _publishView();
+  }
+
+  void _setSliceOffset(double value) {
+    // Not published here. A slide fires continuously, and the view is written
+    // to storage, so the plane is saved when the finger lifts instead.
+    setState(() => _slice = _resolvedSlice.withOffset(value));
+  }
+
   Widget _plotLayer({required bool visible, required Widget child}) {
     return IgnorePointer(
       ignoring: !visible,
@@ -613,6 +825,13 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
 
   void _toggleContour() {
     setState(() => _showContour = !_showContour);
+  }
+
+  void _toggleMesh() {
+    setState(() => _showMesh = !_showMesh);
+    // Saved with the rest of the view, or swiping to the next plot and back
+    // handed it silently back to off.
+    _publishView();
   }
 
   void _toggleComplex({
@@ -715,7 +934,16 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
       // the menu picks what its colours mean, and a flat patch in the plane
       // still has an x, a y and a magnitude worth colouring by.
       if (_vectorParser?.isParametricSurface ?? false) return true;
-      return _vectorParser != null && !_vectorParser!.is3D;
+      final bool spatial =
+          (_vectorParser?.is3D ?? false) ||
+          _vectorFields.any((VectorFieldParser f) => f.is3D);
+      // A field filling space has no one surface to colour while it is drawn
+      // in space, which is why this used to turn it away. Cut to a plane it
+      // has one: the plane itself, coloured by what runs through it. That is
+      // the cut surface, and without it slicing a field showed arrows and
+      // nothing else.
+      if (spatial) return !_show3D;
+      return _vectorParser != null;
     }
     return _is3DFunction;
   }
@@ -786,6 +1014,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final bool showOverlays = constraints.maxHeight > 140;
+        _sliceStripShowing = showOverlays && !_show3D && _canSlice;
         return Stack(
           children: [
             // Only the plot layers are inside the capture boundary. The
@@ -813,6 +1042,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                       uRange: _uRange,
                       vRange: _vRange,
                       complexView: _complexView,
+                      showMesh: _showMesh,
                       showContour: _showContour,
                       surfaceMode: _surfaceMode,
                       zoomAxis: _zoomAxis,
@@ -823,6 +1053,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                     visible: !_show3D,
                     child: Plot2DScreen(
                       key: _plot2DKey,
+                      bottomInset: widget.bottomInset,
                       plotTheme: _theme,
                       functions: _functions,
                       function: _currentFunction,
@@ -837,12 +1068,41 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                       complexView: _complexView,
                       showContour: _showContour,
                       surfaceMode: _surfaceMode,
+                      slice: _slice,
+                      externallyInteracting: _slidingSlice,
                       colors: _colorsNoListen(context),
                     ),
                   ),
                 ],
               ),
             ),
+
+            // The slice strip, on the same side as the parameter chips and
+            // mirrored with them: the control column sits opposite, so a
+            // left-handed layout swaps the two rather than stacking them.
+            if (_sliceStripShowing)
+              Positioned(
+                top: 0,
+                bottom: 0,
+                left: _mirrored ? null : 0,
+                right: _mirrored ? 0 : null,
+                child: PlaneSliceGutter(
+                  slice: _resolvedSlice,
+                  extent: _sliceExtent,
+                  theme: _theme,
+                  chosen: _slice != null,
+                  buttonSize: _overlayButtonSize,
+                  bottomInset: widget.bottomInset,
+                  footInset: _leadingFootHeight,
+                  onChanged: _setSliceOffset,
+                  onSlideStart: () => setState(() => _slidingSlice = true),
+                  onSlideEnd: () {
+                    setState(() => _slidingSlice = false);
+                    _publishView();
+                  },
+                  onAxisTapped: _cycleSliceAxis,
+                ),
+              ),
 
             if (showOverlays)
               AnimatedPositioned(
@@ -864,6 +1124,16 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                         selectedColor: Colors.purpleAccent,
                         onTap: _toggleContour,
                         tooltip: 'Contour',
+                      ),
+                    // Only in 3D, and only where there is a surface to lay it
+                    // over: a flat plot has no mesh to show.
+                    if (_show3D && _canShowSurface())
+                      _buildModeButton(
+                        icon: Icons.grid_4x4,
+                        isSelected: _showMesh,
+                        selectedColor: Colors.tealAccent,
+                        onTap: _toggleMesh,
+                        tooltip: 'Mesh',
                       ),
                     _buildModeButton(
                       icon: Icons.grain,

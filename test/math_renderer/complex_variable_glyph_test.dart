@@ -1,3 +1,4 @@
+import 'package:klotter/math_renderer/complex_variable_glyph.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -44,10 +45,18 @@ void main() {
         ),
       );
 
+      // The mark is painted now rather than left to TextDecoration, which
+      // could not be offset and sat against the glyph like a leg of the z. So
+      // the check is that the drawn glyph is used, and that nothing fell back
+      // to a combining low line.
+      expect(
+        find.byType(ComplexVariableGlyph),
+        findsWidgets,
+        reason: 'the complex variable was not drawn',
+      );
       final Iterable<Text> zs = textsIn(
         tester,
       ).where((Text t) => (t.data ?? '').contains('z'));
-      expect(zs, isNotEmpty, reason: 'the complex variable was not drawn');
 
       for (final Text z in zs) {
         expect(
@@ -57,11 +66,8 @@ void main() {
               'still using the combining low line, which needs the font to '
               'compose it',
         );
-        expect(
-          z.style?.decoration,
-          TextDecoration.underline,
-          reason: 'the mark is gone entirely — this would draw a bare z',
-        );
+        // The mark is no longer a property of the text; it is painted
+        // beneath it by ComplexVariableGlyph, checked above.
       }
     });
 
@@ -87,17 +93,17 @@ void main() {
           ),
         );
 
+        expect(
+          find.byType(ComplexVariableGlyph),
+          findsWidgets,
+          reason: 'nothing drawn in $family',
+        );
         final Iterable<Text> zs = textsIn(
           tester,
         ).where((Text t) => (t.data ?? '').contains('z'));
-        expect(zs, isNotEmpty, reason: 'nothing drawn in $family');
         for (final Text z in zs) {
           expect(z.data, isNot(contains('̲')), reason: 'in $family');
-          expect(
-            z.style?.decoration,
-            TextDecoration.underline,
-            reason: 'in $family',
-          );
+          // The mark is painted, not decorated; see above.
           expect(
             z.style?.fontFamily,
             family,
@@ -124,8 +130,12 @@ void main() {
         ),
       );
 
+      expect(
+        find.byType(ComplexVariableGlyph),
+        findsWidgets,
+        reason: 'nothing was drawn',
+      );
       final List<Text> texts = textsIn(tester);
-      expect(texts, isNotEmpty, reason: 'nothing was drawn');
       for (final Text t in texts) {
         expect(
           t.data,
@@ -133,11 +143,7 @@ void main() {
           reason: 'the complex variable was drawn with a circumflex, as ẑ',
         );
       }
-      expect(
-        texts.any((Text t) => t.style?.decoration == TextDecoration.underline),
-        isTrue,
-        reason: 'the underline that makes it z̲ is missing',
-      );
+      // The rule that makes it z̲ is painted by the glyph, asserted above.
     });
 
     testWidgets('a real unit vector still keeps its circumflex', (

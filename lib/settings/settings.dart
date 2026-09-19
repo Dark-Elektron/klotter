@@ -1067,6 +1067,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   String _getThemeLabel(ThemeType theme) {
     switch (theme) {
+      case ThemeType.light:
+        return 'Light';
       case ThemeType.classic:
         return 'Classic';
       case ThemeType.dark:

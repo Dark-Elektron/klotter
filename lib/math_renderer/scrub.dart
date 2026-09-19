@@ -66,7 +66,7 @@ extension ScrubbableEditor on MathEditorController {
     }
     if (best == null) return null;
 
-    final String text = best.node.text;
+    final String text = best.literalText;
     if (text.isEmpty) return null;
 
     // Map the touch to a character. Display text is not the raw text — it
@@ -115,8 +115,12 @@ extension ScrubbableEditor on MathEditorController {
       }
     }
 
+    // Only a literal holds a number to drag; an atomic symbol has no digits.
+    final LiteralNode? dragged = best.literal;
+    if (dragged == null) return null;
+
     return ScrubTarget(
-      node: best.node,
+      node: dragged,
       start: run.$1,
       end: run.$2,
       initialValue: value,

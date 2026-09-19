@@ -191,6 +191,22 @@ class _PopupMenuCalcButtonState extends State<PopupMenuCalcButton> {
     _highlightedIndex.value = null;
   }
 
+  @override
+  void dispose() {
+    // The entry is owned by the Overlay, not by this element, so it outlives
+    // this State unless it is taken down here. A key unmounted while its menu
+    // was open — a keypad page change, a rotation, a coordinate-system switch
+    // rebuilding the key — left the menu on screen for good, on top of
+    // everything and swallowing every tap.
+    //
+    // Removed directly rather than through `_removeOverlay`, which writes to
+    // the notifier being disposed on the next line.
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+    _highlightedIndex.dispose();
+    super.dispose();
+  }
+
   void _updateHighlight(Offset globalPosition) {
     if (_overlayEntry == null) return;
 
@@ -218,10 +234,18 @@ class _PopupMenuCalcButtonState extends State<PopupMenuCalcButton> {
     }
 
     final double menuTop = buttonPosition.dy - itemHeight - 12;
-    final double menuBottom = menuTop + itemHeight + 12;
 
-    if (globalPosition.dy < menuTop - 20 ||
-        globalPosition.dy > menuBottom + 50) {
+    // Stop short of the button rather than reaching 50px into it.
+    //
+    // The menu sits 12px above the key, so `menuTop + itemHeight + 12` is the
+    // key's own top edge and the old `+ 50` put the whole upper half of the
+    // key inside the menu's hit region. Holding a key down and releasing
+    // without ever moving up to the menu therefore fired whichever item
+    // happened to be above the finger — on a ~36dp key, usually the middle
+    // one. A long press that goes nowhere should do nothing.
+    final double menuBottom = menuTop + itemHeight + 8;
+
+    if (globalPosition.dy < menuTop - 20 || globalPosition.dy > menuBottom) {
       if (_highlightedIndex.value != null) {
         _highlightedIndex.value = null;
         HapticFeedback.lightImpact();

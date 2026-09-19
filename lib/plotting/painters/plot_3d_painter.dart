@@ -116,6 +116,54 @@ class _VertexBatch {
   }
 }
 
+/// Stand-in for a surface drawn with its grid switched off.
+final Float32List _noLines = Float32List(0);
+
+/// Indices into [depth] ordered far to near, for the painter's algorithm.
+///
+/// A counting sort over 4,096 depth buckets rather than a comparison sort.
+/// `List.sort` with a closure over a `Float64List` costs 7.2 ms on the 38,000
+/// triangles one of these surfaces marches to, and drawing the grid as
+/// geometry roughly doubles what has to be ordered — which would have put the
+/// sort alone over a frame. Bucketed it is 0.25 ms, and 0.68 ms at twice the
+/// count.
+///
+/// The precision given up is nothing here. A bucket spans the box's depth over
+/// 4,096, which against a marching cell is under two per cent of one, so the
+/// arbitrary order inside a bucket can only swap primitives that are already
+/// far closer together than the depth bias separating a grid line from its
+/// surface.
+List<int> _farToNear(Float64List depth, int count) {
+  const int buckets = 4096;
+  double lo = double.infinity;
+  double hi = double.negativeInfinity;
+  for (int i = 0; i < count; i++) {
+    final double d = depth[i];
+    if (d < lo) lo = d;
+    if (d > hi) hi = d;
+  }
+  // Everything at one depth, or nothing finite to go on: any order will do.
+  if (!(hi > lo)) return List<int>.generate(count, (int i) => i);
+
+  final double scale = (buckets - 1) / (hi - lo);
+  final Int32List bucket = Int32List(count);
+  final Int32List starts = Int32List(buckets + 1);
+  for (int i = 0; i < count; i++) {
+    // Reversed on the way in, so bucket 0 is the furthest away.
+    final int b = buckets - 1 - ((depth[i] - lo) * scale).toInt();
+    bucket[i] = b;
+    starts[b + 1]++;
+  }
+  for (int b = 0; b < buckets; b++) {
+    starts[b + 1] += starts[b];
+  }
+  final Int32List out = Int32List(count);
+  for (int i = 0; i < count; i++) {
+    out[starts[bucket[i]]++] = i;
+  }
+  return out;
+}
+
 /// A back-to-front drawing list holding both triangles and line segments.
 ///
 /// The floor grid used to be painted before the surface, unconditionally, so
@@ -298,6 +346,238 @@ class Plot3DPainter extends CustomPainter {
               ? const <VectorFieldParser>[]
               : <VectorFieldParser>[vectorParser!]);
   final bool showContour;
+
+  /// Put a surface's grid lines into [scene].
+  ///
+  /// Shared by every surface built from a sampling grid — heights, complex
+  /// components — so they all mesh the same way rather than each growing its
+  /// own copy.
+  void _addMeshTo(
+    _DepthScene scene,
+    List<(Point3D, Point3D)> mesh,
+    Size size,
+    double focalLength,
+  ) {
+    if (!showMesh || mesh.isEmpty) return;
+    final Paint wire = _meshPaint;
+    // Nudged towards the camera before it is sorted: a mesh line lies exactly
+    // on the surface, so its depth ties with the cell it belongs to, and the
+    // sort would decide between them segment by segment — which drew the mesh
+    // as a row of dashes rather than a line.
+    final double bias = _viewExtentXY * _meshDepthBias;
+    for (final (Point3D a, Point3D b) in mesh) {
+      scene.addLine(
+        a.project(focalLength, size, _panX, _panY),
+        b.project(focalLength, size, _panX, _panY),
+        wire,
+        (a.y + b.y) / 2 - bias,
+      );
+    }
+  }
+
+  /// How far apart the slicing planes are on [axis], in world units.
+  ///
+  /// Aims for about the same number of lines across each direction as a
+  /// height surface's grid, so every kind of surface meshes at one density.
+  double _meshPlaneStep(int axis) {
+    // In view units, not data units.
+    //
+    // A level surface's vertices are scaled on the way out of the marcher —
+    // `scaleX` is `_viewExtentXY / rangeX` — so a spacing measured in x and y
+    // is a spacing in the wrong space. Against a range of 3 it put the planes
+    // 0.43 view units apart instead of about 20: some seven hundred of them
+    // across the box, which cut the surface into confetti.
+    final double extent = axis == 2 ? _viewExtentZ : _viewExtentXY;
+    return extent <= 0 ? 0 : 2 * extent / _levelMeshLinesAcross;
+  }
+
+  /// Project a run of grid segments into [screen] as thin screen-space quads.
+  ///
+  /// Two triangles each, written after the surface's own triangles and sharing
+  /// its depth buffer, so the sort that follows treats a grid line as just
+  /// another piece of geometry lying on the surface.
+  void _projectMeshLines(
+    Float32List lines,
+    int segments,
+    int firstTriangle,
+    Float32List screen,
+    Float64List depth,
+    double cz,
+    double sz,
+    double cx,
+    double sx,
+    double focalLength,
+    double halfW,
+    double halfH,
+  ) {
+    if (segments == 0) return;
+    final double bias = _viewExtentXY * _levelMeshDepthBias;
+    final double half = _meshStrokeWidth / 2;
+
+    for (int s = 0; s < segments; s++) {
+      final int m = s * 6;
+      double sxA = 0, syA = 0, dA = 0, sxB = 0, syB = 0, dB = 0;
+
+      for (int end = 0; end < 2; end++) {
+        final double x = lines[m + end * 3];
+        final double y = lines[m + end * 3 + 1];
+        final double z = lines[m + end * 3 + 2];
+        // The same turntable and projection the triangles go through.
+        final double x1 = x * cz - y * sz;
+        final double y1 = x * sz + y * cz;
+        final double y2 = y1 * cx - z * sx;
+        final double z2 = y1 * sx + z * cx;
+        final double scale = focalLength / (focalLength + y2);
+        final double px = halfW + x1 * scale + _panX;
+        final double py = halfH - z2 * scale + _panY;
+        if (end == 0) {
+          sxA = px;
+          syA = py;
+          dA = y2;
+        } else {
+          sxB = px;
+          syB = py;
+          dB = y2;
+        }
+      }
+
+      final int t = firstTriangle + s * 2;
+      depth[t] = (dA + dB) / 2 - bias;
+      depth[t + 1] = depth[t];
+
+      // Widened across the segment on screen rather than in world space: the
+      // line has to come out the same weight wherever it is on the surface,
+      // and a world-space ribbon would thin out with distance and vanish
+      // edge-on to the camera.
+      final double dx = sxB - sxA;
+      final double dy = syB - syA;
+      final double len = sqrt(dx * dx + dy * dy);
+      if (len < 1e-6) {
+        // Nothing to draw, but the slots are already counted: leave two
+        // degenerate triangles rather than shuffling everything down.
+        for (int k = 0; k < 12; k++) {
+          screen[t * 6 + k] = sxA;
+        }
+        continue;
+      }
+      final double ox = -dy / len * half;
+      final double oy = dx / len * half;
+
+      // Run each piece half a stroke width past both of its ends, so that
+      // consecutive pieces overlap instead of meeting flush.
+      //
+      // A grid line is not one stroke, it is a chain of chords, one per
+      // triangle the slicing plane crosses — and marching tetrahedra makes
+      // small triangles, so the median chord is 3.3 px against the 1.8 px the
+      // line is drawn at. Most joins are nearly straight, but a tenth of them
+      // turn by 10 to 22 degrees and a hundredth by up to 68, and cut square
+      // across the end every one of those left an open notch on the outside of
+      // the bend. Thousands of notches along every line is the serration.
+      // Half a width is exactly what closes a corner up to a right angle, and
+      // the overhang past a line's true end is under a pixel.
+      final double ex = dx / len * half;
+      final double ey = dy / len * half;
+      final double ax = sxA - ex, ay = syA - ey;
+      final double bx = sxB + ex, by = syB + ey;
+
+      final int o = t * 6;
+      screen[o] = ax + ox;
+      screen[o + 1] = ay + oy;
+      screen[o + 2] = ax - ox;
+      screen[o + 3] = ay - oy;
+      screen[o + 4] = bx - ox;
+      screen[o + 5] = by - oy;
+      screen[o + 6] = ax + ox;
+      screen[o + 7] = ay + oy;
+      screen[o + 8] = bx - ox;
+      screen[o + 9] = by - oy;
+      screen[o + 10] = bx + ox;
+      screen[o + 11] = by + oy;
+    }
+  }
+
+  /// The pen every mesh is drawn with.
+  ///
+  /// Dark on every theme, because it is drawn on the surface rather than on
+  /// the page: the colormap is bright wherever the surface is interesting, so
+  /// a line taking the theme's ink went white on a dark theme and vanished
+  /// into the yellows and greens.
+  ///
+  /// Butt caps: a grid line is a run of segments sharing endpoints, and a
+  /// round cap on each puts a bulge at every join.
+  static Paint get _meshPaint =>
+      Paint()
+        ..color = const Color(_meshInk)
+        ..strokeWidth = _meshStrokeWidth;
+
+  /// How far towards the camera a mesh line is moved before depth sorting,
+  /// as a fraction of the plan's on-screen size.
+  ///
+  /// It has to beat a whole cell, not a hair. A mesh line lies on the surface,
+  /// so it competes with the triangles either side of it, and at 2% — less
+  /// than one cell's depth — roughly two thirds of it was painted over and
+  /// the grid came out as dashes. Measured on a hyperboloid, surviving mesh
+  /// went from 458 pixels at 2% to 1,460 at 12%, where the gain has largely
+  /// flattened.
+  ///
+  /// Bounded above by show-through: the bias is about 9% of a sphere's depth
+  /// here, so a line on the far side stays behind the near one. At 80% the
+  /// back of the sphere draws straight through the front.
+  static const double _meshDepthBias = 0.12;
+
+  /// How far towards the camera a level surface's grid line is moved before it
+  /// is sorted, as a fraction of the plan's on-screen size.
+  ///
+  /// Much smaller than [_meshDepthBias], and for a reason that no longer
+  /// applies here. That figure had to beat a whole batch of lines drawn at one
+  /// depth; a level surface's grid is geometry now and sorts segment by
+  /// segment, so the bias only has to beat the cell the segment lies in. One
+  /// marching cell is `2 / 40` of the box, which is what this is — enough to
+  /// keep the line off the triangles either side of it, small enough that a
+  /// line on the far side of a fold stays hidden.
+  static const double _levelMeshDepthBias = 0.05;
+
+  /// How wide a mesh line is drawn, in logical pixels.
+  static const double _meshStrokeWidth = 1.8;
+
+  /// The grid's colour, packed, matching [_meshPaint] for the surfaces that
+  /// still draw their grid with a pen.
+  static const int _meshInk = 0xFF000000;
+
+  /// How many planes a level surface is sliced by on each axis.
+  ///
+  /// Fewer than [_meshLinesAcross], because a level surface is sliced on three
+  /// axes where a sampled one is ruled on two: at the same count per axis it
+  /// carries half as many lines again, and they cross each other rather than
+  /// forming a quad grid. Measured on `x⁴+y⁴+z⁴−x²−y²−z²+0.4`, fourteen put
+  /// 11.8% of the surface under black — about one pixel in eight — which reads
+  /// as a net thrown over the shape rather than as a grid on it. Ten brings
+  /// that to 5.9%.
+  ///
+  /// Chosen over drawing a thinner line, which was the other way to the same
+  /// place: dropping the stroke from 1.8 px to 1.2 px only reached 8.2%, and a
+  /// line that thin starts to break up over a bright colormap. Slicing less
+  /// also costs less — there is less to cut, keep, project and sort — where a
+  /// thinner line costs exactly the same.
+  static const int _levelMeshLinesAcross = 10;
+
+  /// How many cells apart the mesh lines are drawn.
+  ///
+  /// Aims for a fixed number of lines across the surface whatever the
+  /// sampling grid is doing, so the mesh does not thin out and thicken again
+  /// as the grid drops for a drag and comes back at rest.
+  static const int _meshLinesAcross = 14;
+
+  static int _meshStrideFor(int cells) =>
+      cells <= _meshLinesAcross ? 1 : (cells / _meshLinesAcross).round();
+
+  /// Draw the surface's own grid over it.
+  ///
+  /// The lines go into the same depth-sorted scene as the cells they belong
+  /// to, so the far side of a fold is hidden by the near side rather than
+  /// showing through — a wireframe painted on afterwards would read as a flat
+  /// net lying over the picture.
+  final bool showMesh;
   final SurfaceMode surfaceMode;
   final AppColors colors;
 
@@ -345,6 +625,7 @@ class Plot3DPainter extends CustomPainter {
     this.vectorFields = const <VectorFieldParser>[],
     this.vectorSeriesBase = 0,
     required this.showContour,
+    this.showMesh = false,
     required this.surfaceMode,
     required this.colors,
     required this.plotTheme,
@@ -927,10 +1208,48 @@ class Plot3DPainter extends CustomPainter {
     final double halfW = size.width / 2;
     final double halfH = size.height / 2;
 
+    // The grid lines come ready-made off the cached meshes, in the same
+    // view-scaled space as the triangles.
+    final int segments =
+        showMesh
+            ? meshes.fold<int>(
+              0,
+              (int sum, LevelMesh m) => sum + m.meshLineCount,
+            )
+            : 0;
+    final Float32List meshLines;
+    if (segments == 0) {
+      meshLines = _noLines;
+    } else if (meshes.length == 1) {
+      meshLines = meshes.first.meshLines;
+    } else {
+      meshLines = Float32List(segments * 6);
+      int at = 0;
+      for (final LevelMesh m in meshes) {
+        meshLines.setRange(at, at + m.meshLineCount * 6, m.meshLines);
+        at += m.meshLineCount * 6;
+      }
+    }
+
+    // Grid lines are drawn as thin quads in the same buffer as the surface,
+    // two triangles each, rather than as `drawLine` calls merged in afterwards.
+    //
+    // That merge was where the grid went wrong. Lines were batched into
+    // twenty-four depth slabs and every line in a slab was drawn at the depth
+    // of the first, which on these surfaces put five hundred to eight hundred
+    // segments — spanning most of the box — at one depth. The grid from the far
+    // side was painted over the near side, which is the scribble in the bug
+    // report, and the bias that was needed to stop the near grid being painted
+    // over in turn made the show-through worse. As geometry each segment
+    // carries its own depth and sorts with the triangles it lies on, so the
+    // back of a surface is hidden by its front for the same reason the
+    // triangles are. It is also 5,000 to 19,000 fewer draw calls a frame.
+    final int total = count + segments * 2;
+
     // Project every vertex once into flat buffers, keeping each triangle's
     // depth for the painter's algorithm.
-    final Float32List screen = Float32List(count * 6);
-    final Float64List depth = Float64List(count);
+    final Float32List screen = Float32List(total * 6);
+    final Float64List depth = Float64List(total);
 
     for (int t = 0; t < count; t++) {
       final int w = t * 9;
@@ -963,17 +1282,38 @@ class Plot3DPainter extends CustomPainter {
       depth[t] = depthSum / 3;
     }
 
+    _projectMeshLines(
+      meshLines,
+      segments,
+      count,
+      screen,
+      depth,
+      cz,
+      sz,
+      cx,
+      sx,
+      focalLength,
+      halfW,
+      halfH,
+    );
+
     // Sort indices, not triangles: moving an int is cheaper than moving nine
     // floats, and the vertex buffers stay put.
-    final List<int> order = List<int>.generate(count, (i) => i);
-    order.sort((a, b) => depth[b].compareTo(depth[a]));
+    final List<int> order = _farToNear(depth, total);
 
-    final Float32List positions = Float32List(count * 6);
-    final Int32List colors = Int32List(count * 3);
-    for (int i = 0; i < count; i++) {
+    final Float32List positions = Float32List(total * 6);
+    final Int32List colors = Int32List(total * 3);
+    for (int i = 0; i < total; i++) {
       final int src = order[i];
       positions.setRange(i * 6, i * 6 + 6, screen, src * 6);
-      colors.setRange(i * 3, i * 3 + 3, meshColors, src * 3);
+      if (src < count) {
+        colors.setRange(i * 3, i * 3 + 3, meshColors, src * 3);
+      } else {
+        final int c = i * 3;
+        colors[c] = _meshInk;
+        colors[c + 1] = _meshInk;
+        colors[c + 2] = _meshInk;
+      }
     }
 
     // The floor and axes are merged into the same back-to-front order as the
@@ -1002,19 +1342,17 @@ class Plot3DPainter extends CustomPainter {
       vertices.dispose();
     }
 
-    // Lines go out in batches, not one at a time. Splitting the surface at
-    // every single grid segment costs a drawVertices per segment — about 940
-    // of them — and that, not the vertex data, is what dominates: a 1,700
-    // triangle sphere cost the same as a 33,000 triangle hyperboloid. A
-    // height surface never showed this because it sits above the floor, so
-    // its grid lines fall into a handful of runs; a level surface straddles
-    // the floor and interleaves with almost every line.
+    // Lines go out in batches, not one at a time: splitting the surface at
+    // every line costs a drawVertices per line, and that, not the vertex data,
+    // is what dominates.
     //
-    // The error this trades for is confined to one batch: lines inside a
+    // The error this trades for is confined to one batch — lines inside a
     // batch are drawn at the depth of the first of them, so a line can sit in
-    // front of triangles within that narrow depth band. At this batch count
-    // the band is a fraction of the box, and the lines are one pixel wide.
-    const int maxRuns = 24;
+    // front of triangles within that narrow depth band. It is only the floor
+    // and the axes that come through here now, a few dozen lines rather than
+    // the thousands the grid used to add, so the batches are two or three
+    // lines deep and the band is negligible.
+    const int maxRuns = 64;
     final List<int> lineOrder = chrome.farToNear;
     final int batch =
         lineOrder.isEmpty ? 1 : (lineOrder.length / maxRuns).ceil();
@@ -1024,7 +1362,7 @@ class Plot3DPainter extends CustomPainter {
     for (int b = 0; b < lineOrder.length; b += batch) {
       final double cut = chrome.depths[lineOrder[b]];
       // Everything further away than this batch is already behind it.
-      while (drawn < count && depth[order[drawn]] > cut) {
+      while (drawn < total && depth[order[drawn]] > cut) {
         drawn++;
       }
       drawRun(runStart, drawn);
@@ -1036,7 +1374,7 @@ class Plot3DPainter extends CustomPainter {
         canvas.drawLine(chrome.a[l], chrome.b[l], chrome.paints[l]);
       }
     }
-    drawRun(runStart, count);
+    drawRun(runStart, total);
 
     _drawAxes(canvas, size, focalLength, skipLines: true);
 
@@ -1058,6 +1396,20 @@ class Plot3DPainter extends CustomPainter {
     // has to tell them apart. The solid colour is the row's, so it matches the
     // swatch beside the expression and the same plot in 2D.
     final Color plain = _theme.seriesColor(equation.seriesIndex);
+    // Marched at most once, and only if the mesh below has to be rebuilt.
+    // Both the triangles and the normals are wanted, and both come from the
+    // one march.
+    LevelSurface? marched;
+    LevelSurface march() =>
+        marched ??= marchedSurface(
+          equation,
+          -rangeX,
+          rangeX,
+          -rangeY,
+          rangeY,
+          -rangeZ,
+          rangeZ,
+        );
     return cachedLevelMesh(
       equation,
       <double>[-rangeX, rangeX, -rangeY, rangeY, -rangeZ, rangeZ],
@@ -1075,15 +1427,7 @@ class Plot3DPainter extends CustomPainter {
           double cz,
         })
       >[
-        for (final LevelTriangle t in marchingTetrahedra(
-          equation,
-          -rangeX,
-          rangeX,
-          -rangeY,
-          rangeY,
-          -rangeZ,
-          rangeZ,
-        ))
+        for (final LevelTriangle t in march().triangles)
           (
             ax: t.a.x,
             ay: t.a.y,
@@ -1099,6 +1443,7 @@ class Plot3DPainter extends CustomPainter {
       scaleX,
       scaleY,
       scaleZ,
+      () => march().normals,
       // Colour by height, so the surface carries a readable quantity even
       // though every point on it satisfies the same equation.
       //
@@ -1112,13 +1457,29 @@ class Plot3DPainter extends CustomPainter {
       // Off means one colour instead, from the same series palette as every
       // other plot, so an implicit surface sits alongside a height surface
       // without changing scheme.
-      (double z) {
+      // [light] is what makes the shape readable at all. A marched surface
+      // has no grid of its own to shade it and every point on it satisfies the
+      // same equation, so with one flat colour a fold, a neck and a flat sheet
+      // all come out as the same block of blue and only the mesh says which is
+      // which. It costs nothing to draw: the normal it is worked out from does
+      // not depend on the camera, so the lit colour is baked in here with the
+      // geometry and the frame does no lighting at all.
+      (double z, double light) {
         final Color base =
             surfaceMode == SurfaceMode.none
                 ? plain
                 : ramp(((z + rangeZ) / (2 * rangeZ)).clamp(0.0, 1.0));
-        if (!equation.relation.isRegion) return base.toARGB32();
-        return base
+        // Darkening only, never brightening: whatever faces the light keeps
+        // the colour the colorbar and the row's swatch show, and the rest is
+        // shaded down from it. Brightening instead would have put colours on
+        // the surface that appear nowhere in the legend.
+        final Color lit = base.withValues(
+          red: base.r * light,
+          green: base.g * light,
+          blue: base.b * light,
+        );
+        if (!equation.relation.isRegion) return lit.toARGB32();
+        return lit
             .withValues(alpha: equation.relation.includesBoundary ? 0.55 : 0.34)
             .toARGB32();
       },
@@ -1126,6 +1487,17 @@ class Plot3DPainter extends CustomPainter {
       // has to be part of what identifies it. Without this, switching the
       // colouring redrew the same triangles in the colours they already had.
       surfaceMode.index,
+      // Where the grid falls depends on the surface and the window, not the
+      // camera, so it is cut once here with the triangles rather than being
+      // rebuilt on every frame of a rotation.
+      meshSteps:
+          showMesh
+              ? <double>[
+                _meshPlaneStep(0),
+                _meshPlaneStep(1),
+                _meshPlaneStep(2),
+              ]
+              : null,
     );
   }
 
@@ -1148,7 +1520,8 @@ class Plot3DPainter extends CustomPainter {
   static const int _surfaceGridStill = 76;
   static const int _surfaceGridMoving = 42;
 
-  ({List<Quad> quads, double minV, double maxV}) _surfaceQuads(
+  ({List<Quad> quads, double minV, double maxV, List<(Point3D, Point3D)> mesh})
+  _surfaceQuads(
     PlotExpression parser, {
     int? gridSize,
     double Function(double x, double y)? heightAt,
@@ -1290,6 +1663,16 @@ class Plot3DPainter extends CustomPainter {
       return out;
     }
 
+    // The mesh is taken from the cell corners, not from the triangles the
+    // cell becomes.
+    //
+    // Clipping turns a cell into a polygon and the polygon into a fan of
+    // triangles, so a triangle's edges are chords across the cell rather than
+    // its sides. Drawing those gave a mesh of little zigzags instead of a
+    // grid. These are the grid lines themselves.
+    final List<(Point3D, Point3D)> mesh = <(Point3D, Point3D)>[];
+    final int meshStride = _meshStrideFor(cells);
+
     for (int i = 0; i < cells; i++) {
       for (int j = 0; j < cells; j++) {
         final c1 = points[i][j];
@@ -1319,6 +1702,30 @@ class Plot3DPainter extends CustomPainter {
           if (poly.length < 3) continue;
         }
 
+        if (showMesh) {
+          // Collected here, not before the tests above: a cell that is dropped
+          // for running past the top of the box, or for having an undefined
+          // corner, draws no surface — and a grid line over nothing is a mesh
+          // hanging in the air past the edge of the plot, which is what a
+          // complex surface showed.
+          //
+          // One segment per line rather than per side, so the cell next door
+          // does not draw the same one again. Both ends are held inside the
+          // box, so a line belonging to a cut cell stops where the surface
+          // does instead of carrying on to where the corner would have been.
+          double heldIn(double z) => z.clamp(-rangeZ, rangeZ);
+          ({double x, double y, double z, double v}) inBox(
+            ({double x, double y, double z, double v}) c,
+          ) => (x: c.x, y: c.y, z: heldIn(c.z), v: c.v);
+
+          if (j % meshStride == 0) {
+            mesh.add((world(inBox(c1)), world(inBox(c2))));
+          }
+          if (i % meshStride == 0) {
+            mesh.add((world(inBox(c1)), world(inBox(c4))));
+          }
+        }
+
         // Fanned from the first corner. A clipped cell has three to six
         // corners and is still convex, so a fan covers it without overlap.
         for (int k = 1; k + 1 < poly.length; k++) {
@@ -1346,7 +1753,7 @@ class Plot3DPainter extends CustomPainter {
       }
     }
 
-    return (quads: quads, minV: minZ, maxV: maxZ);
+    return (quads: quads, minV: minZ, maxV: maxZ, mesh: mesh);
   }
 
   /// Draw every z = f(x, y) in the cell on one set of axes.
@@ -1439,6 +1846,8 @@ class Plot3DPainter extends CustomPainter {
         scene.addTriangle(o1, o2, o3, c1, c2, c3, d1);
         scene.addTriangle(o1, o3, o4, c1, c3, c4, d2);
       }
+
+      _addMeshTo(scene, built.mesh, size, focalLength);
     }
 
     // Single-variable curves join the same list, so one passing behind a
@@ -3004,6 +3413,8 @@ class Plot3DPainter extends CustomPainter {
           (quad.p1.y + quad.p3.y + quad.p4.y) / 3,
         );
       }
+
+      _addMeshTo(scene, built.mesh, size, focalLength);
     }
 
     // The span the colour ramp was built over is not the height span, so the
@@ -3174,6 +3585,12 @@ class Plot3DPainter extends CustomPainter {
         ],
     ];
 
+    // A sweep is a grid in u and v, so its mesh is those parameter lines —
+    // the same idea as a height surface's grid, drawn on the same stride so
+    // every kind of surface meshes at one density.
+    final List<(Point3D, Point3D)> mesh = <(Point3D, Point3D)>[];
+    final int meshStride = _meshStrideFor(max(rows, cols));
+
     for (int i = 1; i < rows; i++) {
       for (int j = 1; j < cols; j++) {
         final Point3D? a = pts[i - 1][j - 1];
@@ -3204,8 +3621,17 @@ class Plot3DPainter extends CustomPainter {
           shades[i][j - 1],
           (a.y + c.y + d.y) / 3,
         );
+
+        if (showMesh) {
+          // One segment per line rather than per side, so the cell next door
+          // does not draw the same one again.
+          if ((i - 1) % meshStride == 0) mesh.add((a, b));
+          if ((j - 1) % meshStride == 0) mesh.add((a, d));
+        }
       }
     }
+
+    _addMeshTo(scene, mesh, size, focalLength);
   }
 
   /// Add the path traced by sweeping u, in the same depth order as everything
@@ -3963,6 +4389,7 @@ class Plot3DPainter extends CustomPainter {
       old.plotMode != plotMode ||
       old.fieldType != fieldType ||
       old.showContour != showContour ||
+      old.showMesh != showMesh ||
       old.surfaceMode != surfaceMode ||
       old.colors != colors;
 }

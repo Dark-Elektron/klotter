@@ -40,9 +40,13 @@ void main() {
 
   Future<Plot3DScreenState> pump(
     WidgetTester tester,
-    List<MathNode> nodes,
-  ) async {
-    final key = GlobalKey<Plot3DScreenState>();
+    List<MathNode> nodes, {
+    GlobalKey<Plot3DScreenState>? reuse,
+  }) async {
+    // Reusing the key keeps the same State, which is what a rebuild does. A
+    // fresh key builds a new screen instead, and then a test that pumps twice
+    // is measuring a State that is no longer mounted.
+    final key = reuse ?? GlobalKey<Plot3DScreenState>();
     final expr = PlotExpression.compile(nodes);
     await tester.pumpWidget(
       ChangeNotifierProvider<SettingsProvider>.value(
@@ -131,5 +135,42 @@ void main() {
     final state = await pump(tester, <MathNode>[LiteralNode(text: 'x^2+y^2')]);
     expect(state.xRange, 5.0);
     expect(state.yRange, 5.0);
+  });
+
+  testWidgets('a restored view survives the cell being recompiled', (
+    tester,
+  ) async {
+    // Swiping away and back rebuilds the panel, which recompiles the cell and
+    // hands over a new parser object for the same text. The screen compares
+    // parsers by identity, so it read that as a changed sweep and framed the
+    // figure again — discarding the view that had just been restored.
+    final key = GlobalKey<Plot3DScreenState>();
+    final state = await pump(tester, circle('3'), reuse: key);
+
+    state.restoreView(
+      rotX: 0.9,
+      rotZ: 1.2,
+      pX: 4,
+      pY: 6,
+      rX: 12,
+      rY: 13,
+      rZ: 14,
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(state.xRange, 12, reason: 'the view was not restored at all');
+
+    // The same figure, recompiled: a different parser object, same text, and
+    // the same screen — which is what swiping back produces.
+    await pump(tester, circle('3'), reuse: key);
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(
+      state.xRange,
+      12,
+      reason: 'x is ${state.xRange}: the restored view was framed over',
+    );
+    expect(state.yRange, 13, reason: 'y is ${state.yRange}');
+    expect(state.zRange, 14, reason: 'z is ${state.zRange}');
+    expect(state.panX, 4, reason: 'the pan was thrown away too');
   });
 }

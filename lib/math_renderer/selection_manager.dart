@@ -32,9 +32,6 @@ class SelectionManager {
   final Map<String, Rect> _contentBoundsCache = {}; // Just the content
   final Map<String, Rect> _visualBoundsCache = {}; // Including visual elements
 
-  // Handle offset compensation
-  static const double _handleYOffset = 30.0; // Handles hang below selection
-
   // Config
   // static const double _exitPadding = 15.0;
   static const double _reentryPadding = 15.0;
@@ -77,16 +74,18 @@ class SelectionManager {
     _startedInBlockMode = false;
   }
 
-  /// Adjust position to compensate for handle being below the selection
-  Offset _adjustForHandle(Offset position) {
-    return Offset(position.dx, position.dy - _handleYOffset);
-  }
-
-  void updateDrag(Offset rawPosition) {
+  /// [position] is already the selection edge, not the touch point.
+  ///
+  /// This used to shift it up by a fixed 30px to account for the handle
+  /// hanging below the selection, and did nothing at all about the horizontal
+  /// offset — the end handle's target begins *at* the selection edge, so the
+  /// finger sits about 17px past it. The overlay now measures the gap between
+  /// the touch and the edge when the handle is grabbed and applies that, which
+  /// is exact for whatever the geometry is. A fixed guess was particularly bad
+  /// on a tall row, where 30px could land inside a different sub-context and
+  /// collapse the selection.
+  void updateDrag(Offset position) {
     if (!_isDragging) return;
-
-    // Compensate for handle position
-    final position = _adjustForHandle(rawPosition);
 
     // CASE 1: In block mode - check for re-entry
     if (_isBlockMode && _selectedCompositeId != null) {
@@ -134,7 +133,44 @@ class SelectionManager {
 
     if (bestLiteral == null) return;
 
-    final text = bestLiteral.node.text;
+    // A symbol that is one object — π, x̂, z̲ — is taken whole.
+    //
+    // It has a box but no text, so there is nothing to run word bounds over
+    // and no half of it worth selecting: x̂ is not an x with a mark on it.
+    // Anchoring from index 0 to 1 of the node itself selects exactly the one
+    // node, which is what copy and delete then act on.
+    if (bestLiteral.isAtomic) {
+      _contextParentId = bestLiteral.parentId;
+      _contextPath = bestLiteral.path;
+      _isBlockMode = false;
+      _selectedCompositeId = null;
+      controller.setSelection(
+        SelectionRange(
+          start: SelectionAnchor(
+            parentId: bestLiteral.parentId,
+            path: bestLiteral.path,
+            nodeIndex: bestLiteral.index,
+            charIndex: 0,
+          ),
+          // Ends inside the same node, not at the start of the next one.
+          //
+          // Spanning n to n+1 sent copy and delete down their multi-node
+          // paths, where deletion removes the *following* node and then treats
+          // this one separately — so cut took the wrong thing, or nothing.
+          // Both operations already have a single-node branch that handles a
+          // non-literal by removing it whole, which is exactly right here.
+          end: SelectionAnchor(
+            parentId: bestLiteral.parentId,
+            path: bestLiteral.path,
+            nodeIndex: bestLiteral.index,
+            charIndex: 1,
+          ),
+        ),
+      );
+      return;
+    }
+
+    final text = bestLiteral.literalText;
     if (text.isEmpty) {
       if (bestLiteral.parentId != null) {
         _selectCompositeBlock(bestLiteral.parentId!);
@@ -394,6 +430,36 @@ class SelectionManager {
 
   // ============== SELECTION UPDATE ==============
 
+  /// Where a selected node sits, whether it is a composite or an atom.
+  ///
+  /// Composites register in `complexNodeMap`. Atomic symbols — π, x̂, z̲, the
+  /// constants — register in `layoutRegistry` instead, because they are boxes
+  /// with no interior to index into. Block-mode selection only ever looked in
+  /// the first map, so a selected atom resolved to null, every pointer move
+  /// was discarded, and its handles were inert: long-press π selected it and
+  /// then neither handle would move.
+  _NodePlacement? _placementOf(String nodeId) {
+    final composite = controller.complexNodeMap[nodeId];
+    if (composite != null) {
+      return _NodePlacement(
+        parentId: composite.parentId,
+        path: composite.path,
+        index: composite.index,
+      );
+    }
+
+    final atom = controller.layoutRegistry[nodeId];
+    if (atom != null && atom.isAtomic) {
+      return _NodePlacement(
+        parentId: atom.parentId,
+        path: atom.path,
+        index: atom.index,
+      );
+    }
+
+    return null;
+  }
+
   void _updateBlockModeSelection(Offset position) {
     if (_fixedAnchor == null || _selectedCompositeId == null) return;
 
@@ -406,7 +472,7 @@ class SelectionManager {
       return;
     }
 
-    final info = controller.complexNodeMap[_selectedCompositeId!];
+    final info = _placementOf(_selectedCompositeId!);
     if (info == null) return;
 
     final siblings = _getSiblings(info.parentId, info.path);
@@ -533,13 +599,11 @@ class SelectionManager {
       NodeLayoutInfo? layoutInfo;
 
       if (node is LiteralNode) {
-        for (final info in controller.layoutRegistry.values) {
-          if (info.node.id == node.id) {
-            bounds = info.rect;
-            layoutInfo = info;
-            break;
-          }
-        }
+        // Keyed, not scanned. This runs once per sibling per pointer move,
+        // and the registry is already a map from node id — the scan made a
+        // handle drag across a long expression quadratic in its length.
+        layoutInfo = controller.layoutRegistry[node.id];
+        bounds = layoutInfo?.rect;
       } else {
         bounds = _visualBoundsCache[node.id];
       }
@@ -668,7 +732,10 @@ class SelectionManager {
   // ============== COMPOSITE SELECTION ==============
 
   void _selectCompositeBlock(String compositeId) {
-    final info = controller.complexNodeMap[compositeId];
+    // Atoms too — see [_placementOf]. Without them this returned early while
+    // leaving block mode set, so `_performExit` became a no-op that ran again
+    // on every pointer move and the selection froze.
+    final info = _placementOf(compositeId);
     if (info == null) {
       return;
     }
@@ -821,24 +888,23 @@ class SelectionManager {
     double minX = double.infinity, maxX = double.negativeInfinity;
     double minY = double.infinity, maxY = double.negativeInfinity;
 
-    for (final info in controller.layoutRegistry.values) {
-      if (ids.contains(info.node.id)) {
-        minX = math.min(minX, info.rect.left);
-        maxX = math.max(maxX, info.rect.right);
-        minY = math.min(minY, info.rect.top);
-        maxY = math.max(maxY, info.rect.bottom);
-      }
+    void include(Rect rect) {
+      minX = math.min(minX, rect.left);
+      maxX = math.max(maxX, rect.right);
+      minY = math.min(minY, rect.top);
+      maxY = math.max(maxY, rect.bottom);
     }
 
-    // Also check complex node map for descendants
-    // (A composite node's ID is in the descendant set)
-    for (final info in controller.complexNodeMap.values) {
-      if (ids.contains(info.node.id) && info.rect != Rect.zero) {
-        minX = math.min(minX, info.rect.left);
-        maxX = math.max(maxX, info.rect.right);
-        minY = math.min(minY, info.rect.top);
-        maxY = math.max(maxY, info.rect.bottom);
-      }
+    // Walk the descendants and look each one up, rather than walking both
+    // registries and testing membership: the subtree is almost always far
+    // smaller than the whole expression.
+    for (final String id in ids) {
+      final layout = controller.layoutRegistry[id];
+      if (layout != null) include(layout.rect);
+
+      // A composite node's own id is in the descendant set too.
+      final complex = controller.complexNodeMap[id];
+      if (complex != null && complex.rect != Rect.zero) include(complex.rect);
     }
 
     if (minX == double.infinity) return null;
@@ -912,7 +978,7 @@ class SelectionManager {
   }
 
   int _getCharIndex(NodeLayoutInfo info, Offset position) {
-    final text = info.node.text;
+    final text = info.literalText;
     if (text.isEmpty) return 0;
 
     final relX = position.dx - info.rect.left;
@@ -1169,6 +1235,18 @@ class _ChildContext {
   final String path;
   final List<MathNode> nodes;
   _ChildContext({required this.path, required this.nodes});
+}
+
+/// A node's position in its sibling list, from whichever registry holds it.
+class _NodePlacement {
+  final String? parentId;
+  final String? path;
+  final int index;
+  _NodePlacement({
+    required this.parentId,
+    required this.path,
+    required this.index,
+  });
 }
 
 class _TargetNodeInfo {

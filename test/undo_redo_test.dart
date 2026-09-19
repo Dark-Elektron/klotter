@@ -172,30 +172,201 @@ void main() {
 
   group('the signature tracks expressions only', () {
     test('answers and the active cell do not count as edits', () {
-      final AppState a = AppState(
-        expressions: <List<MathNode>>[
-          <MathNode>[LiteralNode(text: '2+2')],
+      AppState one(String text, String answer, int active) => AppState(
+        cells: <List<RowState>>[
+          <RowState>[
+            RowState(nodes: <MathNode>[LiteralNode(text: text)], visible: true),
+          ],
         ],
-        answers: <String>['4'],
-        activeIndex: 0,
+        answers: <String>[answer],
+        activeIndex: active,
+        activeRow: 0,
       );
-      final AppState b = AppState(
-        expressions: <List<MathNode>>[
-          <MathNode>[LiteralNode(text: '2+2')],
-        ],
-        answers: <String>['pending'],
-        activeIndex: 1,
-      );
-      final AppState c = AppState(
-        expressions: <List<MathNode>>[
-          <MathNode>[LiteralNode(text: '2+3')],
-        ],
-        answers: <String>['4'],
-        activeIndex: 0,
-      );
+
+      final AppState a = one('2+2', '4', 0);
+      final AppState b = one('2+2', 'pending', 1);
+      final AppState c = one('2+3', '4', 0);
 
       expect(a.signature, b.signature);
       expect(a.signature, isNot(c.signature));
+    });
+  });
+
+  group('the signature notices rows', () {
+    AppState withRows(List<String> texts, {List<bool>? visible}) => AppState(
+      cells: <List<RowState>>[
+        <RowState>[
+          for (int i = 0; i < texts.length; i++)
+            RowState(
+              nodes: <MathNode>[LiteralNode(text: texts[i])],
+              visible: visible == null || visible[i],
+            ),
+        ],
+      ],
+      answers: const <String>[''],
+      activeIndex: 0,
+      activeRow: 0,
+    );
+
+    test('a second row is a different state', () {
+      // The whole bug: a cell was remembered by its active row alone, so a
+      // second row was invisible to the history. Undo rebuilt the cell with
+      // one row and the others were gone.
+      expect(
+        withRows(<String>['x']).signature,
+        isNot(withRows(<String>['x', 'y']).signature),
+      );
+    });
+
+    test('and so is hiding one', () {
+      expect(
+        withRows(<String>['x', 'y']).signature,
+        isNot(
+          withRows(<String>['x', 'y'], visible: <bool>[true, false]).signature,
+        ),
+      );
+    });
+
+    test('every row is carried, not just the first', () {
+      final AppState s = withRows(<String>['x', 'y', 'z']);
+      expect(s.cells.single.length, 3);
+      expect(s.cellCount, 1);
+    });
+  });
+
+  group('undo keeps the rows of a cell', () {
+    testWidgets('undoing an edit does not throw the other rows away', (
+      tester,
+    ) async {
+      // The reported fault: undo emptied the cell of everything but one row,
+      // and redo brought back only the row the caret had been in. The history
+      // was captured through a map holding each cell's *active* row, so a cell
+      // with three rows was remembered as one.
+      final settings = await seed('1');
+      addTearDown(settings.dispose);
+      await pump(tester, settings);
+
+      final state = tester.state<HomePageState>(find.byType(HomePage));
+
+      state.addRowForTest();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tapKey(tester, '2');
+      state.addRowForTest();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tapKey(tester, '3');
+      expect(
+        state.rowCountForTest(0),
+        3,
+        reason: 'the rows were not created, so this proves nothing',
+      );
+
+      await tapKey(tester, '4');
+      expect(state.canUndoAppState, isTrue, reason: 'nothing to undo');
+
+      state.undoAppState();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        state.rowCountForTest(0),
+        3,
+        reason:
+            'undo left ${state.rowCountForTest(0)} rows of 3 — it rebuilt the '
+            'cell from a state that only remembered one',
+      );
+    });
+
+    testWidgets('and redo brings all of them back', (tester) async {
+      final settings = await seed('1');
+      addTearDown(settings.dispose);
+      await pump(tester, settings);
+
+      final state = tester.state<HomePageState>(find.byType(HomePage));
+      state.addRowForTest();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tapKey(tester, '2');
+      await tapKey(tester, '5');
+
+      state.undoAppState();
+      await tester.pump(const Duration(milliseconds: 300));
+      state.redoAppState();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        state.rowCountForTest(0),
+        2,
+        reason:
+            'redo restored ${state.rowCountForTest(0)} rows of 2 — only the '
+            'row the caret was in came back',
+      );
+    });
+  });
+
+  group('undo steps one edit at a time', () {
+    testWidgets('a keystroke is a step, across cells', (tester) async {
+      // The reported sequence: 28x in the first cell, then xy in a second.
+      // One undo left a single cell holding "28" — because history was only
+      // taken at the end of updateMathEditor, which most edits never call. Two
+      // of those five keystrokes were recorded and everything typed after the
+      // new cell was added left no trace at all.
+      final settings = await seed('');
+      addTearDown(settings.dispose);
+      await pump(tester, settings);
+      final state = tester.state<HomePageState>(find.byType(HomePage));
+
+      await tapKey(tester, '2');
+      await tapKey(tester, '8');
+      state.addDisplayForTest();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tapKey(tester, 'x');
+      await tapKey(tester, 'y');
+
+      expect(state.countForTest, 2, reason: 'the second cell was not added');
+      expect(state.textOfCellForTest(1), 'xy');
+
+      state.undoAppState();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        state.countForTest,
+        2,
+        reason: 'undo removed a cell instead of a character',
+      );
+      expect(
+        state.textOfCellForTest(1),
+        'x',
+        reason:
+            'undo left "${state.textOfCellForTest(1)}" — it went back further '
+            'than the last keystroke',
+      );
+      expect(
+        state.textOfCellForTest(0),
+        '28',
+        reason: 'the untouched cell was rewritten by an undo of another cell',
+      );
+    });
+
+    testWidgets('and the caret returns to the cell that was edited', (
+      tester,
+    ) async {
+      final settings = await seed('');
+      addTearDown(settings.dispose);
+      await pump(tester, settings);
+      final state = tester.state<HomePageState>(find.byType(HomePage));
+
+      await tapKey(tester, '2');
+      state.addDisplayForTest();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tapKey(tester, 'x');
+      await tapKey(tester, 'y');
+
+      state.undoAppState();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        state.activeIndexForTest,
+        1,
+        reason: 'undo moved the caret away from the cell it changed',
+      );
     });
   });
 }

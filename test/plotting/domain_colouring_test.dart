@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -311,10 +312,54 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 600));
 
-      final (_, _, yMin, yMax) = key.currentState!.ranges;
-      // x² + 20 never comes near zero, so a framed window must not be
-      // centred on it.
-      expect(yMin, greaterThan(5), reason: 'the window runs $yMin to $yMax');
+      final (xMin, xMax, yMin, yMax) = key.currentState!.ranges;
+      // A fixed frame, not a fit: home is x -5..5 and y -10..10 whatever is
+      // plotted. Sizing the window around the curves meant the same key gave a
+      // different answer every time, which is what this test used to describe.
+      expect(xMin, -5);
+      expect(xMax, 5);
+      expect(yMin, -10);
+      expect(yMax, 10);
+    });
+  });
+
+  group('the eye', () {
+    testWidgets('closing it takes the colouring off the plot', (tester) async {
+      // The colouring was drawn from the cell's first line without consulting
+      // `hidden`, so a complex plot could not be hidden at all.
+      await tester.runAsync(() async {
+        int coloured(ByteData d) {
+          int n = 0;
+          for (int i = 0; i < d.lengthInBytes ~/ 4; i++) {
+            final int o = i * 4;
+            final int r = d.getUint8(o);
+            final int g = d.getUint8(o + 1);
+            final int b = d.getUint8(o + 2);
+            final int mx = [r, g, b].reduce((a, c) => a > c ? a : c);
+            final int mn = [r, g, b].reduce((a, c) => a < c ? a : c);
+            if (mx > 60 && mx - mn > 40) n++;
+          }
+          return n;
+        }
+
+        Future<ByteData> pixels({required bool hidden}) async {
+          final PlotExpression e = identity()..hidden = hidden;
+          final ui.Image image = await render(e);
+          return (await image.toByteData())!;
+        }
+
+        final int shown = coloured(await pixels(hidden: false));
+        final int hiddenInk = coloured(await pixels(hidden: true));
+
+        expect(shown, greaterThan(0), reason: 'the colouring never drew');
+        expect(
+          hiddenInk,
+          lessThan(shown ~/ 4),
+          reason:
+              'hidden drew $hiddenInk against $shown shown — the eye did '
+              'nothing to the complex plot',
+        );
+      });
     });
   });
 }
