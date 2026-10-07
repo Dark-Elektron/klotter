@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
@@ -28,6 +29,10 @@ class PopupMenuCalcButton extends StatefulWidget {
   final Color? menuBackgroundColor;
   final Color? separatorColor;
 
+  /// What a screen reader says for this key; [spokenKeyLabel] of its face
+  /// unless given.
+  final String? semanticLabel;
+
   const PopupMenuCalcButton({
     super.key,
     required this.buttonText,
@@ -41,6 +46,7 @@ class PopupMenuCalcButton extends StatefulWidget {
     this.menuBackgroundColor,
     this.separatorColor,
     this.borderRadius = 0.0,
+    this.semanticLabel,
   });
 
   final double borderRadius;
@@ -287,88 +293,102 @@ class _PopupMenuCalcButtonState extends State<PopupMenuCalcButton> {
     final effectiveBorderRadius =
         widget.borderRadius == 0 ? sBorderRadius : widget.borderRadius;
 
-    return Padding(
-      padding: EdgeInsets.all(buttonSpacing / 2),
-      child: GestureDetector(
-        onTapDown: (_) => setState(() => _isPressed = true),
-        onTapUp: (_) {
-          setState(() => _isPressed = false);
-          widget.onTap?.call();
-          // The same tick as every other key.
-          if (haptic) {
-            HapticFeedback.selectionClick();
-          }
-        },
-        onTapCancel: () => setState(() => _isPressed = false),
-        onLongPressStart: (details) {
-          // Gated like the rest: this one buzzed even with haptics off.
-          if (haptic) HapticFeedback.lightImpact();
-          setState(() => _isPressed = true);
-          _showOverlay();
-          _updateHighlight(details.globalPosition);
-        },
-        onLongPressMoveUpdate: (details) {
-          _updateHighlight(details.globalPosition);
-        },
-        onLongPressEnd: (details) {
-          setState(() => _isPressed = false);
-          final index = _highlightedIndex.value;
-          _removeOverlay();
-          if (index != null) {
-            widget.menuItems[index].onTap();
+    // One node per key, as for every other key (see MyButton). The long-press
+    // menu is offered as named actions: a screen reader cannot hold the key
+    // and drag onto an item, and holding it through the screen reader opened
+    // the menu and closed it again at once.
+    return Semantics(
+      button: true,
+      label: widget.semanticLabel ?? spokenKeyLabel(widget.buttonText),
+      onTap: widget.onTap,
+      customSemanticsActions: <CustomSemanticsAction, VoidCallback>{
+        for (final CalcMenuItem item in widget.menuItems)
+          CustomSemanticsAction(label: spokenKeyLabel(item.label)): item.onTap,
+      },
+      excludeSemantics: true,
+      child: Padding(
+        padding: EdgeInsets.all(buttonSpacing / 2),
+        child: GestureDetector(
+          onTapDown: (_) => setState(() => _isPressed = true),
+          onTapUp: (_) {
+            setState(() => _isPressed = false);
+            widget.onTap?.call();
+            // The same tick as every other key.
             if (haptic) {
-              HapticFeedback.lightImpact();
+              HapticFeedback.selectionClick();
             }
-          }
-        },
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(effectiveBorderRadius),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.3),
-                blurRadius: 2,
-                spreadRadius: 0,
-                offset: const Offset(0, 0),
-              ),
-            ],
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(effectiveBorderRadius),
-            child: Material(
-              color: widget.color,
-              child: Container(
-                color:
-                    _isPressed
-                        ? Colors.black.withValues(alpha: 0.1)
-                        : Colors.transparent,
-                child: Stack(
-                  children: [
-                    Center(
-                      // Drawn as MyButton draws its label (see [keyLabel]):
-                      // these keys carry the longest labels on the keypad
-                      // ("asin", "acos", "atan").
-                      child: keyLabel(
-                        context,
-                        widget.buttonText,
-                        color: widget.textColor,
-                        fontSize: widget.fontSize,
+          },
+          onTapCancel: () => setState(() => _isPressed = false),
+          onLongPressStart: (details) {
+            // Gated like the rest: this one buzzed even with haptics off.
+            if (haptic) HapticFeedback.lightImpact();
+            setState(() => _isPressed = true);
+            _showOverlay();
+            _updateHighlight(details.globalPosition);
+          },
+          onLongPressMoveUpdate: (details) {
+            _updateHighlight(details.globalPosition);
+          },
+          onLongPressEnd: (details) {
+            setState(() => _isPressed = false);
+            final index = _highlightedIndex.value;
+            _removeOverlay();
+            if (index != null) {
+              widget.menuItems[index].onTap();
+              if (haptic) {
+                HapticFeedback.lightImpact();
+              }
+            }
+          },
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(effectiveBorderRadius),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.3),
+                  blurRadius: 2,
+                  spreadRadius: 0,
+                  offset: const Offset(0, 0),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(effectiveBorderRadius),
+              child: Material(
+                color: widget.color,
+                child: Container(
+                  color:
+                      _isPressed
+                          ? Colors.black.withValues(alpha: 0.1)
+                          : Colors.transparent,
+                  child: Stack(
+                    children: [
+                      Center(
+                        // Drawn as MyButton draws its label (see [keyLabel]):
+                        // these keys carry the longest labels on the keypad
+                        // ("asin", "acos", "atan").
+                        child: keyLabel(
+                          context,
+                          widget.buttonText,
+                          color: widget.textColor,
+                          fontSize: widget.fontSize,
+                        ),
                       ),
-                    ),
-                    if (widget.hasIndicator)
-                      (effectiveBorderRadius > 10)
-                          ? Positioned(
-                            bottom: 4,
-                            left: 0,
-                            right: 0,
-                            child: Center(child: _buildIndicatorDot()),
-                          )
-                          : Positioned(
-                            bottom: 4,
-                            right: 4,
-                            child: _buildIndicatorDot(),
-                          ),
-                  ],
+                      if (widget.hasIndicator)
+                        (effectiveBorderRadius > 10)
+                            ? Positioned(
+                              bottom: 4,
+                              left: 0,
+                              right: 0,
+                              child: Center(child: _buildIndicatorDot()),
+                            )
+                            : Positioned(
+                              bottom: 4,
+                              right: 4,
+                              child: _buildIndicatorDot(),
+                            ),
+                    ],
+                  ),
                 ),
               ),
             ),

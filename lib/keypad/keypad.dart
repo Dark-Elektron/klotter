@@ -1742,6 +1742,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     bool mirrored = false,
     double? fontSize,
     bool enabled = true,
+    String? semanticLabel,
   }) {
     // A key with nothing to do says so rather than looking live and doing
     // nothing when pressed: dimmed, and not tappable.
@@ -1751,6 +1752,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
       color: _kpButton,
       textColor: enabled ? _kpButtonText : _kpButtonText.withValues(alpha: 0.3),
       fontSize: fontSize ?? 22,
+      semanticLabel: semanticLabel,
     );
     // Redo is undo's mirror image. Unicode has no flipped twin of U+238C, so
     // the glyph is drawn reversed rather than substituted with a different
@@ -1951,16 +1953,20 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
         ),
       ],
     );
+    // The two share one glyph, drawn mirrored for redo, so a screen reader
+    // is told which is which.
     final Widget kUndo = _extrasAction(
       '⎌',
       () => widget.onUndoAppState?.call(),
       enabled: widget.canUndoAppState,
+      semanticLabel: 'undo',
     );
     final Widget kRedo = _extrasAction(
       '⎌',
       () => widget.onRedoAppState?.call(),
       mirrored: true,
       enabled: widget.canRedoAppState,
+      semanticLabel: 'redo',
     );
     final Widget kClearAll = _extrasAction('⌧', widget.onClearAllDisplays);
     // U+21EA, an upward arrow out of a tray: the plot leaving the app. It sits

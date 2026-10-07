@@ -175,6 +175,105 @@ double keyLabelShare(BuildContext context, String label) {
       : 0.42;
 }
 
+// ---- what a screen reader says --------------------------------------------
+
+/// The words for a key, by what the key shows.
+///
+/// A key's face is a glyph, and TalkBack reads glyphs badly or not at all: ⌫
+/// is silent, ⁿ√ comes out letter by letter, and ⎌ as its Unicode name. A face
+/// with no entry here is read as itself (see [spokenKeyLabel]), which suits
+/// digits and plain letters.
+const Map<String, String> _spokenFaces = <String, String>{
+  // The number pad.
+  '()': 'brackets',
+  '⌫': 'backspace',
+  '+': 'plus',
+  '−': 'minus',
+  '×': 'times',
+  '÷': 'divide',
+  '.': 'point',
+  'ᴇ': 'times ten to the power',
+  'CE': 'clear expression',
+  '⌘': 'new row',
+  // Relations.
+  '=': 'equals',
+  '≥': 'greater than or equal to',
+  '≤': 'less than or equal to',
+  '>': 'greater than',
+  '<': 'less than',
+  '≠': 'not equal to',
+  // Powers and roots.
+  'x²': 'squared',
+  'xⁿ': 'power',
+  '√': 'square root',
+  'ⁿ√': 'root',
+  // Functions.
+  'sin': 'sine',
+  'cos': 'cosine',
+  'tan': 'tangent',
+  'asin': 'inverse sine',
+  'acos': 'inverse cosine',
+  'atan': 'inverse tangent',
+  'sinh': 'hyperbolic sine',
+  'cosh': 'hyperbolic cosine',
+  'tanh': 'hyperbolic tangent',
+  'asinh': 'inverse hyperbolic sine',
+  'acosh': 'inverse hyperbolic cosine',
+  'atanh': 'inverse hyperbolic tangent',
+  'log': 'log',
+  'ln': 'natural log',
+  'logᵣ': 'log to a base',
+  '|x|': 'absolute value',
+  '!': 'factorial',
+  'ⁿPᵣ': 'permutations',
+  'ⁿCᵣ': 'combinations',
+  '°': 'degrees',
+  // Calculus.
+  'd/dx': 'derivative',
+  'd/dx|ₐ': 'derivative at a point',
+  '∑': 'sum',
+  '∏': 'product',
+  '∫': 'integral',
+  '∫ₐᵇ': 'definite integral',
+  // Symbols and constants.
+  'i': 'i, imaginary unit',
+  'z̲': 'z, complex variable',
+  'c₀': 'speed of light',
+  'c₀ (speed of light)': 'speed of light',
+  'ε₀': 'permittivity of free space',
+  'ε₀ (permittivity)': 'permittivity of free space',
+  'μ₀': 'permeability of free space',
+  'μ₀ (permeability)': 'permeability of free space',
+  'e⁻ (elementary charge)': 'elementary charge',
+  // The whole-document keys.
+  '⌧': 'clear all',
+  '⎌': 'undo',
+  '⇪': 'export',
+  'ⓘ': 'help',
+  '☰': 'settings',
+};
+
+/// Greek letters by name, for the coordinate keys and any face built on one.
+const Map<String, String> _greekNames = <String, String>{
+  'π': 'pi',
+  'θ': 'theta',
+  'φ': 'phi',
+  'ρ': 'rho',
+  'ε': 'epsilon',
+  'μ': 'mu',
+};
+
+/// What a screen reader says for a key whose face is [face].
+String spokenKeyLabel(String face) {
+  final String? known = _spokenFaces[face];
+  if (known != null) return known;
+  // A unit vector is a letter under a combining circumflex: x̂, θ̂.
+  if (face.length == 2 && face.codeUnitAt(1) == 0x0302) {
+    return 'unit vector ${_greekNames[face[0]] ?? face[0]}';
+  }
+  return _greekNames[face] ?? face;
+}
+
 // creating Stateless Widget for buttons
 class MyButton extends StatelessWidget {
   // declaring variables
@@ -186,6 +285,10 @@ class MyButton extends StatelessWidget {
   final bool mirror;
   final double borderRadius;
 
+  /// What a screen reader says for this key, where its face alone does not
+  /// tell it (undo and redo share one glyph). Otherwise [spokenKeyLabel].
+  final String? semanticLabel;
+
   //Constructor
   const MyButton({
     super.key,
@@ -196,6 +299,7 @@ class MyButton extends StatelessWidget {
     this.fontSize = 22,
     this.mirror = false,
     this.borderRadius = 0,
+    this.semanticLabel,
   });
 
   @override
@@ -214,6 +318,18 @@ class MyButton extends StatelessWidget {
         borderRadius == 0 ? settingsBorderRadius : borderRadius;
     final double outerPadding = buttonSpacing / 2;
 
+    void press() {
+      // The lightest tick there is. Every key press makes one, so it should
+      // say "pressed" and nothing more: a heavy thud on every digit made
+      // typing feel like work.
+      if (hapticEnabled) {
+        HapticFeedback.selectionClick();
+      }
+      if (buttontapped != null) {
+        buttontapped();
+      }
+    }
+
     // 2. Create the label separately for clarity (see [keyLabel]).
     Widget textWidget = keyLabel(
       context,
@@ -229,43 +345,42 @@ class MyButton extends StatelessWidget {
         child: textWidget,
       );
     }
-    return Padding(
-      padding: EdgeInsets.all(outerPadding),
-      child: Container(
-        decoration: BoxDecoration(
-          // IMPORTANT: borderRadius here must match ClipRRect to make the shadow curved
-          borderRadius: BorderRadius.circular(effectiveBorderRadius),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.3), // Shadow color
-              blurRadius: 2, // Softness
-              spreadRadius: 0, // Size
-              offset: Offset(0, 0), // Position (x, y)
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(effectiveBorderRadius),
-          child: Material(
-            color: color,
-            child: InkWell(
-              onTap: () {
-                // The lightest tick there is. Every key press makes one,
-                // so it should say "pressed" and nothing more: a heavy
-                // thud on every digit made typing feel like work.
-                if (hapticEnabled) {
-                  HapticFeedback.selectionClick();
-                }
-                if (buttontapped != null) {
-                  buttontapped();
-                }
-              },
-              splashColor: Colors.black.withValues(alpha: 0.2),
-              highlightColor: Colors.white.withValues(alpha: 0.1),
-              // child: Container(
-              // Remove color here since Material has it now
-              child: Center(child: textWidget),
-              // ),
+    // One node per key, read as what the key does rather than as its glyph,
+    // and pressed by the screen reader's double tap as by a finger.
+    return Semantics(
+      button: true,
+      enabled: buttontapped != null,
+      label: semanticLabel ?? spokenKeyLabel(buttonText),
+      onTap: buttontapped == null ? null : press,
+      excludeSemantics: true,
+      child: Padding(
+        padding: EdgeInsets.all(outerPadding),
+        child: Container(
+          decoration: BoxDecoration(
+            // IMPORTANT: borderRadius here must match ClipRRect to make the shadow curved
+            borderRadius: BorderRadius.circular(effectiveBorderRadius),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.3), // Shadow color
+                blurRadius: 2, // Softness
+                spreadRadius: 0, // Size
+                offset: Offset(0, 0), // Position (x, y)
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(effectiveBorderRadius),
+            child: Material(
+              color: color,
+              child: InkWell(
+                onTap: press,
+                splashColor: Colors.black.withValues(alpha: 0.2),
+                highlightColor: Colors.white.withValues(alpha: 0.1),
+                // child: Container(
+                // Remove color here since Material has it now
+                child: Center(child: textWidget),
+                // ),
+              ),
             ),
           ),
         ),
