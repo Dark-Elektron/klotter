@@ -10,7 +10,10 @@ plugins {
 
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
-if (keystorePropertiesFile.exists()) {
+// The upload key is optional for building: a fresh clone, or CI for a pull
+// request, has no key.properties and signs release builds with the debug key.
+val hasUploadKey = keystorePropertiesFile.exists()
+if (hasUploadKey) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
@@ -40,21 +43,28 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            keyAlias = keystoreProperties["keyAlias"] as String
-            keyPassword = keystoreProperties["keyPassword"] as String
-            storeFile = keystoreProperties["storeFile"]?.let { file(it) }
-            storePassword = keystoreProperties["storePassword"] as String
+        // Only made when there is a key to make it from. Reading the absent
+        // values with `as String` threw while Gradle configured the project,
+        // which failed every build without key.properties, debug ones too.
+        if (hasUploadKey) {
+            create("release") {
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+                storeFile = keystoreProperties["storeFile"]?.let { file(it) }
+                storePassword = keystoreProperties["storePassword"] as String
+            }
         }
     }
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now,
-            // so `flutter run --release` works.
-            // signingConfig = signingConfigs.getByName("debug")
-            signingConfig = signingConfigs.getByName("release")
+            // The upload key when it is configured. Otherwise the debug key, so
+            // `flutter run --release` works on any checkout; such an APK cannot
+            // update an install signed with the upload key, which is why CI
+            // never publishes one.
+            signingConfig =
+                if (hasUploadKey) signingConfigs.getByName("release")
+                else signingConfigs.getByName("debug")
         }
 
         // getByName("release") {
