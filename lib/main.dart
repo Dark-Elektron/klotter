@@ -41,10 +41,22 @@ void main() async {
   // recorded too.
   CrashLog.install();
 
+  // The maths font is under the SIL Open Font License, which asks that the
+  // licence travel with every copy. Registered beside the packages' licences
+  // so it is listed wherever those are.
+  LicenseRegistry.addLicense(_fontLicences);
+
   final settingsProvider = await SettingsProvider.create();
 
   runApp(
     ChangeNotifierProvider.value(value: settingsProvider, child: const MyApp()),
+  );
+}
+
+Stream<LicenseEntry> _fontLicences() async* {
+  yield LicenseEntryWithLineBreaks(
+    const <String>['STIX Two Math'],
+    await rootBundle.loadString('assets/fonts/STIXTwoMath-OFL.txt'),
   );
 }
 

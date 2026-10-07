@@ -9,16 +9,8 @@ import '../plotting/utils/colormap.dart';
 import 'settings_provider.dart';
 
 class SettingsScreen extends StatefulWidget {
-  /// The fonts the user can pick between.
-  ///
-  /// On the widget rather than its state so it can be checked against
-  /// pubspec.yaml: every name here has to be a declared family, or choosing it
-  /// silently falls back to the default.
-  static const List<String> availableFonts = <String>[
-    'OpenSans',
-    'Cambria',
-    'Rosemary',
-  ];
+  /// The fonts the user can pick between; see [SettingsProvider.availableFonts].
+  static const List<String> availableFonts = SettingsProvider.availableFonts;
 
   final VoidCallback? onShowTutorial;
 
@@ -1120,8 +1112,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     switch (family) {
       case 'OpenSans':
         return 'Open Sans';
-      case 'Cambria':
-        return 'Cambria';
+      case 'STIXTwoMath':
+        return 'STIX Two Math';
       case 'Rosemary':
         return 'Rosemary';
       default:

@@ -119,9 +119,12 @@ flutter:
     - family: OpenSans
       fonts:
         - asset: assets/fonts/OpenSans-Regular.ttf
-    - family: Cambria
+    # STIX Two Math, under the SIL Open Font License (STIXTwoMath-OFL.txt
+    # beside it). It replaced Cambria Math, which is Microsoft's: its licence
+    # allows displaying with it, not shipping it inside an app.
+    - family: STIXTwoMath
       fonts:
-        - asset: assets/fonts/cambria-math.ttf
+        - asset: assets/fonts/STIXTwoMath-Regular.otf
     - family: Rosemary
       fonts:
         - asset: assets/fonts/Rosemary.ttf
@@ -129,6 +132,8 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/icons/app_icon.png
+    # The licence of the bundled STIX Two Math font, which has to travel with it.
+    - assets/fonts/STIXTwoMath-OFL.txt
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

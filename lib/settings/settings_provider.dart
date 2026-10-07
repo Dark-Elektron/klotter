@@ -65,6 +65,17 @@ enum KeypadColorMode {
 
 class SettingsProvider extends ChangeNotifier {
   static const double maxButtonRadius = 36.0;
+
+  /// The font families the user can pick between.
+  ///
+  /// Every name has to be a family declared in pubspec.yaml, or choosing it
+  /// silently falls back to the default. Kept here rather than on the screen
+  /// so a saved choice can be checked against it when settings load.
+  static const List<String> availableFonts = <String>[
+    'OpenSans',
+    'STIXTwoMath',
+    'Rosemary',
+  ];
   static const double maxButtonSpacing = 12.0;
 
   double _precision = PRECISION.toDouble();
@@ -196,7 +207,13 @@ class SettingsProvider extends ChangeNotifier {
     );
 
     // Load font family
-    _fontFamily = prefs.getString('fontFamily') ?? FONTFAMILY;
+    // Cambria became STIX Two Math: Cambria Math is Microsoft's and cannot be
+    // shipped inside the app, so a saved choice of it carries over to its free
+    // equivalent. Any other family no longer offered falls back to the
+    // default, rather than handing the settings menu a value it cannot show.
+    final String savedFont = prefs.getString('fontFamily') ?? FONTFAMILY;
+    _fontFamily = savedFont == 'Cambria' ? 'STIXTwoMath' : savedFont;
+    if (!availableFonts.contains(_fontFamily)) _fontFamily = FONTFAMILY;
 
     // Load keypad color mode
     final String paletteStr = prefs.getString('plotPalette') ?? 'turbo';
