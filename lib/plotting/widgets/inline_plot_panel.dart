@@ -1215,6 +1215,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
       AppColors.fromType(settings.themeType),
       mode: settings.plotColorMode,
       themeType: settings.themeType,
+      palette: settings.plotPalette,
     );
   }
 

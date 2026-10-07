@@ -84,7 +84,7 @@ void main() {
     // Its left end carries the bottom of the ramp.
     final int x = barLeft().toInt() + 3;
     expect(
-      distance(at(x, mid), plotColormapStops.first),
+      distance(at(x, mid), plotColormapStops(PlotPalette.turbo).first),
       lessThan(0.35),
       reason: 'left end is ${at(x, mid)}',
     );
@@ -93,7 +93,7 @@ void main() {
   test('it runs low to high, left to right', () {
     final int x = (barLeft() + barWidth).toInt() - 3;
     expect(
-      distance(at(x, mid), plotColormapStops.last),
+      distance(at(x, mid), plotColormapStops(PlotPalette.turbo).last),
       lessThan(0.35),
       reason: 'right end is ${at(x, mid)}',
     );
@@ -107,17 +107,14 @@ void main() {
       text: const TextSpan(text: '10', style: TextStyle(fontSize: 10)),
       textDirection: TextDirection.ltr,
     )..layout();
-    expect(
-      barLeft() + barWidth + 4 + high.width,
-      lessThanOrEqualTo(400 - 18),
-    );
+    expect(barLeft() + barWidth + 4 + high.width, lessThanOrEqualTo(400 - 18));
   });
 
   test('the old spot down the left edge is clear', () {
     // Where the vertical bar used to be — now the parameter panels' corner.
     for (int y = 100; y < 200; y += 10) {
       expect(
-        distance(at(14, y), plotColormapStops.first),
+        distance(at(14, y), plotColormapStops(PlotPalette.turbo).first),
         greaterThan(0.15),
         reason: 'ramp colour still at (14, $y)',
       );
@@ -128,7 +125,7 @@ void main() {
     // The bar used to be centred; that half of the top edge is now free.
     for (int x = 20; x < 150; x += 10) {
       expect(
-        distance(at(x, mid), plotColormapStops.first),
+        distance(at(x, mid), plotColormapStops(PlotPalette.turbo).first),
         greaterThan(0.15),
         reason: 'ramp colour still at ($x, $mid)',
       );

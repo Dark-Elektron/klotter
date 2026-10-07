@@ -12,11 +12,27 @@ void main() {
     // Turbo is a rainbow, so it is deliberately NOT monotonic in lightness;
     // these tests pin its shape rather than a uniformity it does not have.
     test('runs from dark violet through blue, green and orange to red', () {
-      expect(_luminance(plotColormap(0)), lessThan(0.05), reason: 'dark end');
-      expect(plotColormap(0.15).b, greaterThan(plotColormap(0.15).r));
-      expect(plotColormap(0.5).g, greaterThan(plotColormap(0.5).b));
-      expect(plotColormap(0.8).r, greaterThan(plotColormap(0.8).b));
-      expect(plotColormap(1.0).r, greaterThan(plotColormap(1.0).g));
+      expect(
+        _luminance(plotColormap(0, PlotPalette.turbo)),
+        lessThan(0.05),
+        reason: 'dark end',
+      );
+      expect(
+        plotColormap(0.15, PlotPalette.turbo).b,
+        greaterThan(plotColormap(0.15, PlotPalette.turbo).r),
+      );
+      expect(
+        plotColormap(0.5, PlotPalette.turbo).g,
+        greaterThan(plotColormap(0.5, PlotPalette.turbo).b),
+      );
+      expect(
+        plotColormap(0.8, PlotPalette.turbo).r,
+        greaterThan(plotColormap(0.8, PlotPalette.turbo).b),
+      );
+      expect(
+        plotColormap(1.0, PlotPalette.turbo).r,
+        greaterThan(plotColormap(1.0, PlotPalette.turbo).g),
+      );
     });
 
     test(
@@ -28,9 +44,11 @@ void main() {
         // peak — interpolation between the stops — are not ridges.
         int turns = 0;
         bool rising = true;
-        double extreme = _luminance(plotColormap(0));
+        double extreme = _luminance(plotColormap(0, PlotPalette.turbo));
         for (int i = 1; i <= 128; i++) {
-          final double now = _luminance(plotColormap(i / 128));
+          final double now = _luminance(
+            plotColormap(i / 128, PlotPalette.turbo),
+          );
           if (rising ? now > extreme : now < extreme) {
             extreme = now;
           } else if ((now - extreme).abs() > 0.01) {
@@ -44,27 +62,31 @@ void main() {
     );
 
     test('viridis can be chosen instead, colorbar and all', () {
-      addTearDown(() => activePlotPalette = PlotPalette.turbo);
-      final Color turboMiddle = plotColormap(0.5);
-      activePlotPalette = PlotPalette.viridis;
-      expect(plotColormap(0.5), viridisColormap(0.5));
-      expect(plotColormap(0.5), isNot(turboMiddle));
+      final Color turboMiddle = plotColormap(0.5, PlotPalette.turbo);
+      expect(plotColormap(0.5, PlotPalette.viridis), viridisColormap(0.5));
+      expect(plotColormap(0.5, PlotPalette.viridis), isNot(turboMiddle));
       // The bar labelling a surface is drawn from the stops, so they follow
       // the same choice, or the bar would name a ramp that is not on screen.
-      expect(plotColormapStops.first, viridisColormap(0));
-      expect(plotColormapStops.last, viridisColormap(1));
+      expect(plotColormapStops(PlotPalette.viridis).first, viridisColormap(0));
+      expect(plotColormapStops(PlotPalette.viridis).last, viridisColormap(1));
     });
 
     test('is clamped outside 0..1', () {
-      expect(plotColormap(-5), equals(plotColormap(0)));
-      expect(plotColormap(5), equals(plotColormap(1)));
+      expect(
+        plotColormap(-5, PlotPalette.turbo),
+        equals(plotColormap(0, PlotPalette.turbo)),
+      );
+      expect(
+        plotColormap(5, PlotPalette.turbo),
+        equals(plotColormap(1, PlotPalette.turbo)),
+      );
     });
 
     test('is continuous — no jumps between stops', () {
       const int samples = 200;
-      Color previous = plotColormap(0);
+      Color previous = plotColormap(0, PlotPalette.turbo);
       for (int i = 1; i <= samples; i++) {
-        final Color c = plotColormap(i / samples);
+        final Color c = plotColormap(i / samples, PlotPalette.turbo);
         final double step =
             (c.r - previous.r).abs() +
             (c.g - previous.g).abs() +
@@ -96,7 +118,7 @@ void main() {
     test('yields exactly plotColorBands distinct colours', () {
       final seen = <int>{};
       for (int i = 0; i <= 400; i++) {
-        seen.add(plotColormapBanded(i / 400).toARGB32());
+        seen.add(plotColormapBanded(i / 400, PlotPalette.turbo).toARGB32());
       }
       expect(seen.length, equals(plotColorBands));
     });
@@ -105,12 +127,12 @@ void main() {
       // Anything inside band 0 must be identical; the next band must differ.
       final double w = 1 / plotColorBands;
       expect(
-        plotColormapBanded(0.01 * w),
-        equals(plotColormapBanded(0.99 * w)),
+        plotColormapBanded(0.01 * w, PlotPalette.turbo),
+        equals(plotColormapBanded(0.99 * w, PlotPalette.turbo)),
       );
       expect(
-        plotColormapBanded(0.5 * w),
-        isNot(equals(plotColormapBanded(1.5 * w))),
+        plotColormapBanded(0.5 * w, PlotPalette.turbo),
+        isNot(equals(plotColormapBanded(1.5 * w, PlotPalette.turbo))),
       );
     });
 
@@ -118,21 +140,33 @@ void main() {
       // The colorbar swatch must be the exact colour drawn on the surface.
       for (int i = 0; i < plotColorBands; i++) {
         expect(
-          plotColormapBanded((i + 0.5) / plotColorBands),
-          equals(plotColormap((i + 0.5) / plotColorBands)),
+          plotColormapBanded((i + 0.5) / plotColorBands, PlotPalette.turbo),
+          equals(plotColormap((i + 0.5) / plotColorBands, PlotPalette.turbo)),
         );
       }
     });
 
     test('the endpoints stay inside the ramp', () {
-      expect(plotColormapBanded(0), equals(plotColormapBanded(0.001)));
+      expect(
+        plotColormapBanded(0, PlotPalette.turbo),
+        equals(plotColormapBanded(0.001, PlotPalette.turbo)),
+      );
       // The top edge belongs to the last band, not a new one.
-      expect(plotColormapBanded(1), equals(plotColormapBanded(0.999)));
+      expect(
+        plotColormapBanded(1, PlotPalette.turbo),
+        equals(plotColormapBanded(0.999, PlotPalette.turbo)),
+      );
     });
 
     test('is clamped outside 0..1', () {
-      expect(plotColormapBanded(-3), equals(plotColormapBanded(0)));
-      expect(plotColormapBanded(7), equals(plotColormapBanded(1)));
+      expect(
+        plotColormapBanded(-3, PlotPalette.turbo),
+        equals(plotColormapBanded(0, PlotPalette.turbo)),
+      );
+      expect(
+        plotColormapBanded(7, PlotPalette.turbo),
+        equals(plotColormapBanded(1, PlotPalette.turbo)),
+      );
     });
 
     test('plotColorBand reports the interval a value falls in', () {

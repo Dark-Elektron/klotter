@@ -84,6 +84,9 @@ class Plot2DPainter extends CustomPainter {
   final ParameterRange uRange;
   final ParameterRange vRange;
 
+  /// The ramp values are coloured with: the theme's, so it repaints with it.
+  PlotPalette get palette => plotTheme.palette;
+
   Plot2DPainter({
     required this.function,
     this.functions = const <PlotExpression>[],
@@ -393,7 +396,7 @@ class Plot2DPainter extends CustomPainter {
     final double cellHeight = size.height / _heatmapGrid;
 
     Color shade(double v) =>
-        plotColormap(((v - minVal) / span).clamp(0.0, 1.0));
+        plotColormap(((v - minVal) / span).clamp(0.0, 1.0), palette);
 
     final List<Offset> positions = <Offset>[];
     final List<Color> colors = <Color>[];
@@ -580,7 +583,7 @@ class Plot2DPainter extends CustomPainter {
     for (int level = 0; level < numContours; level++) {
       final threshold = maxMag * (level + 1) / (numContours + 1);
       final normalizedLevel = threshold / maxMag;
-      final color = plotColormap(normalizedLevel);
+      final color = plotColormap(normalizedLevel, palette);
 
       final paint =
           Paint()
@@ -641,7 +644,7 @@ class Plot2DPainter extends CustomPainter {
       final threshold =
           minVal + (maxVal - minVal) * (level + 1) / (numContours + 1);
       final normalizedLevel = (threshold - minVal) / (maxVal - minVal);
-      final color = plotColormap(normalizedLevel);
+      final color = plotColormap(normalizedLevel, palette);
 
       final paint =
           Paint()
@@ -1635,7 +1638,7 @@ class Plot2DPainter extends CustomPainter {
           if (!val.isFinite) continue;
 
           final normalized = (val - minVal) / (maxVal - minVal);
-          final color = plotColormap(normalized);
+          final color = plotColormap(normalized, palette);
 
           canvas.drawCircle(
             Offset(toScreenX(x), toScreenY(y)),
@@ -1713,7 +1716,7 @@ class Plot2DPainter extends CustomPainter {
       final threshold =
           minVal + (maxVal - minVal) * (level + 1) / (numContours + 1);
       final normalizedLevel = (threshold - minVal) / (maxVal - minVal);
-      final color = plotColormap(normalizedLevel);
+      final color = plotColormap(normalizedLevel, palette);
 
       final paint =
           Paint()
@@ -1817,8 +1820,8 @@ class Plot2DPainter extends CustomPainter {
         toScreenX,
         toScreenY,
         fields[n],
-        surfaceColormap(n, of: fields.length),
-        surfaceRampStops(n, of: fields.length),
+        surfaceColormap(n, of: fields.length, palette: palette),
+        surfaceRampStops(n, of: fields.length, palette: palette),
         n,
       );
     }
@@ -1970,7 +1973,7 @@ class Plot2DPainter extends CustomPainter {
         if (!mag.isFinite) continue;
 
         final normalized = mag / maxMag;
-        final color = plotColormap(normalized);
+        final color = plotColormap(normalized, palette);
 
         canvas.drawCircle(
           Offset(toScreenX(x), toScreenY(y)),
@@ -2007,7 +2010,7 @@ class Plot2DPainter extends CustomPainter {
   }) {
     // The ramp in use unless told otherwise; it is a setting, so it cannot be
     // the parameter's default.
-    final List<Color> ramp = stops ?? plotColormapStops;
+    final List<Color> ramp = stops ?? plotColormapStops(palette);
     final theme = plotTheme;
     const double barHeight = 12.0;
     const double margin = 10.0;

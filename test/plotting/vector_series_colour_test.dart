@@ -157,10 +157,13 @@ void main() {
     test('two fields get different ramps, one field keeps the rainbow', () {
       // The property the arrows rely on. `of: 1` is the full rainbow because a
       // lone field has nothing to be confused with.
-      expect(surfaceColormap(0, of: 1)(0.5), plotColormap(0.5));
       expect(
-        surfaceColormap(0, of: 2)(0.5),
-        isNot(surfaceColormap(1, of: 2)(0.5)),
+        surfaceColormap(0, of: 1, palette: PlotPalette.turbo)(0.5),
+        plotColormap(0.5, PlotPalette.turbo),
+      );
+      expect(
+        surfaceColormap(0, of: 2, palette: PlotPalette.turbo)(0.5),
+        isNot(surfaceColormap(1, of: 2, palette: PlotPalette.turbo)(0.5)),
       );
     });
 
@@ -193,7 +196,7 @@ void main() {
         // their ramps, so it passes just as happily when both share the
         // rainbow, which is how it let exactly that mutation through.
         bool hasJetMiddle(Set<int> seen) {
-          final Color mid = plotColormap(0.5);
+          final Color mid = plotColormap(0.5, PlotPalette.turbo);
           return seen.any((int rgb) {
             final int r = (rgb >> 16) & 0xFF;
             final int g = (rgb >> 8) & 0xFF;

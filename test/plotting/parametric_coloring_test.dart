@@ -96,12 +96,12 @@ void main() {
       // The saddle rises and falls, so its highest and lowest corners must
       // carry the ramp's extremes — otherwise the colours are not the value.
       expect(
-        near(data, pixels, plotColormapStops.first),
+        near(data, pixels, plotColormapStops(PlotPalette.turbo).first),
         greaterThan(80),
         reason: 'the low end of the ramp is missing',
       );
       expect(
-        near(data, pixels, plotColormapStops.last),
+        near(data, pixels, plotColormapStops(PlotPalette.turbo).last),
         greaterThan(80),
         reason: 'the high end of the ramp is missing',
       );
@@ -116,7 +116,10 @@ void main() {
       const int pixels = 320 * 320;
       // Shaded in the series colour instead. A stray pixel or two of ramp
       // colour could come from the axes, so this allows a handful.
-      expect(near(data, pixels, plotColormapStops.last), lessThan(40));
+      expect(
+        near(data, pixels, plotColormapStops(PlotPalette.turbo).last),
+        lessThan(40),
+      );
       expect(
         near(data, pixels, theme.seriesColor(0), within: 0.6),
         greaterThan(500),
@@ -166,8 +169,14 @@ void main() {
       const int pixels = 320 * 320;
       // The saddle's origin is at distance 0 and its corners much further, so
       // the magnitude spans a real range and both ends must show.
-      expect(near(data, pixels, plotColormapStops.first), greaterThan(40));
-      expect(near(data, pixels, plotColormapStops.last), greaterThan(40));
+      expect(
+        near(data, pixels, plotColormapStops(PlotPalette.turbo).first),
+        greaterThan(40),
+      );
+      expect(
+        near(data, pixels, plotColormapStops(PlotPalette.turbo).last),
+        greaterThan(40),
+      );
     });
   });
 }

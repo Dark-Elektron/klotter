@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:klotter/plotting/utils/colormap.dart';
 import 'package:klotter/plotting/utils/plot_theme.dart';
 import 'package:klotter/settings/settings_provider.dart';
 import 'package:klotter/utils/app_colors.dart';
@@ -191,6 +192,36 @@ void main() {
         final darkMean = dark.map(_lum).reduce((a, b) => a + b) / dark.length;
         expect(darkMean, greaterThan(lightMean), reason: '$t');
       }
+    });
+  });
+
+  group('the value palette', () {
+    // It was a global the settings wrote into, which no painter could notice:
+    // switching palettes left a plot in the old colours until something else
+    // moved. As part of the theme, a change of palette is a change of theme,
+    // which every painter already repaints for.
+    test('is part of the theme', () {
+      final AppColors colors = AppColors.fromType(ThemeType.classic);
+      final PlotThemeData turbo = PlotThemeData.fromColors(colors);
+      final PlotThemeData viridis = PlotThemeData.fromColors(
+        colors,
+        palette: PlotPalette.viridis,
+      );
+      expect(turbo.palette, PlotPalette.turbo);
+      expect(viridis.palette, PlotPalette.viridis);
+      expect(identical(turbo, viridis), isFalse);
+    });
+
+    test('is part of what identifies a built theme', () {
+      final AppColors colors = AppColors.fromType(ThemeType.classic);
+      expect(
+        identical(
+          PlotThemeData.fromColors(colors, palette: PlotPalette.viridis),
+          PlotThemeData.fromColors(colors, palette: PlotPalette.viridis),
+        ),
+        isTrue,
+        reason: 'the same choice hands back the same theme',
+      );
     });
   });
 }

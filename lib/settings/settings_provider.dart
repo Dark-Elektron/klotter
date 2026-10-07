@@ -225,7 +225,6 @@ class SettingsProvider extends ChangeNotifier {
       (e) => e.name == paletteStr,
       orElse: () => PlotPalette.turbo,
     );
-    activePlotPalette = _plotPalette;
 
     String plotColorStr = prefs.getString('plotColorMode') ?? 'themeBased';
     _plotColorMode = PlotColorMode.values.firstWhere(
@@ -340,7 +339,6 @@ class SettingsProvider extends ChangeNotifier {
     _plotPalette = value;
     // The painters read it from the colormap module, which every colouring by
     // value goes through.
-    activePlotPalette = value;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('plotPalette', value.name);
     notifyListeners();

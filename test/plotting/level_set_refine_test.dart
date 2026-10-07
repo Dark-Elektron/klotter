@@ -180,7 +180,7 @@ void main() {
       p.scaleZ,
       // How the painter tells meshes coloured differently apart: the mode and
       // the ramp.
-      SurfaceMode.none.index * 2 + activePlotPalette.index,
+      SurfaceMode.none.index * 2 + PlotPalette.turbo.index,
       refined: refined,
     );
 

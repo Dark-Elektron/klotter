@@ -755,6 +755,9 @@ class Plot3DPainter extends CustomPainter {
   /// is left out rather than drawn there.
   final List<Rect> labelKeepOut;
 
+  /// The ramp values are coloured with: the theme's, so it repaints with it.
+  PlotPalette get palette => plotTheme.palette;
+
   Plot3DPainter({
     required this.function,
     this.functions = const <PlotExpression>[],
@@ -1627,7 +1630,11 @@ class Plot3DPainter extends CustomPainter {
   /// hyperboloid marches to ~33,000 triangles, so rebuilding per frame was the
   /// whole cost of a drag.
   LevelMesh _levelMeshFor(PlotExpression equation, int index, int of) {
-    final Color Function(double) ramp = surfaceColormap(index, of: of);
+    final Color Function(double) ramp = surfaceColormap(
+      index,
+      of: of,
+      palette: palette,
+    );
     // The ramp is chosen by position among the equations on screen — it only
     // has to tell them apart. The solid colour is the row's, so it matches the
     // swatch beside the expression and the same plot in 2D.
@@ -1649,7 +1656,7 @@ class Plot3DPainter extends CustomPainter {
             : null;
     // The colours are baked into the cached mesh, so what they were made
     // from — the mode and the ramp — is part of what identifies it.
-    final int colouring = surfaceMode.index * 2 + activePlotPalette.index;
+    final int colouring = surfaceMode.index * 2 + palette.index;
     bool hasMesh(int resolution, {required bool refined}) => hasCachedLevelMesh(
       equation,
       bounds,
@@ -2175,7 +2182,11 @@ class Plot3DPainter extends CustomPainter {
       // Each surface is coloured against its own range. Sharing one range
       // across all of them would flatten a shallow surface to a single colour
       // whenever a steeper one is on the same axes.
-      final Color Function(double) ramp = surfaceColormap(c, of: curves.length);
+      final Color Function(double) ramp = surfaceColormap(
+        c,
+        of: curves.length,
+        palette: palette,
+      );
       final double span = built.maxV - built.minV;
 
       // Off means one colour, not one ramp. The menu had offered this all
@@ -2297,7 +2308,7 @@ class Plot3DPainter extends CustomPainter {
           size,
           lo,
           hi,
-          stops: surfaceRampStops(index, of: curves.length),
+          stops: surfaceRampStops(index, of: curves.length, palette: palette),
           row: i,
         );
       }
@@ -2319,7 +2330,11 @@ class Plot3DPainter extends CustomPainter {
     if (totalH < size.height) top = (size.height - totalH) / 2;
 
     for (int i = 0; i < count; i++) {
-      final Color Function(double) ramp = surfaceColormap(i, of: count);
+      final Color Function(double) ramp = surfaceColormap(
+        i,
+        of: count,
+        palette: palette,
+      );
       final Rect r = Rect.fromLTWH(
         size.width - margin - swatchW,
         top + i * (swatchH + gap),
@@ -2467,7 +2482,8 @@ class Plot3DPainter extends CustomPainter {
       final o4 = quad.p4.project(focalLength, size, _panX, _panY);
 
       // Colour per corner, interpolated across the cell.
-      Color shade(double v) => plotColormap((v / maxMag).clamp(0.0, 1.0));
+      Color shade(double v) =>
+          plotColormap((v / maxMag).clamp(0.0, 1.0), palette);
 
       batch.addQuad(
         o1,
@@ -2595,8 +2611,10 @@ class Plot3DPainter extends CustomPainter {
       final o4 = quad.p4.project(focalLength, size, _panX, _panY);
 
       // Colour per corner, interpolated across the cell.
-      Color shade(double v) =>
-          plotColormap(((v - minVal) / (maxVal - minVal)).clamp(0.0, 1.0));
+      Color shade(double v) => plotColormap(
+        ((v - minVal) / (maxVal - minVal)).clamp(0.0, 1.0),
+        palette,
+      );
 
       batch.addQuad(
         o1,
@@ -2652,7 +2670,7 @@ class Plot3DPainter extends CustomPainter {
     for (int level = 0; level < numContours; level++) {
       final threshold = maxMag * (level + 1) / (numContours + 1);
       final normalizedLevel = threshold / maxMag;
-      final color = plotColormap(normalizedLevel);
+      final color = plotColormap(normalizedLevel, palette);
 
       final paint =
           Paint()
@@ -2714,7 +2732,7 @@ class Plot3DPainter extends CustomPainter {
       final threshold =
           minVal + (maxVal - minVal) * (level + 1) / (numContours + 1);
       final normalizedLevel = (threshold - minVal) / (maxVal - minVal);
-      final color = plotColormap(normalizedLevel);
+      final color = plotColormap(normalizedLevel, palette);
 
       final paint =
           Paint()
@@ -2920,7 +2938,7 @@ class Plot3DPainter extends CustomPainter {
       final threshold =
           minVal + (maxVal - minVal) * (level + 1) / (numContours + 1);
       final normalizedLevel = (threshold - minVal) / (maxVal - minVal);
-      final color = plotColormap(normalizedLevel);
+      final color = plotColormap(normalizedLevel, palette);
 
       final paint =
           Paint()
@@ -2995,7 +3013,7 @@ class Plot3DPainter extends CustomPainter {
       final threshold =
           minVal + (maxVal - minVal) * (level + 1) / (numContours + 1);
       final normalizedLevel = (threshold - minVal) / (maxVal - minVal);
-      final color = plotColormap(normalizedLevel);
+      final color = plotColormap(normalizedLevel, palette);
 
       final paint =
           Paint()
@@ -3889,7 +3907,7 @@ class Plot3DPainter extends CustomPainter {
       // "I am the second one" — fine when the colour is an identity and
       // useless when it is a measurement. Coloured by |f| it came out as a
       // sheet of blue with no reading in it.
-      const Color Function(double) ramp = plotColormap;
+      Color ramp(double t) => plotColormap(t, palette);
       final double span =
           built.maxV > built.minV ? built.maxV - built.minV : 1.0;
       final int plainArgb = plain.toARGB32();
@@ -4086,7 +4104,10 @@ class Plot3DPainter extends CustomPainter {
     int shadeFor(double value, double light) {
       if (!byValue) return litSurfaceArgb(baseArgb, light);
       return litSurfaceArgb(
-        plotColormap(((value - minV) / span).clamp(0.0, 1.0)).toARGB32(),
+        plotColormap(
+          ((value - minV) / span).clamp(0.0, 1.0),
+          palette,
+        ).toARGB32(),
         light,
         strength: _valueShadeStrength,
       );
@@ -4445,7 +4466,7 @@ class Plot3DPainter extends CustomPainter {
       }
 
       final normalized = (fp.value - minVal) / (maxVal - minVal);
-      final color = plotColormap(normalized);
+      final color = plotColormap(normalized, palette);
 
       final depthScale = focalLength / (focalLength + fp.point.y);
       final radius = 6.0 * depthScale;
@@ -4477,8 +4498,8 @@ class Plot3DPainter extends CustomPainter {
         size,
         focalLength,
         fields[n],
-        surfaceColormap(n, of: fields.length),
-        surfaceRampStops(n, of: fields.length),
+        surfaceColormap(n, of: fields.length, palette: palette),
+        surfaceRampStops(n, of: fields.length, palette: palette),
         n,
       );
     }
@@ -4704,8 +4725,8 @@ class Plot3DPainter extends CustomPainter {
         size,
         focalLength,
         fields[n],
-        surfaceColormap(n, of: fields.length),
-        surfaceRampStops(n, of: fields.length),
+        surfaceColormap(n, of: fields.length, palette: palette),
+        surfaceRampStops(n, of: fields.length, palette: palette),
         n,
       );
     }
@@ -4907,7 +4928,7 @@ class Plot3DPainter extends CustomPainter {
   }) {
     // The ramp in use unless told otherwise; it is a setting, so it cannot be
     // the parameter's default.
-    final List<Color> ramp = stops ?? plotColormapStops;
+    final List<Color> ramp = stops ?? plotColormapStops(palette);
     final double barWidth = _colorbarWidth(size);
     final Rect barRect = Rect.fromLTWH(
       size.width - barWidth - _colorbarMarginRight,

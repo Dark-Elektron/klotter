@@ -223,16 +223,32 @@ void main() {
       // disagree. They must not.
       for (final int of in <int>[1, 2, 3]) {
         for (int i = 0; i < of; i++) {
-          final List<Color> stops = surfaceRampStops(i, of: of);
-          expect(stops.first, surfaceColormap(i, of: of)(0));
-          expect(stops.last, surfaceColormap(i, of: of)(1));
+          final List<Color> stops = surfaceRampStops(
+            i,
+            of: of,
+            palette: PlotPalette.turbo,
+          );
+          expect(
+            stops.first,
+            surfaceColormap(i, of: of, palette: PlotPalette.turbo)(0),
+          );
+          expect(
+            stops.last,
+            surfaceColormap(i, of: of, palette: PlotPalette.turbo)(1),
+          );
         }
       }
     });
 
     test('a lone field keeps the rainbow, two fields do not share', () {
-      expect(surfaceRampStops(0, of: 1), plotColormapStops);
-      expect(surfaceRampStops(0, of: 2), isNot(surfaceRampStops(1, of: 2)));
+      expect(
+        surfaceRampStops(0, of: 1, palette: PlotPalette.turbo),
+        plotColormapStops(PlotPalette.turbo),
+      );
+      expect(
+        surfaceRampStops(0, of: 2, palette: PlotPalette.turbo),
+        isNot(surfaceRampStops(1, of: 2, palette: PlotPalette.turbo)),
+      );
     });
 
     testWidgets('two fields draw two bars', (tester) async {

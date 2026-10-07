@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../settings/settings_provider.dart';
 import '../../utils/app_colors.dart';
+import 'colormap.dart';
 
 class PlotThemeData {
   /// How strongly the plot ground is lit, 0 flat to 1 full.
@@ -77,6 +78,15 @@ class PlotThemeData {
   /// cycled by rank — curve 1 keeps its colour when curve 2 is deleted.
   final List<Color> seriesColors;
 
+  /// The ramp values are coloured with (see [plotColormap]), as the settings
+  /// choose it.
+  ///
+  /// Part of the theme so it reaches every painter the way the rest of the
+  /// plot's look does, and repaints them when it changes. It was a global the
+  /// settings wrote into, which a painter had no way to notice: switching
+  /// palettes left a plot in the old colours until something else moved.
+  final PlotPalette palette;
+
   const PlotThemeData({
     required this.controlActive,
     required this.errorMark,
@@ -99,6 +109,7 @@ class PlotThemeData {
     required this.axisY,
     required this.axisZ,
     required this.seriesColors,
+    this.palette = PlotPalette.turbo,
   });
 
   /// Colour of the nth curve on a plot.
@@ -125,19 +136,21 @@ class PlotThemeData {
     AppColors colors, {
     PlotColorMode mode = PlotColorMode.themeBased,
     ThemeType themeType = ThemeType.classic,
+    PlotPalette palette = PlotPalette.turbo,
   }) {
     final String key =
-        '${themeType.name}|${mode.name}|'
+        '${themeType.name}|${mode.name}|${palette.name}|'
         '${colors.displayBackground.toARGB32()}|${colors.accent.toARGB32()}';
     final PlotThemeData? hit = _cache[key];
     if (hit != null) return hit;
-    return _cache[key] = PlotThemeData._build(colors, mode, themeType);
+    return _cache[key] = PlotThemeData._build(colors, mode, themeType, palette);
   }
 
   factory PlotThemeData._build(
     AppColors colors,
     PlotColorMode mode,
     ThemeType themeType,
+    PlotPalette palette,
   ) {
     // Whether the plot surface is light is a property of the plot, not of the
     // app chrome — a dark app can carry a light plot and vice versa.
@@ -285,6 +298,7 @@ class PlotThemeData {
             ? colors.accent
             : (isLight ? const Color(0xFFB7791F) : const Color(0xFFF2B451));
     return PlotThemeData(
+      palette: palette,
       controlActive: accent,
       // Readable on every theme, which the app's own error red is not on the
       // darker ones.

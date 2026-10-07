@@ -243,14 +243,37 @@ void main() {
     testWidgets('a lone surface keeps the full rainbow', (tester) async {
       // Regression pin. A single surface has nothing to be confused with, so
       // it keeps jet, which shows its shape better than one hue family can.
-      expect(surfaceColormap(0, of: 1), same(plotColormap));
-      expect(surfaceColormap(0, of: 2), isNot(same(plotColormap)));
+      // Compared by the colours drawn, for each palette, now that the ramp is
+      // made for the palette it is given rather than being plotColormap itself.
+      const List<double> ts = <double>[0, 0.2, 0.5, 0.8, 1];
+      for (final PlotPalette palette in PlotPalette.values) {
+        final Color Function(double) lone = surfaceColormap(
+          0,
+          of: 1,
+          palette: palette,
+        );
+        final Color Function(double) shared = surfaceColormap(
+          0,
+          of: 2,
+          palette: palette,
+        );
+        for (final double t in ts) {
+          expect(lone(t), plotColormap(t, palette), reason: '$palette at $t');
+        }
+        expect(
+          ts.any((double t) => shared(t) != plotColormap(t, palette)),
+          isTrue,
+          reason: 'two surfaces should not both wear the full ramp',
+        );
+      }
     });
 
     testWidgets('the ramps differ from one another', (tester) async {
       final Set<int> midpoints = <int>{
         for (int i = 0; i < surfaceRampCount; i++)
-          surfaceColormap(i, of: surfaceRampCount)(0.5).toARGB32(),
+          surfaceColormap(i, of: surfaceRampCount, palette: PlotPalette.turbo)(
+            0.5,
+          ).toARGB32(),
       };
       expect(
         midpoints.length,
@@ -262,8 +285,12 @@ void main() {
     testWidgets('ramps cycle rather than running out', (tester) async {
       final int n = surfaceRampCount;
       expect(
-        surfaceColormap(n, of: n + 1)(0.5).toARGB32(),
-        surfaceColormap(0, of: n + 1)(0.5).toARGB32(),
+        surfaceColormap(n, of: n + 1, palette: PlotPalette.turbo)(
+          0.5,
+        ).toARGB32(),
+        surfaceColormap(0, of: n + 1, palette: PlotPalette.turbo)(
+          0.5,
+        ).toARGB32(),
       );
     });
   });
@@ -570,7 +597,11 @@ void main() {
 /// Near-black is almost hueless, so its reported angle swings wildly and says
 /// nothing about which family the ramp belongs to.
 List<double> _rampHues(int i) {
-  final Color Function(double) ramp = surfaceColormap(i, of: surfaceRampCount);
+  final Color Function(double) ramp = surfaceColormap(
+    i,
+    of: surfaceRampCount,
+    palette: PlotPalette.turbo,
+  );
   return <double>[
     for (int s = 3; s <= 10; s++) HSVColor.fromColor(ramp(s / 10)).hue,
   ];

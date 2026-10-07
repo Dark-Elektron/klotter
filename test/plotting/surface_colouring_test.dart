@@ -37,9 +37,9 @@ void main() {
 
     test('distinct magnitudes get distinct colours', () {
       const double min = 0, max = 18;
-      final low = plotColormap(normalize(1, min, max));
-      final mid = plotColormap(normalize(9, min, max));
-      final high = plotColormap(normalize(17, min, max));
+      final low = plotColormap(normalize(1, min, max), PlotPalette.turbo);
+      final mid = plotColormap(normalize(9, min, max), PlotPalette.turbo);
+      final high = plotColormap(normalize(17, min, max), PlotPalette.turbo);
       expect(low, isNot(equals(mid)));
       expect(mid, isNot(equals(high)));
     });
@@ -48,7 +48,7 @@ void main() {
   group('edge cases', () {
     test('a flat surface sits mid-ramp instead of dividing by zero', () {
       expect(normalize(5, 5, 5), equals(0.5));
-      expect(plotColormap(normalize(5, 5, 5)), isA<Color>());
+      expect(plotColormap(normalize(5, 5, 5), PlotPalette.turbo), isA<Color>());
     });
 
     test('a surface entirely below zero still spans the ramp', () {

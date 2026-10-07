@@ -1188,6 +1188,7 @@ class HomePageState extends State<HomePage>
       AppColors.fromType(settings.themeType),
       mode: settings.plotColorMode,
       themeType: settings.themeType,
+      palette: settings.plotPalette,
     );
   }
 

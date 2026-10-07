@@ -10,8 +10,10 @@ import 'package:klotter/plotting/utils/colormap.dart';
 /// shows 2,500 solid blocks. The corners are now coloured separately and
 /// interpolated across the cell by `Canvas.drawVertices`.
 void main() {
-  Color shade(double v, double min, double max) =>
-      plotColormap(((v - min) / (max - min)).clamp(0.0, 1.0));
+  Color shade(double v, double min, double max) => plotColormap(
+    ((v - min) / (max - min)).clamp(0.0, 1.0),
+    PlotPalette.turbo,
+  );
 
   group('a cell spanning a gradient gets distinct corner colours', () {
     test('corners of a steep cell differ', () {

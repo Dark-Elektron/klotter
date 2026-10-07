@@ -26,12 +26,6 @@ enum PlotPalette {
   viridis,
 }
 
-/// The ramp in use. Set from the settings, which own the choice; every
-/// colouring by value reads it through [plotColormap] and
-/// [plotColormapStops], so a colorbar and the surface it labels cannot
-/// disagree about which ramp they mean.
-PlotPalette activePlotPalette = PlotPalette.turbo;
-
 /// Turbo at [t], from the polynomial fit published with it (Mikhailov, 2019).
 ///
 /// A close fit rather than the reference table: through the body of the ramp
@@ -127,11 +121,15 @@ const int plotColorBands = 8;
 /// interval* it falls in, which is what makes a level readable off the plot
 /// without a probe. Each band takes the colour of its own midpoint, so the
 /// colorbar's swatches are the exact colours drawn on the surface.
-Color plotColormapBanded(double t, {int bands = plotColorBands}) {
+Color plotColormapBanded(
+  double t,
+  PlotPalette palette, {
+  int bands = plotColorBands,
+}) {
   final double clamped = t.clamp(0.0, 1.0);
   // The top edge belongs to the last band rather than starting a new one.
   final int index = (clamped * bands).floor().clamp(0, bands - 1);
-  return plotColormap((index + 0.5) / bands);
+  return plotColormap((index + 0.5) / bands, palette);
 }
 
 /// The band [t] falls in, and the fraction of the range each band spans.
@@ -145,9 +143,15 @@ Color plotColormapBanded(double t, {int bands = plotColorBands}) {
   return (index: index, lower: index / bands, upper: (index + 1) / bands);
 }
 
-/// The magnitude ramp for surfaces, contours and colorbars — the one chosen
-/// in the settings (see [PlotPalette]).
-Color plotColormap(double t) => _rampLerp(plotColormapStops, t);
+/// The magnitude ramp for surfaces, contours and colorbars: [palette], the
+/// one chosen in the settings.
+///
+/// The palette is passed in by whatever draws, rather than read from a global
+/// the settings wrote into: a painter that is not told the palette changed
+/// cannot know to repaint, and kept the old colours until something else
+/// moved.
+Color plotColormap(double t, PlotPalette palette) =>
+    _rampLerp(plotColormapStops(palette), t);
 
 /// The stops behind [plotColormap], in order from low to high.
 ///
@@ -156,8 +160,8 @@ Color plotColormap(double t) => _rampLerp(plotColormapStops, t);
 /// the ramp into one row of pixels per bar height instead quantises it to as
 /// many steps as the bar is tall, which on a high-density screen shows as
 /// bands with hard edges.
-List<Color> get plotColormapStops =>
-    activePlotPalette == PlotPalette.viridis ? _viridis : _turbo;
+List<Color> plotColormapStops(PlotPalette palette) =>
+    palette == PlotPalette.viridis ? _viridis : _turbo;
 
 // ============================================================
 // PER-SURFACE RAMPS
@@ -228,8 +232,12 @@ int get surfaceRampCount => _surfaceRamps.length;
 ///
 /// A lone surface keeps [plotColormap], the full rainbow, because there is
 /// nothing to confuse it with and the extra hue range shows its shape better.
-Color Function(double) surfaceColormap(int index, {required int of}) {
-  if (of <= 1) return plotColormap;
+Color Function(double) surfaceColormap(
+  int index, {
+  required int of,
+  required PlotPalette palette,
+}) {
+  if (of <= 1) return (double t) => plotColormap(t, palette);
   final List<Color> ramp = _surfaceRamps[index % _surfaceRamps.length];
   return (double t) => _rampLerp(ramp, t);
 }
@@ -240,8 +248,14 @@ Color Function(double) surfaceColormap(int index, {required int of}) {
 /// function, so it needs the stops themselves. Matches [surfaceColormap] for
 /// the same arguments, including falling back to the rainbow for a lone
 /// surface.
-List<Color> surfaceRampStops(int index, {required int of}) =>
-    of <= 1 ? plotColormapStops : _surfaceRamps[index % _surfaceRamps.length];
+List<Color> surfaceRampStops(
+  int index, {
+  required int of,
+  required PlotPalette palette,
+}) =>
+    of <= 1
+        ? plotColormapStops(palette)
+        : _surfaceRamps[index % _surfaceRamps.length];
 
 /// Quieter single-hue alternative for the plain "gradient" surface mode.
 Color surfaceGradientColor(double t) => _rampLerp(_tealRamp, t);
