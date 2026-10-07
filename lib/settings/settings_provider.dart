@@ -73,11 +73,9 @@ class SettingsProvider extends ChangeNotifier {
   ThemeType _themeType = ThemeType.light;
   bool _isRadians = false;
   bool _hapticFeedback = true;
-  bool _soundEffects = false;
   bool _confirmClearAll = true;
   String _multiplicationSign = '\u00D7'; // Default: ×
   NumberFormat _numberFormat = NumberFormat.automatic;
-  bool _useScientificNotationButton = false;
   double _borderRadius = 5.0;
   double _buttonSpacing = 1.0;
   String _fontFamily = FONTFAMILY;
@@ -97,7 +95,6 @@ class SettingsProvider extends ChangeNotifier {
       _themeType != ThemeType.honeyMustard;
   bool get isRadians => _isRadians;
   bool get hapticFeedback => _hapticFeedback;
-  bool get soundEffects => _soundEffects;
 
   /// Whether ⌧ asks before wiping every cell.
   ///
@@ -108,7 +105,6 @@ class SettingsProvider extends ChangeNotifier {
   bool get confirmClearAll => _confirmClearAll;
   String get multiplicationSign => _multiplicationSign;
   NumberFormat get numberFormat => _numberFormat;
-  bool get useScientificNotationButton => _useScientificNotationButton;
   double get borderRadius => _borderRadius;
   double get buttonSpacing => _buttonSpacing;
   String get fontFamily => _fontFamily;
@@ -135,12 +131,10 @@ class SettingsProvider extends ChangeNotifier {
     ThemeType themeType = ThemeType.light,
     String multiplicationSign = '×',
     NumberFormat numberFormat = NumberFormat.automatic,
-    bool useScientificNotationButton = false,
     String? fontFamily,
   }) : _themeType = themeType,
        _multiplicationSign = multiplicationSign,
        _numberFormat = numberFormat,
-       _useScientificNotationButton = useScientificNotationButton,
        _fontFamily = fontFamily ?? FONTFAMILY;
 
   // Factory constructor for tests
@@ -148,14 +142,12 @@ class SettingsProvider extends ChangeNotifier {
     ThemeType themeType = ThemeType.light,
     String multiplicationSign = '×',
     NumberFormat numberFormat = NumberFormat.automatic,
-    bool useScientificNotationButton = false,
     String? fontFamily,
   }) {
     return SettingsProvider._forTesting(
       themeType: themeType,
       multiplicationSign: multiplicationSign,
       numberFormat: numberFormat,
-      useScientificNotationButton: useScientificNotationButton,
       fontFamily: fontFamily,
     );
   }
@@ -185,11 +177,8 @@ class SettingsProvider extends ChangeNotifier {
 
     _isRadians = prefs.getBool('isRadians') ?? false;
     _hapticFeedback = prefs.getBool('hapticFeedback') ?? true;
-    _soundEffects = prefs.getBool('soundEffects') ?? false;
     _confirmClearAll = prefs.getBool('confirmClearAll') ?? true;
     _multiplicationSign = prefs.getString('multiplicationSign') ?? '\u00D7';
-    _useScientificNotationButton =
-        prefs.getBool('useScientificNotationButton') ?? false;
     _borderRadius = (prefs.getDouble('borderRadius') ?? 5.0).clamp(
       0.0,
       maxButtonRadius,
@@ -294,13 +283,6 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> toggleSoundEffects(bool value) async {
-    _soundEffects = value;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('soundEffects', value);
-    notifyListeners();
-  }
-
   Future<void> setMultiplicationSign(String value) async {
     _multiplicationSign = value;
     final prefs = await SharedPreferences.getInstance();
@@ -318,13 +300,6 @@ class SettingsProvider extends ChangeNotifier {
 
     // Update MathSolverNew
     MathSolverNew.setNumberFormat(value);
-    notifyListeners();
-  }
-
-  Future<void> setUseScientificNotationButton(bool value) async {
-    _useScientificNotationButton = value;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('useScientificNotationButton', value);
     notifyListeners();
   }
 
