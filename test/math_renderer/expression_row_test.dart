@@ -46,13 +46,13 @@ void main() {
     expect(row.visible, isFalse);
   });
 
-  test('two rows have different tokens', () {
-    // The token keys the widget, so two rows sharing one would make Flutter
-    // reuse the wrong element when rows are renumbered.
+  test('two rows have different ids', () {
+    // The id keys the row's widget, so two rows sharing one would make
+    // Flutter reuse the wrong element when rows are renumbered.
     final ExpressionRow a = ExpressionRow(id: ExpressionRowIds.take());
     final ExpressionRow b = ExpressionRow(id: ExpressionRowIds.take());
     addTearDown(a.dispose);
     addTearDown(b.dispose);
-    expect(a.token, isNot(b.token));
+    expect(a.id, isNot(b.id));
   });
 }

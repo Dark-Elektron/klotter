@@ -40,10 +40,6 @@ class ExpressionRow {
   /// order — hiding one must not recolour the others.
   bool visible = true;
 
-  /// Identity for widget keys, so Flutter reuses element state when rows are
-  /// renumbered by an insert or a delete.
-  int get token => identityHashCode(controller);
-
   void dispose() {
     controller.dispose();
     scroll.dispose();

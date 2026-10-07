@@ -228,15 +228,14 @@ List<List<ParametricPoint?>> cachedParametricSurface(
   ParameterRange v = defaultParameterRange,
 }) {
   final ({int u, int v}) grid = parametricGridFor(field, u: u, v: v);
-  final Object key = Object.hash(
-    identityHashCode(field),
+  final Object key = PlotCacheKey(field, <num>[
     u.min,
     u.max,
     v.min,
     v.max,
     grid.u,
     grid.v,
-  );
+  ]);
   return _surfaceCache.resolve(
     key,
     () => sampleParametricSurface(
@@ -255,7 +254,7 @@ List<ParametricPoint?> cachedParametricCurve(
   ParameterRange u = defaultParameterRange,
   int steps = parametricCurveSteps,
 }) {
-  final Object key = Object.hash(identityHashCode(field), u.min, u.max, steps);
+  final Object key = PlotCacheKey(field, <num>[u.min, u.max, steps]);
   return _curveCache.resolve(
     key,
     () => sampleParametricCurve(field, u: u, steps: steps),

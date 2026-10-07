@@ -1049,10 +1049,11 @@ class HomePageState extends State<HomePage>
       spacing: _rowGap,
       children: <Widget>[
         for (int r = 0; r < rows.length; r++)
-          // Keyed by the row's own identity, not its position, so Flutter
-          // reuses the right element when a row is inserted above or removed.
+          // Keyed by the row's own id, not its position, so Flutter reuses
+          // the right element when a row is inserted above or removed. Not by
+          // an identity hash, which two live objects can share.
           KeyedSubtree(
-            key: ValueKey<int>(rows[r].token),
+            key: ValueKey<String>(rows[r].id),
             child: Row(
               // Centred, because a row can be tall — a fraction or an integral
               // is several times the height of a plain expression — and chrome

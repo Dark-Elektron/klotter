@@ -112,4 +112,42 @@ void main() {
       expect(grid.expand((r) => r).any((v) => !v.isFinite), isTrue);
     });
   });
+
+  group('PlotCacheKey', () {
+    test('the same source and numbers make an equal key', () {
+      final f = fn('x^2');
+      final a = plotCacheKey(f, <double>[-5, 5], 40);
+      final b = plotCacheKey(f, <double>[-5, 5], 40);
+      expect(a, equals(b));
+      expect(a.hashCode, equals(b.hashCode));
+    });
+
+    test('a different source is a different key, whatever the numbers', () {
+      // Identity, not text: two compilations of the same line are two
+      // expressions, because a cell compiles once per edit.
+      final a = plotCacheKey(fn('x^2'), <double>[-5, 5], 40);
+      final b = plotCacheKey(fn('x^2'), <double>[-5, 5], 40);
+      expect(a, isNot(equals(b)));
+    });
+
+    test('any number differing makes a different key', () {
+      final f = fn('x^2');
+      final base = plotCacheKey(f, <double>[-5, 5], 40);
+      expect(base, isNot(equals(plotCacheKey(f, <double>[-5, 6], 40))));
+      expect(base, isNot(equals(plotCacheKey(f, <double>[-5, 5], 41))));
+      expect(base, isNot(equals(plotCacheKey(f, <double>[-5, 5, 0], 40))));
+    });
+
+    test('equality is checked in full, not by hash', () {
+      // The key used to be the hash itself, so a collision served one plot
+      // the other's geometry. A hash match must never be enough.
+      final f = fn('x^2');
+      final PlotCacheKey a = PlotCacheKey(f, <num>[1, 2]);
+      final PlotCacheKey b = PlotCacheKey(f, <num>[2, 1]);
+      expect(a == b, isFalse);
+      final cache = PlotCache<String>(4);
+      expect(cache.resolve(a, () => 'a'), 'a');
+      expect(cache.resolve(b, () => 'b'), 'b');
+    });
+  });
 }

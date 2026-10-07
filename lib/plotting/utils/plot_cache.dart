@@ -83,13 +83,45 @@ int releasePlotGeometry() {
   return released;
 }
 
-/// Key for cached plot geometry.
+/// What a piece of cached plot geometry was made from.
 ///
-/// The expression is compiled once per edit, so its identity is a sound key —
-/// a new object means a new expression. Values are the window bounds and the
-/// resolution, which is everything else the geometry depends on.
+/// The source it was sampled from is compared by identity: it is compiled once
+/// per edit, so a new object means a new expression. The numbers it was made
+/// with — the window, the resolution, anything else baked in — are compared by
+/// value.
+///
+/// Equality is checked in full. The key used to be the hash itself, an int, so
+/// two different plots whose hashes collided would have been handed each
+/// other's geometry. Now a collision costs a comparison, not a wrong picture.
+class PlotCacheKey {
+  /// [values] is kept, not copied; callers build a fresh list for each key.
+  PlotCacheKey(this.source, this.values)
+    : hashCode = Object.hash(identityHashCode(source), Object.hashAll(values));
+
+  final Object source;
+  final List<num> values;
+
+  @override
+  final int hashCode;
+
+  @override
+  bool operator ==(Object other) {
+    if (other is! PlotCacheKey || !identical(other.source, source)) {
+      return false;
+    }
+    final List<num> mine = values;
+    final List<num> theirs = other.values;
+    if (mine.length != theirs.length) return false;
+    for (int i = 0; i < mine.length; i++) {
+      if (mine[i] != theirs[i]) return false;
+    }
+    return true;
+  }
+}
+
+/// Key for geometry sampled from [f] over [bounds] at [resolution].
 Object plotCacheKey(PlotExpression f, List<double> bounds, int resolution) =>
-    Object.hash(identityHashCode(f), Object.hashAll(bounds), resolution);
+    PlotCacheKey(f, <num>[...bounds, resolution]);
 
 final PlotCache<List<List<double>>> _heightCache =
     PlotCache<List<List<double>>>(4);
