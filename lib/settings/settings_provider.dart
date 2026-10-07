@@ -1,15 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../math_engine/math_engine.dart';
+import '../math_engine/number_format.dart';
 import '../math_renderer/renderer.dart';
 import '../plotting/utils/colormap.dart';
 import '../utils/constants.dart';
 
-enum NumberFormat {
-  automatic, // Scientific only for very large/small numbers
-  scientific, // Always scientific notation
-  plain, // Commas, never scientific
-}
+// The engine owns how numbers are written, so it need not import the settings.
+// Re-exported for the code that reads them from here.
+export '../math_engine/number_format.dart' show NumberFormat, NumberFormatting;
 
 enum ThemeType {
   /// Dark ink on pale paper. The default.
@@ -116,6 +114,12 @@ class SettingsProvider extends ChangeNotifier {
   bool get confirmClearAll => _confirmClearAll;
   String get multiplicationSign => _multiplicationSign;
   NumberFormat get numberFormat => _numberFormat;
+
+  /// How results are written, as the precision and number format settings
+  /// say. Handed to the engine by whatever formats a result (see
+  /// [NumberFormatting.apply]); the engine no longer reads the settings.
+  NumberFormatting get formatting =>
+      NumberFormatting(precision: _precision.toInt(), format: _numberFormat);
   double get borderRadius => _borderRadius;
   double get buttonSpacing => _buttonSpacing;
   String get fontFamily => _fontFamily;
@@ -241,12 +245,6 @@ class SettingsProvider extends ChangeNotifier {
       orElse: () => KeypadColorMode.themeBased,
     );
 
-    // Set global precision on load
-    MathSolverNew.setPrecision(_precision.toInt());
-
-    // Set global number format on load
-    MathSolverNew.setNumberFormat(_numberFormat);
-
     // Set global multiplication sign on load
     MathTextStyle.setMultiplySign(_multiplicationSign);
 
@@ -261,9 +259,6 @@ class SettingsProvider extends ChangeNotifier {
     _precision = value;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble('precision', value);
-
-    // Update the global precision in MathSolverNew
-    MathSolverNew.setPrecision(value.toInt());
 
     notifyListeners();
   }
@@ -314,9 +309,6 @@ class SettingsProvider extends ChangeNotifier {
     _numberFormat = value;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('numberFormat', value.name);
-
-    // Update MathSolverNew
-    MathSolverNew.setNumberFormat(value);
     notifyListeners();
   }
 

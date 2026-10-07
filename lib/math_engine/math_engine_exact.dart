@@ -3,7 +3,7 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:klotter/math_renderer/math_nodes.dart';
-import 'package:klotter/settings/settings_provider.dart';
+import 'package:klotter/math_engine/number_format.dart';
 import 'package:klotter/math_engine/math_engine.dart';
 import 'package:klotter/math_engine/real_functions.dart';
 part 'symbolic_calculus.dart';
@@ -100,7 +100,8 @@ class ExactNumberFormatter {
     BigInt absVal = value.abs();
     bool useScientific = false;
 
-    final format = MathSolverNew.numberFormat;
+    final NumberFormatting formatting = NumberFormatting.current;
+    final NumberFormat format = formatting.format;
 
     if (format == NumberFormat.scientific) {
       // Rule: always use scientific for any non-zero number
@@ -117,7 +118,7 @@ class ExactNumberFormatter {
 
     if (useScientific) {
       String s = absVal.toString();
-      int p = MathSolverNew.precision;
+      int p = formatting.precision;
       int len = s.length;
       int exponent = len - 1;
 

@@ -1,27 +1,14 @@
 import 'dart:math';
-import '../settings/settings_provider.dart';
+import 'number_format.dart';
 import 'real_functions.dart';
 
 /// Math solver for expressions from the new math renderer
 
 class MathSolverNew {
-  // ============== GLOBAL PRECISION SETTING ==============
-  static int precision = 6; // Default precision, can be changed globally
-  static NumberFormat numberFormat = NumberFormat.automatic; // NEW
-
-  /// Call this to update precision from settings
-  static void setPrecision(int value) {
-    precision = value;
-  }
-
-  /// Call this to update number format from settings
-  static void setNumberFormat(NumberFormat value) {
-    numberFormat = value;
-  }
-
-  /// Formats a number using current precision and number format settings.
-  static String formatResult(double num) {
-    return _formatResult(num);
+  /// Formats a number as [formatting] says, or as the formatting in force
+  /// (see [NumberFormatting.apply]) when none is given.
+  static String formatResult(double num, [NumberFormatting? formatting]) {
+    return _formatResult(num, formatting);
   }
 
   /// Main entry point - determines what type of expression and solves accordingly
@@ -1236,7 +1223,7 @@ class MathSolverNew {
 
   // ============== FORMATTING ==============
   // ============== FORMATTING ==============
-  static String _formatResult(double num) {
+  static String _formatResult(double num, [NumberFormatting? formatting]) {
     if (num.isNaN || num.isInfinite) return num.toString();
 
     // Check if it's effectively zero (allow for very small physical constants)
@@ -1244,24 +1231,25 @@ class MathSolverNew {
       return '0';
     }
 
-    switch (numberFormat) {
+    final NumberFormatting f = formatting ?? NumberFormatting.current;
+    switch (f.format) {
       case NumberFormat.scientific:
-        return _formatScientific(num);
+        return _formatScientific(num, f.precision);
       case NumberFormat.plain:
-        return _formatPlain(num);
+        return _formatPlain(num, f.precision);
       case NumberFormat.automatic:
-        return _formatAutomatic(num);
+        return _formatAutomatic(num, f.precision);
     }
   }
 
   /// Automatic format - scientific only for very large/small numbers
-  static String _formatAutomatic(double num) {
+  static String _formatAutomatic(double num, int precision) {
     if (num == 0) return '0';
 
     // Automatic uses scientific notation if >= 1e6 or <= 1e-6 (absolute value)
     final abs = num.abs();
     if (abs >= 1e6 || abs <= 1e-6) {
-      return _formatScientific(num);
+      return _formatScientific(num, precision);
     }
 
     // Check if it's effectively an integer
@@ -1279,7 +1267,7 @@ class MathSolverNew {
   }
 
   /// Plain format - with commas, never scientific notation
-  static String _formatPlain(double num) {
+  static String _formatPlain(double num, int precision) {
     // Check if it's effectively an integer
     if ((num - num.roundToDouble()).abs() < 1e-10) {
       return addCommas(num.round().toString());
@@ -1325,7 +1313,7 @@ class MathSolverNew {
   }
 
   /// Formats a number in scientific notation (e.g., 1.23E6)
-  static String _formatScientific(double num) {
+  static String _formatScientific(double num, int precision) {
     if (num == 0) return '0';
 
     // Use Dart's built-in exponential formatting
@@ -2015,7 +2003,7 @@ class Complex {
     if ((num - num.roundToDouble()).abs() < 1e-10) {
       return num.round().toString();
     }
-    String formatted = num.toStringAsFixed(MathSolverNew.precision);
+    String formatted = num.toStringAsFixed(NumberFormatting.current.precision);
     if (formatted.contains('.')) {
       formatted = formatted.replaceAll(RegExp(r'0+$'), '');
       formatted = formatted.replaceAll(RegExp(r'\.$'), '');

@@ -1,16 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:klotter/math_engine/math_engine.dart';
 import 'package:klotter/math_engine/math_engine_exact.dart';
 import 'package:klotter/math_renderer/math_nodes.dart';
-import 'package:klotter/settings/settings_provider.dart';
+import 'package:klotter/math_engine/number_format.dart';
 
 void main() {
   group('Smart Scientific Notation Tests', () {
-    setUp(() {
-      MathSolverNew.numberFormat = NumberFormat.automatic;
-      MathSolverNew.precision = 6;
-    });
-
     test('Large integer becomes scientific with automatic format (>= 1e6)', () {
       final expr = IntExpr(BigInt.from(123456789));
       final nodes = expr.toMathNode();
@@ -55,17 +49,18 @@ void main() {
       },
     );
 
-    test('Respects scientific mode for small whole numbers', () {
-      MathSolverNew.numberFormat = NumberFormat.scientific;
-      final expr = IntExpr(BigInt.from(123));
-      final nodes = expr.toMathNode();
-      expect((nodes[0] as LiteralNode).text, equals('1.23\u1D072'));
-    });
+    test(
+      'Respects scientific mode for small whole numbers',
+      () => const NumberFormatting(format: NumberFormat.scientific).apply(() {
+        final expr = IntExpr(BigInt.from(123));
+        final nodes = expr.toMathNode();
+        expect((nodes[0] as LiteralNode).text, equals('1.23\u1D072'));
+      }),
+    );
 
     test(
       'Fraction DOES use scientific notation for components in scientific mode',
-      () {
-        MathSolverNew.numberFormat = NumberFormat.scientific;
+      () => const NumberFormatting(format: NumberFormat.scientific).apply(() {
         final expr = FracExpr(
           IntExpr(BigInt.from(21)),
           IntExpr(BigInt.from(5)),
@@ -74,31 +69,40 @@ void main() {
         final frac = nodes[0] as FractionNode;
         expect((frac.numerator[0] as LiteralNode).text, equals('2.1\u1D071'));
         expect((frac.denominator[0] as LiteralNode).text, equals('5\u1D070'));
-      },
+      }),
     );
 
-    test('Rounds up correctly: 129,999 with precision 2', () {
-      MathSolverNew.numberFormat = NumberFormat.scientific;
-      MathSolverNew.precision = 2;
-      final expr = IntExpr(BigInt.from(129999));
-      final nodes = expr.toMathNode();
-      expect((nodes[0] as LiteralNode).text, equals('1.3\u1D075'));
-    });
+    test(
+      'Rounds up correctly: 129,999 with precision 2',
+      () => const NumberFormatting(
+        precision: 2,
+        format: NumberFormat.scientific,
+      ).apply(() {
+        final expr = IntExpr(BigInt.from(129999));
+        final nodes = expr.toMathNode();
+        expect((nodes[0] as LiteralNode).text, equals('1.3\u1D075'));
+      }),
+    );
 
-    test('Carry over rounding: 9,999,999 with precision 2', () {
-      MathSolverNew.numberFormat = NumberFormat.scientific;
-      MathSolverNew.precision = 2;
-      final expr = IntExpr(BigInt.from(9999999));
-      final nodes = expr.toMathNode();
-      expect((nodes[0] as LiteralNode).text, equals('1\u1D077'));
-    });
+    test(
+      'Carry over rounding: 9,999,999 with precision 2',
+      () => const NumberFormatting(
+        precision: 2,
+        format: NumberFormat.scientific,
+      ).apply(() {
+        final expr = IntExpr(BigInt.from(9999999));
+        final nodes = expr.toMathNode();
+        expect((nodes[0] as LiteralNode).text, equals('1\u1D077'));
+      }),
+    );
 
-    test('Large threshold rounding: 1.2345e15 with precision 2', () {
-      MathSolverNew.numberFormat = NumberFormat.automatic;
-      MathSolverNew.precision = 2;
-      final expr = IntExpr(BigInt.from(12345) * BigInt.from(10).pow(11));
-      final nodes = expr.toMathNode();
-      expect((nodes[0] as LiteralNode).text, equals('1.23\u1D0715'));
-    });
+    test(
+      'Large threshold rounding: 1.2345e15 with precision 2',
+      () => const NumberFormatting(precision: 2).apply(() {
+        final expr = IntExpr(BigInt.from(12345) * BigInt.from(10).pow(11));
+        final nodes = expr.toMathNode();
+        expect((nodes[0] as LiteralNode).text, equals('1.23\u1D0715'));
+      }),
+    );
   });
 }

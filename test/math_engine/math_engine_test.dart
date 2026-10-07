@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'dart:math';
 import 'package:klotter/math_engine/math_engine.dart';
+import 'package:klotter/math_engine/number_format.dart';
 
 void main() {
   group('MathSolverNew - Basic Evaluation', () {
@@ -422,22 +423,30 @@ void main() {
 
   group('MathSolverNew - Precision', () {
     test('default precision is 6', () {
-      expect(MathSolverNew.precision, equals(6));
+      expect(NumberFormatting.current.precision, equals(6));
     });
 
-    test('setPrecision updates precision', () {
-      MathSolverNew.setPrecision(4);
-      expect(MathSolverNew.precision, equals(4));
-      // Reset to default
-      MathSolverNew.setPrecision(6);
+    test('a precision applies for the call and no further', () {
+      // It was a static the settings wrote into, so a test that changed it
+      // and forgot to change it back changed every test after it.
+      const NumberFormatting(precision: 4).apply(() {
+        expect(NumberFormatting.current.precision, equals(4));
+      });
+      expect(NumberFormatting.current.precision, equals(6));
     });
 
     test('result respects precision setting', () {
-      MathSolverNew.setPrecision(2);
-      final result = MathSolverNew.solve('1/3');
-      expect(result, equals('0.33'));
-      // Reset to default
-      MathSolverNew.setPrecision(6);
+      const NumberFormatting(precision: 2).apply(() {
+        expect(MathSolverNew.solve('1/3'), equals('0.33'));
+      });
+    });
+
+    test('a formatting can be given to a single call', () {
+      const NumberFormatting plain = NumberFormatting(
+        precision: 2,
+        format: NumberFormat.plain,
+      );
+      expect(MathSolverNew.formatResult(1234.5678, plain), equals('1,234.57'));
     });
   });
 
