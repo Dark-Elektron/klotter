@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:klotter/math_renderer/math_nodes.dart';
 import 'package:klotter/settings/settings_provider.dart';
 import 'package:klotter/math_engine/math_engine.dart';
+import 'package:klotter/math_engine/real_functions.dart';
 part 'symbolic_calculus.dart';
 part 'expr_eval.dart';
 
@@ -2898,17 +2899,17 @@ class TrigExpr extends Expr {
       case TrigFunc.atan:
         return math.atan(a);
       case TrigFunc.sinh:
-        return (math.exp(a) - math.exp(-a)) / 2;
+        return sinh(a);
       case TrigFunc.cosh:
-        return (math.exp(a) + math.exp(-a)) / 2;
+        return cosh(a);
       case TrigFunc.tanh:
-        return (math.exp(a) - math.exp(-a)) / (math.exp(a) + math.exp(-a));
+        return tanh(a);
       case TrigFunc.asinh:
-        return math.log(a + math.sqrt(a * a + 1));
+        return asinh(a);
       case TrigFunc.acosh:
-        return math.log(a + math.sqrt(a * a - 1));
+        return acosh(a);
       case TrigFunc.atanh:
-        return 0.5 * math.log((1 + a) / (1 - a));
+        return atanh(a);
       case TrigFunc.arg:
       case TrigFunc.re:
       case TrigFunc.im:
@@ -3157,20 +3158,17 @@ Complex? _tryEvalComplexValue(Expr expr) {
       case TrigFunc.atan:
         return Complex(math.atan(a), 0);
       case TrigFunc.sinh:
-        return Complex((math.exp(a) - math.exp(-a)) / 2, 0);
+        return Complex(sinh(a), 0);
       case TrigFunc.cosh:
-        return Complex((math.exp(a) + math.exp(-a)) / 2, 0);
+        return Complex(cosh(a), 0);
       case TrigFunc.tanh:
-        return Complex(
-          (math.exp(a) - math.exp(-a)) / (math.exp(a) + math.exp(-a)),
-          0,
-        );
+        return Complex(tanh(a), 0);
       case TrigFunc.asinh:
-        return Complex(math.log(a + math.sqrt(a * a + 1)), 0);
+        return Complex(asinh(a), 0);
       case TrigFunc.acosh:
-        return Complex(math.log(a + math.sqrt(a * a - 1)), 0);
+        return Complex(acosh(a), 0);
       case TrigFunc.atanh:
-        return Complex(0.5 * math.log((1 + a) / (1 - a)), 0);
+        return Complex(atanh(a), 0);
       case TrigFunc.arg:
         return Complex(math.atan2(arg.imag, arg.real), 0);
       case TrigFunc.re:

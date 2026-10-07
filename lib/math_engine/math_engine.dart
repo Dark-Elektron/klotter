@@ -1,5 +1,6 @@
 import 'dart:math';
 import '../settings/settings_provider.dart';
+import 'real_functions.dart';
 
 /// Math solver for expressions from the new math renderer
 
@@ -1702,17 +1703,17 @@ class _ExpressionParser {
       case 'atan':
         return atan(a);
       case 'sinh':
-        return (exp(a) - exp(-a)) / 2;
+        return sinh(a);
       case 'cosh':
-        return (exp(a) + exp(-a)) / 2;
+        return cosh(a);
       case 'tanh':
-        return (exp(a) - exp(-a)) / (exp(a) + exp(-a));
+        return tanh(a);
       case 'asinh':
-        return log(a + sqrt(a * a + 1));
+        return asinh(a);
       case 'acosh':
-        return log(a + sqrt(a * a - 1));
+        return acosh(a);
       case 'atanh':
-        return 0.5 * log((1 + a) / (1 - a));
+        return atanh(a);
       case 'log':
         return log(a) / ln10;
       case 'ln':
@@ -1794,9 +1795,7 @@ class _ExpressionParser {
         Complex emz2 = _complexExp(Complex(-z.real, -z.imag));
         return Complex((ez2.real + emz2.real) / 2, (ez2.imag + emz2.imag) / 2);
       case 'tanh':
-        Complex sinhZ = _applyComplexFunction('sinh', z);
-        Complex coshZ = _applyComplexFunction('cosh', z);
-        return sinhZ / coshZ;
+        return complexTanh(z);
       default:
         throw FormatException('Complex function not implemented: $func');
     }
@@ -2023,4 +2022,19 @@ class Complex {
     }
     return formatted;
   }
+}
+
+/// tanh of a complex number, as (sinh 2x + i·sin 2y) / (cosh 2x + cos 2y).
+///
+/// Dividing sinh z by cosh z overflows both to infinity once |x| passes about
+/// 355, and inf/inf is NaN where the answer is plainly ±1.
+Complex complexTanh(Complex z) {
+  final double x = z.real;
+  final double y = z.imag;
+  if (x.abs() > hyperbolicFar) {
+    // cosh 2x is e^2|x| / 2 out here, and cos 2y no longer registers beside it.
+    return Complex(x.isNegative ? -1 : 1, 2 * sin(2 * y) * exp(-2 * x.abs()));
+  }
+  final double d = cosh(2 * x) + cos(2 * y);
+  return Complex(sinh(2 * x) / d, sin(2 * y) / d);
 }

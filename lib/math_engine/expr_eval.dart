@@ -236,17 +236,17 @@ double _evalTrig(TrigExpr expr, Map<String, double> b) {
     case TrigFunc.atan:
       return math.atan(a);
     case TrigFunc.sinh:
-      return (math.exp(a) - math.exp(-a)) / 2;
+      return sinh(a);
     case TrigFunc.cosh:
-      return (math.exp(a) + math.exp(-a)) / 2;
+      return cosh(a);
     case TrigFunc.tanh:
-      return (math.exp(a) - math.exp(-a)) / (math.exp(a) + math.exp(-a));
+      return tanh(a);
     case TrigFunc.asinh:
-      return math.log(a + math.sqrt(a * a + 1));
+      return asinh(a);
     case TrigFunc.acosh:
-      return math.log(a + math.sqrt(a * a - 1));
+      return acosh(a);
     case TrigFunc.atanh:
-      return 0.5 * math.log((1 + a) / (1 - a));
+      return atanh(a);
     case TrigFunc.arg:
     case TrigFunc.re:
     case TrigFunc.im:
@@ -368,30 +368,29 @@ Complex _evalComplexTrig(TrigExpr expr, Map<String, Complex> b) {
     case TrigFunc.sin:
       // sin(x + iy) = sin x cosh y + i cos x sinh y
       return Complex(
-        math.sin(z.real) * _cosh(z.imag),
-        math.cos(z.real) * _sinh(z.imag),
+        math.sin(z.real) * cosh(z.imag),
+        math.cos(z.real) * sinh(z.imag),
       );
     case TrigFunc.cos:
       return Complex(
-        math.cos(z.real) * _cosh(z.imag),
-        -math.sin(z.real) * _sinh(z.imag),
+        math.cos(z.real) * cosh(z.imag),
+        -math.sin(z.real) * sinh(z.imag),
       );
     case TrigFunc.tan:
       return _evalComplexTrigOf(TrigFunc.sin, z) /
           _evalComplexTrigOf(TrigFunc.cos, z);
     case TrigFunc.sinh:
       return Complex(
-        _sinh(z.real) * math.cos(z.imag),
-        _cosh(z.real) * math.sin(z.imag),
+        sinh(z.real) * math.cos(z.imag),
+        cosh(z.real) * math.sin(z.imag),
       );
     case TrigFunc.cosh:
       return Complex(
-        _cosh(z.real) * math.cos(z.imag),
-        _sinh(z.real) * math.sin(z.imag),
+        cosh(z.real) * math.cos(z.imag),
+        sinh(z.real) * math.sin(z.imag),
       );
     case TrigFunc.tanh:
-      return _evalComplexTrigOf(TrigFunc.sinh, z) /
-          _evalComplexTrigOf(TrigFunc.cosh, z);
+      return complexTanh(z);
     // Real-valued readings of a complex number, so each returns a real.
     case TrigFunc.arg:
       return Complex(z.phase, 0);
@@ -420,31 +419,28 @@ Complex _evalComplexTrigOf(TrigFunc func, Complex z) {
   switch (func) {
     case TrigFunc.sin:
       return Complex(
-        math.sin(z.real) * _cosh(z.imag),
-        math.cos(z.real) * _sinh(z.imag),
+        math.sin(z.real) * cosh(z.imag),
+        math.cos(z.real) * sinh(z.imag),
       );
     case TrigFunc.cos:
       return Complex(
-        math.cos(z.real) * _cosh(z.imag),
-        -math.sin(z.real) * _sinh(z.imag),
+        math.cos(z.real) * cosh(z.imag),
+        -math.sin(z.real) * sinh(z.imag),
       );
     case TrigFunc.sinh:
       return Complex(
-        _sinh(z.real) * math.cos(z.imag),
-        _cosh(z.real) * math.sin(z.imag),
+        sinh(z.real) * math.cos(z.imag),
+        cosh(z.real) * math.sin(z.imag),
       );
     case TrigFunc.cosh:
       return Complex(
-        _cosh(z.real) * math.cos(z.imag),
-        _sinh(z.real) * math.sin(z.imag),
+        cosh(z.real) * math.cos(z.imag),
+        sinh(z.real) * math.sin(z.imag),
       );
     default:
       return const Complex(double.nan, double.nan);
   }
 }
-
-double _sinh(double x) => (math.exp(x) - math.exp(-x)) / 2;
-double _cosh(double x) => (math.exp(x) + math.exp(-x)) / 2;
 
 /// The principal logarithm: `ln|z| + i·arg z`, with `arg` in (-π, π].
 ///
