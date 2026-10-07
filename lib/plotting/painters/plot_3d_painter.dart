@@ -4425,7 +4425,10 @@ class Plot3DPainter extends CustomPainter {
             ).rotateZ(rotationZ).rotateX(rotationX);
 
             points.add(FieldPoint3D(point3D, val));
-          } catch (e) {}
+          } catch (_) {
+            // A point that cannot be evaluated is simply not drawn. evaluate()
+            // already reports failure as NaN; this only guards the rest.
+          }
         }
       }
     }

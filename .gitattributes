@@ -1,0 +1,23 @@
+# The repository stores LF, and every checkout gets LF. Left to
+# core.autocrlf, each machine chose for itself, and files written by tools
+# with LF sat beside CRLF ones in the same working copy.
+* text=auto eol=lf
+
+# Windows scripts need CRLF to run.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary: never converted, never diffed as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.ttf binary
+*.otf binary
+*.jks binary
+*.keystore binary
+*.jar binary
+*.zip binary
+*.pdf binary

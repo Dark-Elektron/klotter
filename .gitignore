@@ -56,3 +56,9 @@ app.*.map.json
 /test_out*
 /PLOTTING_ROADMAP.md
 /analysis_outp*
+
+# Generated: `flutter test --coverage` writes coverage/, `flutter screenshot`
+# writes flutter_NN.png, and Windows Explorer drops desktop.ini into folders.
+/coverage/
+/flutter_*.png
+desktop.ini
