@@ -211,49 +211,36 @@ double _evalWith(Expr expr, Map<String, double> b) {
 }
 
 double _evalTrig(TrigExpr expr, Map<String, double> b) {
+  final double Function(double)? f = _realFunction(expr.func);
   // arg/re/im/sgn need complex evaluation of the argument as an Expr, which
   // cannot accept bindings. They are exact only for variable-free arguments.
-  if (expr.func == TrigFunc.arg ||
-      expr.func == TrigFunc.re ||
-      expr.func == TrigFunc.im ||
-      expr.func == TrigFunc.sgn) {
+  if (f == null) {
     if (_collectedFreeVarsEmpty(expr.argument)) return expr.toDouble();
     return double.nan;
   }
-
-  final double a = _evalWith(expr.argument, b);
-  switch (expr.func) {
-    case TrigFunc.sin:
-      return math.sin(a);
-    case TrigFunc.cos:
-      return math.cos(a);
-    case TrigFunc.tan:
-      return math.tan(a);
-    case TrigFunc.asin:
-      return math.asin(a);
-    case TrigFunc.acos:
-      return math.acos(a);
-    case TrigFunc.atan:
-      return math.atan(a);
-    case TrigFunc.sinh:
-      return sinh(a);
-    case TrigFunc.cosh:
-      return cosh(a);
-    case TrigFunc.tanh:
-      return tanh(a);
-    case TrigFunc.asinh:
-      return asinh(a);
-    case TrigFunc.acosh:
-      return acosh(a);
-    case TrigFunc.atanh:
-      return atanh(a);
-    case TrigFunc.arg:
-    case TrigFunc.re:
-    case TrigFunc.im:
-    case TrigFunc.sgn:
-      return double.nan;
-  }
+  return f(_evalWith(expr.argument, b));
 }
+
+/// What each function does to a real number, for the walk here and for the
+/// compiled form (see compiled_eval.dart) alike, so the two cannot disagree
+/// about what a function means.
+///
+/// Null for arg, re, im and sgn, which read a complex argument.
+double Function(double)? _realFunction(TrigFunc func) => switch (func) {
+  TrigFunc.sin => math.sin,
+  TrigFunc.cos => math.cos,
+  TrigFunc.tan => math.tan,
+  TrigFunc.asin => math.asin,
+  TrigFunc.acos => math.acos,
+  TrigFunc.atan => math.atan,
+  TrigFunc.sinh => sinh,
+  TrigFunc.cosh => cosh,
+  TrigFunc.tanh => tanh,
+  TrigFunc.asinh => asinh,
+  TrigFunc.acosh => acosh,
+  TrigFunc.atanh => atanh,
+  TrigFunc.arg || TrigFunc.re || TrigFunc.im || TrigFunc.sgn => null,
+};
 
 bool _collectedFreeVarsEmpty(Expr expr) {
   final Set<String> out = <String>{};
@@ -362,89 +349,58 @@ Complex _evalComplexWith(Expr expr, Map<String, Complex> b) {
   return const Complex(double.nan, double.nan);
 }
 
-Complex _evalComplexTrig(TrigExpr expr, Map<String, Complex> b) {
-  final Complex z = _evalComplexWith(expr.argument, b);
-  switch (expr.func) {
-    case TrigFunc.sin:
-      // sin(x + iy) = sin x cosh y + i cos x sinh y
-      return Complex(
-        math.sin(z.real) * cosh(z.imag),
-        math.cos(z.real) * sinh(z.imag),
-      );
-    case TrigFunc.cos:
-      return Complex(
-        math.cos(z.real) * cosh(z.imag),
-        -math.sin(z.real) * sinh(z.imag),
-      );
-    case TrigFunc.tan:
-      return _evalComplexTrigOf(TrigFunc.sin, z) /
-          _evalComplexTrigOf(TrigFunc.cos, z);
-    case TrigFunc.sinh:
-      return Complex(
-        sinh(z.real) * math.cos(z.imag),
-        cosh(z.real) * math.sin(z.imag),
-      );
-    case TrigFunc.cosh:
-      return Complex(
-        cosh(z.real) * math.cos(z.imag),
-        sinh(z.real) * math.sin(z.imag),
-      );
-    case TrigFunc.tanh:
-      return complexTanh(z);
-    // Real-valued readings of a complex number, so each returns a real.
-    case TrigFunc.arg:
-      return Complex(z.phase, 0);
-    case TrigFunc.re:
-      return Complex(z.real, 0);
-    case TrigFunc.im:
-      return Complex(z.imag, 0);
-    case TrigFunc.sgn:
-      final double m = z.magnitude;
-      return m == 0 ? _zero : Complex(z.real / m, z.imag / m);
-    // Principal values, with the usual cuts: asin, acos and atanh along the
-    // real axis beyond ±1, atan and asinh along the imaginary axis beyond
-    // ±i, and acosh along the real axis left of 1.
-    case TrigFunc.asin:
-      return complexAsin(z);
-    case TrigFunc.acos:
-      return complexAcos(z);
-    case TrigFunc.atan:
-      return complexAtan(z);
-    case TrigFunc.asinh:
-      return complexAsinh(z);
-    case TrigFunc.acosh:
-      return complexAcosh(z);
-    case TrigFunc.atanh:
-      return complexAtanh(z);
-  }
-}
+Complex _evalComplexTrig(TrigExpr expr, Map<String, Complex> b) =>
+    _complexFunction(expr.func)(_evalComplexWith(expr.argument, b));
 
-/// [_evalComplexTrig] for an argument already evaluated.
-Complex _evalComplexTrigOf(TrigFunc func, Complex z) {
-  switch (func) {
-    case TrigFunc.sin:
-      return Complex(
-        math.sin(z.real) * cosh(z.imag),
-        math.cos(z.real) * sinh(z.imag),
-      );
-    case TrigFunc.cos:
-      return Complex(
-        math.cos(z.real) * cosh(z.imag),
-        -math.sin(z.real) * sinh(z.imag),
-      );
-    case TrigFunc.sinh:
-      return Complex(
-        sinh(z.real) * math.cos(z.imag),
-        cosh(z.real) * math.sin(z.imag),
-      );
-    case TrigFunc.cosh:
-      return Complex(
-        cosh(z.real) * math.cos(z.imag),
-        sinh(z.real) * math.sin(z.imag),
-      );
-    default:
-      return const Complex(double.nan, double.nan);
-  }
+/// What each function does to a complex number, for the walk here and for the
+/// compiled form alike.
+Complex Function(Complex) _complexFunction(TrigFunc func) => switch (func) {
+  TrigFunc.sin => _complexSin,
+  TrigFunc.cos => _complexCos,
+  TrigFunc.tan => _complexTan,
+  TrigFunc.sinh => _complexSinh,
+  TrigFunc.cosh => _complexCosh,
+  TrigFunc.tanh => complexTanh,
+  // Real-valued readings of a complex number, so each returns a real.
+  TrigFunc.arg => _complexArg,
+  TrigFunc.re => _complexRe,
+  TrigFunc.im => _complexIm,
+  TrigFunc.sgn => _complexSign,
+  // Principal values, with the usual cuts: asin, acos and atanh along the
+  // real axis beyond ±1, atan and asinh along the imaginary axis beyond ±i,
+  // and acosh along the real axis left of 1.
+  TrigFunc.asin => complexAsin,
+  TrigFunc.acos => complexAcos,
+  TrigFunc.atan => complexAtan,
+  TrigFunc.asinh => complexAsinh,
+  TrigFunc.acosh => complexAcosh,
+  TrigFunc.atanh => complexAtanh,
+};
+
+/// sin(x + iy) = sin x cosh y + i cos x sinh y
+Complex _complexSin(Complex z) =>
+    Complex(math.sin(z.real) * cosh(z.imag), math.cos(z.real) * sinh(z.imag));
+
+Complex _complexCos(Complex z) =>
+    Complex(math.cos(z.real) * cosh(z.imag), -math.sin(z.real) * sinh(z.imag));
+
+Complex _complexTan(Complex z) => _complexSin(z) / _complexCos(z);
+
+Complex _complexSinh(Complex z) =>
+    Complex(sinh(z.real) * math.cos(z.imag), cosh(z.real) * math.sin(z.imag));
+
+Complex _complexCosh(Complex z) =>
+    Complex(cosh(z.real) * math.cos(z.imag), sinh(z.real) * math.sin(z.imag));
+
+Complex _complexArg(Complex z) => Complex(z.phase, 0);
+
+Complex _complexRe(Complex z) => Complex(z.real, 0);
+
+Complex _complexIm(Complex z) => Complex(z.imag, 0);
+
+Complex _complexSign(Complex z) {
+  final double m = z.magnitude;
+  return m == 0 ? _zero : Complex(z.real / m, z.imag / m);
 }
 
 /// The principal logarithm: `ln|z| + i·arg z`, with `arg` in (-π, π].

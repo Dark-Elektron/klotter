@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import '../../math_engine/math_engine_exact.dart';
 import '../../math_renderer/math_nodes.dart';
@@ -837,12 +838,13 @@ class PlotExpression {
   }
 
   double _rawEvaluateAt(double u, double v) {
-    final Expr? c = _compiled;
-    if (c == null) return double.nan;
-    _bindings['u'] = u;
-    _bindings['v'] = v;
+    final RealFunction? f = _atParameters;
+    if (f == null) return double.nan;
+    final Float64List s = _slots;
+    s[0] = u;
+    s[1] = v;
     try {
-      return c.evalWith(_bindings);
+      return f(s);
     } catch (_) {
       return double.nan;
     }
@@ -922,18 +924,14 @@ class PlotExpression {
       }
       return largest;
     }
-    final Expr? c = _compiled;
-    if (c == null) return double.nan;
-    final List<String> names = system.variables;
-    // The binding map is reused rather than rebuilt. Sampling is the hot path
-    // by a wide margin — marching squares alone asks for ~48,000 values per
-    // frame while the window is moving — and a fresh three-entry map for each
-    // of those is pure allocation.
-    _bindings[names[0]] = a;
-    _bindings[names[1]] = b;
-    _bindings[names[2]] = d;
+    final RealFunction? f = _atCoordinates;
+    if (f == null) return double.nan;
+    final Float64List s = _slots;
+    s[0] = a;
+    s[1] = b;
+    s[2] = d;
     try {
-      return c.evalWith(_bindings);
+      return f(s);
     } catch (_) {
       return double.nan;
     }
@@ -1165,28 +1163,59 @@ class PlotExpression {
   /// This `z` is the complex variable and not the third coordinate. A complex
   /// line has no third coordinate — the plane is its whole domain.
   Complex evaluateComplex(double x, double y) {
-    final Expr? c = _compiled;
-    if (c == null) return const Complex(double.nan, double.nan);
-    _complexBindings['z'] = Complex(x, y);
-    _complexBindings['x'] = Complex(x, 0);
-    _complexBindings['y'] = Complex(y, 0);
-    // Bound rather than special-cased, because the compiler hands `i` over as
-    // a variable when it sits against another symbol.
-    _complexBindings['i'] = const Complex(0, 1);
+    final ComplexFunction? f = _atPoint;
+    if (f == null) return const Complex(double.nan, double.nan);
+    final List<Complex> s = _complexSlots;
+    s[0] = Complex(x, y);
+    s[1] = Complex(x, 0);
+    s[2] = Complex(y, 0);
     try {
-      return c.evalComplexWith(_complexBindings);
+      return f(s);
     } catch (_) {
       return const Complex(double.nan, double.nan);
     }
   }
 
-  /// Scratch space for [evaluateComplex], reused for the same reason
-  /// [_bindings] is: domain colouring asks for a value per pixel.
-  final Map<String, Complex> _complexBindings = <String, Complex>{};
+  // The compiled forms of this line, one per way it is read, each made the
+  // first time it is needed (see compiled_eval.dart). Sampling is the hot path
+  // by a wide margin — marching squares alone asks for ~48,000 values a frame
+  // while the window moves — so the tree is walked once, here, rather than
+  // once per sample: what is left is arithmetic.
 
-  /// Scratch space for [evaluate]. Safe to share because painting is
-  /// single-threaded and the map never outlives the call.
-  final Map<String, double> _bindings = <String, double>{};
+  /// At a point given in this line's own coordinates, in [system]'s order.
+  late final RealFunction? _atCoordinates = _compiled?.compileReal(
+    system.variables,
+  );
+
+  /// At values of the sweep parameters u and v.
+  late final RealFunction? _atParameters = _compiled?.compileReal(
+    const <String>['u', 'v'],
+  );
+
+  /// The radius f of a polar curve or spherical surface, at θ and φ.
+  late final RealFunction? _radius = _sweptRadius?.compileReal(
+    const <String>['θ', 'φ'],
+  );
+
+  /// At a point of the complex plane. The point is bound three ways, z, x and
+  /// y, and i is bound too rather than special-cased, because the converter
+  /// hands `i` over as a variable when it sits against another symbol.
+  late final ComplexFunction? _atPoint = _compiled?.compileComplex(
+    const <String>['z', 'x', 'y', 'i'],
+  );
+
+  /// The values the real forms read, reused rather than allocated per sample.
+  /// Safe to share because painting is single-threaded and no form calls back
+  /// into this line.
+  final Float64List _slots = Float64List(3);
+
+  /// The values [_atPoint] reads; the last, i, never changes.
+  final List<Complex> _complexSlots = <Complex>[
+    const Complex(0, 0),
+    const Complex(0, 0),
+    const Complex(0, 0),
+    const Complex(0, 1),
+  ];
 
   /// An expression that always evaluates to NaN — used where a component of a
   /// vector field is absent.
@@ -1274,12 +1303,13 @@ class PlotExpression {
   }
 
   double _rawRadiusAt(double theta, double phi) {
-    final Expr? radius = _sweptRadius;
-    if (radius == null) return double.nan;
-    _bindings['θ'] = theta;
-    _bindings['φ'] = phi;
+    final RealFunction? f = _radius;
+    if (f == null) return double.nan;
+    final Float64List s = _slots;
+    s[0] = theta;
+    s[1] = phi;
     try {
-      return radius.evalWith(_bindings);
+      return f(s);
     } catch (_) {
       return double.nan;
     }

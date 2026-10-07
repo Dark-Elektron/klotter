@@ -1,12 +1,14 @@
 // lib/math_engine/math_engine_exact.dart
 
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'package:klotter/math_renderer/math_nodes.dart';
 import 'package:klotter/settings/settings_provider.dart';
 import 'package:klotter/math_engine/math_engine.dart';
 import 'package:klotter/math_engine/real_functions.dart';
 part 'symbolic_calculus.dart';
 part 'expr_eval.dart';
+part 'compiled_eval.dart';
 
 /// Real-valued power that also returns the real root of a negative base when
 /// the exponent is a rational p/q with an odd denominator (e.g. an nth root
