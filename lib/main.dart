@@ -1,10 +1,10 @@
 import 'dart:math' show exp;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:klotter/widgets/confirm_clear_dialog.dart';
-import 'package:klotter/utils/texture_generator.dart';
 import 'package:provider/provider.dart';
 import 'settings/settings_provider.dart';
 import 'math_renderer/renderer.dart';
@@ -22,7 +22,6 @@ import 'utils/app_state.dart';
 import 'utils/coordinate_system.dart';
 import 'math_renderer/expression_selection.dart';
 import 'math_renderer/math_editor_controller.dart';
-import 'math_engine/math_engine_exact.dart';
 import 'plotting/models/plot_view_state.dart';
 import 'plotting/parsers/plot_expression.dart';
 import 'package:path_provider/path_provider.dart';
@@ -115,7 +114,8 @@ class HomePage extends StatefulWidget {
 
 /// Public so widget tests can reach the cell controllers and the undo
 /// history, as Plot2DScreenState and InlinePlotPanelState already are.
-class HomePageState extends State<HomePage> with WidgetsBindingObserver {
+class HomePageState extends State<HomePage>
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   /// Phones stay portrait: klotter is a plot above an expression above a
   /// keypad, and a phone in landscape fits maybe two of the three, which
   /// breaks the live edit loop the app is built around. Tablets keep both.
@@ -206,33 +206,12 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
       .expand((List<ExpressionRow> r) => r)
       .map((r) => r.controller);
 
-  Map<int, TextEditingController> textDisplayControllers = {};
   Map<int, FocusNode> focusNodes = {};
 
-  Map<int, List<MathNode>?> exactResultNodes = {};
-  Map<int, Expr?> exactResultExprs = {};
-  Map<int, PageController> resultPageControllers = {};
-  Map<int, int> currentResultPage = {};
-  Map<int, ValueNotifier<int>> currentResultPageNotifiers = {};
-
-  Map<int, ValueNotifier<int>> exactResultVersionNotifiers = {};
-
-  Map<int, ValueNotifier<double>> resultPageProgressNotifiers = {};
   int activeIndex = 0;
-  PageController pgViewController = PageController(
-    initialPage: 1,
-    viewportFraction: 1,
-  );
-  bool isVisible = true;
-  bool isTypingExponent = false;
-  double plotMaxHeight = 300;
-  double plotMinHeight = 28;
   final bool _plotsEnabled = true;
   bool _isUpdating = false;
   bool _isLoading = true;
-  List<String> answers = [];
-  bool _isPlotInteracting = false;
-  final Map<int, bool> _plotExpanded = {};
 
   /// Each cell's plot panel, so its view can be read back when saving.
   final Map<int, GlobalKey<InlinePlotPanelState>> _plotPanelKeys = {};
@@ -267,6 +246,121 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   /// whether staying there means "scrub".
   double _scrubOrigin = 0;
   Timer? _holdTimer;
+
+  /// Whether the keypad is folded away under its handle.
+  ///
+  /// Not saved. A fresh launch always opens with the keys showing, so nobody
+  /// starts the app looking at a plot with no visible way to type into it.
+  bool _keypadHidden = false;
+
+  /// Slides the keypad away and back: 1 is showing, 0 is folded.
+  late final AnimationController _keypadReveal = AnimationController(
+    vsync: this,
+    value: 1,
+    // Entering decelerates and leaving accelerates, and leaving is the
+    // quicker of the two — the usual pairing for something the user sends
+    // away and calls back.
+    duration: const Duration(milliseconds: 260),
+    reverseDuration: const Duration(milliseconds: 220),
+  );
+
+  late final Animation<double> _keypadRevealCurve = CurvedAnimation(
+    parent: _keypadReveal,
+    curve: Curves.easeOutCubic,
+    reverseCurve: Curves.easeInCubic,
+  );
+
+  /// Height of the strip the handle sits in, and so of everything left at the
+  /// foot of the screen once the keypad is folded.
+  ///
+  /// klator's: a 5 dp pill with 8 dp above and below it. The two apps share
+  /// the gesture, so they share its size.
+  static const double _keypadHandleHeight = 21;
+
+  /// How far a slow drag on the handle has travelled, for deciding which way
+  /// it meant when there is no flick to go on.
+  double _handleDrag = 0;
+
+  @visibleForTesting
+  bool get keypadHiddenForTest => _keypadHidden;
+
+  /// Fold the keypad away, or bring it back.
+  ///
+  /// [animate] is false only where the keys have to be there this frame — the
+  /// walkthrough measures them as soon as it starts.
+  void _setKeypadHidden(bool hidden, {bool animate = true}) {
+    if (hidden == _keypadHidden) return;
+    // Never mid-tour: every step of the walkthrough points at a key.
+    if (hidden && _walkthroughService.isActive) return;
+    if (_settingsProvider?.hapticFeedback ?? false) {
+      HapticFeedback.selectionClick();
+    }
+    setState(() => _keypadHidden = hidden);
+    if (!animate) {
+      _keypadReveal.value = hidden ? 0 : 1;
+    } else if (hidden) {
+      _keypadReveal.reverse();
+    } else {
+      _keypadReveal.forward();
+    }
+  }
+
+  /// The grip between the plot strip and the keypad.
+  ///
+  /// Tapping it folds the keypad away and gives its height to the plot;
+  /// tapping again brings it back. A flick works too — down to fold, up to
+  /// open — since a handle invites dragging. Modelled on klator's handle,
+  /// which opens its extra row of keys the same way: same pill, same strip,
+  /// same soft shadow, so the gesture means one thing in both apps.
+  ///
+  /// Centred and full-width, so handedness does not move it.
+  Widget _buildKeypadHandle(AppColors colors) {
+    return Semantics(
+      button: true,
+      label: _keypadHidden ? 'Show keypad' : 'Hide keypad',
+      child: GestureDetector(
+        key: const ValueKey<String>('keypad-handle'),
+        behavior: HitTestBehavior.opaque,
+        // Measured from where the finger landed, so the slop the recogniser
+        // waits through before calling it a drag still counts as pull.
+        dragStartBehavior: DragStartBehavior.down,
+        onTap: () => _setKeypadHidden(!_keypadHidden),
+        onVerticalDragStart: (_) => _handleDrag = 0,
+        onVerticalDragUpdate: (details) => _handleDrag += details.delta.dy,
+        onVerticalDragEnd: (details) {
+          // A flick decides on its own; a slow drag decides by how far it
+          // went, so a deliberate pull still works without any speed in it.
+          final double v = details.primaryVelocity ?? 0;
+          if (v.abs() > 200) {
+            _setKeypadHidden(v > 0);
+          } else if (_handleDrag.abs() > 12) {
+            _setKeypadHidden(_handleDrag > 0);
+          }
+        },
+        child: SizedBox(
+          height: _keypadHandleHeight,
+          width: double.infinity,
+          child: Center(
+            child: Container(
+              width: 40,
+              height: 5,
+              decoration: BoxDecoration(
+                color: colors.containerBackground,
+                borderRadius: BorderRadius.circular(10),
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.2),
+                    spreadRadius: 2,
+                    blurRadius: 7,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   SettingsProvider? _settingsProvider;
   bool _listenerAdded = false;
@@ -330,7 +424,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     'extras_keypad': _mainKeypadAreaKey,
     'swipe_right_scientific': _mainKeypadAreaKey,
     'swipe_left_number': _mainKeypadAreaKey,
-    // The swipe happens on the top rows, so only those are lit.
+    // The swipe happens on the function keys, so only those are lit.
     'swipe_left_extras': _mainKeypadAreaKey,
     'swipe_right_back': _mainKeypadAreaKey,
     'settings_button': _settingsButtonKey, // NEW
@@ -392,9 +486,14 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   void _onWalkthroughChanged() {
-    if (mounted) {
-      setState(() {});
+    if (!mounted) return;
+    // A tour points at the keys, so it always runs with them showing — at
+    // once rather than sliding in, since it measures them straight away.
+    if (_walkthroughService.isActive && _keypadHidden) {
+      _setKeypadHidden(false, animate: false);
+      return;
     }
+    setState(() {});
   }
 
   /// Test hooks for the row model.
@@ -485,7 +584,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void _bindRow(ExpressionRow row) {
     row.controller.onResultChanged = () {
       final int? plot = _plotOfRow(row);
-      if (plot != null) _cascadeUpdates(plot);
+      if (plot != null) _onRowResultChanged(plot);
     };
     row.controller.addListener(() {
       final int? plot = _plotOfRow(row);
@@ -560,60 +659,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _rows[index] = <ExpressionRow>[row];
     _bindRow(row);
 
-    textDisplayControllers[index] = TextEditingController();
     focusNodes[index] = FocusNode();
-
-    // Initialize page tracking FIRST
-    currentResultPage[index] = 0;
-    currentResultPageNotifiers[index] = ValueNotifier<int>(0);
-    resultPageProgressNotifiers[index] = ValueNotifier<double>(0.0);
-    exactResultVersionNotifiers[index] = ValueNotifier<int>(0);
-    exactResultNodes[index] = null;
-    exactResultExprs[index] = null;
-  }
-
-  void _updateExactResult(int index) {
-    final controller = mathEditorControllers[index];
-    if (controller == null) return;
-
-    try {
-      // Collect valid previous exact results for substitution
-      Map<int, Expr> ansExprs = {};
-      final List<int> sortedKeys = _rows.keys.toList()..sort();
-      for (int key in sortedKeys) {
-        if (key < index) {
-          Expr? prevExpr = exactResultExprs[key];
-          if (prevExpr != null) {
-            ansExprs[key] = prevExpr;
-          }
-        }
-      }
-
-      ExactResult result = ExactMathEngine.evaluate(
-        controller.expression,
-        ansExpressions: ansExprs,
-      );
-
-      if (result.isEmpty || result.hasError) {
-        exactResultNodes[index] = null;
-        exactResultExprs[index] = null;
-      } else if (result.mathNodes != null && result.mathNodes!.isNotEmpty) {
-        exactResultNodes[index] = result.mathNodes;
-        exactResultExprs[index] = result.expr;
-      } else {
-        exactResultNodes[index] = null;
-        exactResultExprs[index] = null;
-      }
-    } catch (e) {
-      exactResultNodes[index] = null;
-      exactResultExprs[index] = null;
-    }
-
-    // Notify that exact result changed
-    final notifier = exactResultVersionNotifiers[index];
-    if (notifier != null) {
-      notifier.value = notifier.value + 1;
-    }
   }
 
   String _getPlotExpression(int index) =>
@@ -958,42 +1004,29 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ),
         ],
       ),
-      child: Listener(
-        behavior: HitTestBehavior.opaque,
-        onPointerDown: (_) {
-          if (!_isPlotInteracting) {
-            setState(() => _isPlotInteracting = true);
-          }
-        },
-        onPointerUp: (_) {
-          if (_isPlotInteracting) {
-            setState(() => _isPlotInteracting = false);
-          }
-        },
-        onPointerCancel: (_) {
-          if (_isPlotInteracting) {
-            setState(() => _isPlotInteracting = false);
-          }
-        },
-        child: InlinePlotPanel(
-          key: _plotPanelKeys.putIfAbsent(
-            index,
-            () => GlobalKey<InlinePlotPanelState>(),
-          ),
-          expression: plotExpression,
-          nodes: _getPlotNodes(index),
-          bottomInset: _rowPanelHeight[index] ?? 0,
-          hiddenRows: <bool>[
-            for (final ExpressionRow r in rowsOf(index)) !r.visible,
-          ],
-          initialView: _restoredViews[index] ?? PlotViewState.initial,
-          coordinateSystem: _variableSystem,
-          onViewChanged: (view) => _restoredViews[index] = view,
-          onRowErrors: (Map<int, String> byRow) {
-            if (mapEquals(_rowErrors[index], byRow)) return;
-            setState(() => _rowErrors[index] = byRow);
-          },
+      child: InlinePlotPanel(
+        key: _plotPanelKeys.putIfAbsent(
+          index,
+          () => GlobalKey<InlinePlotPanelState>(),
         ),
+        expression: plotExpression,
+        nodes: _getPlotNodes(index),
+        bottomInset: _rowPanelHeight[index] ?? 0,
+        hiddenRows: <bool>[
+          for (final ExpressionRow r in rowsOf(index)) !r.visible,
+        ],
+        initialView: _restoredViews[index] ?? PlotViewState.initial,
+        coordinateSystem: _variableSystem,
+        onViewChanged: (view) => _restoredViews[index] = view,
+        onRowErrors: (Map<int, String> byRow) {
+          // No entry and an empty report both mean "nothing wrong". The
+          // panel reports once whenever it is built, so treating them as
+          // different would rebuild the page for every plot swiped to.
+          if (mapEquals(_rowErrors[index] ?? const <int, String>{}, byRow)) {
+            return;
+          }
+          setState(() => _rowErrors[index] = byRow);
+        },
       ),
     );
   }
@@ -1061,6 +1094,11 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                   activeRow = r;
                                 });
                               }
+                              // Touching an expression means typing into it,
+                              // so a folded keypad comes back — as a phone's
+                              // keyboard rises when a field is tapped. Left
+                              // folded, the caret would blink with no keys.
+                              _setKeypadHidden(false);
                             },
                           ),
                         ),
@@ -1271,51 +1309,46 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   horizontal: _rowInset,
                   vertical: _rowInset,
                 ),
-                child: AnimatedOpacity(
-                  curve: Curves.easeIn,
-                  duration: const Duration(milliseconds: 500),
-                  opacity: isVisible ? 1.0 : 0.0,
-                  // The panel grows into its new height rather than snapping,
-                  // so a row arriving reads as the stack making room. The
-                  // plot's controls slide on the same curve, and the two
-                  // movements are what make adding a row feel like one action
-                  // instead of three things jumping at once.
-                  child: AnimatedSize(
-                    duration: const Duration(milliseconds: 220),
-                    curve: Curves.easeOutCubic,
-                    alignment: Alignment.bottomCenter,
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        // Rows can outgrow their share of the page, so the stack
-                        // scrolls rather than pushing the plot off the top.
-                        return ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxHeight:
-                                constraints.maxHeight.isFinite
-                                    ? constraints.maxHeight
-                                    : 260,
-                          ),
-                          child: SingleChildScrollView(
-                            // No outer horizontal scroller: each row owns its
-                            // own, so a long expression scrolls independently of
-                            // its neighbours.
-                            // Keyed here rather than on the panel above:
-                            // that box is mid-animation whenever it is
-                            // asked, and nothing rebuilds once the
-                            // animation ends, so its height would be read
-                            // on the way and never corrected. The content
-                            // is already at its target.
-                            child: KeyedSubtree(
-                              key: _rowPanelKeys.putIfAbsent(
-                                index,
-                                () => GlobalKey(),
-                              ),
-                              child: _buildRowStack(index, constraints),
+                // The panel grows into its new height rather than snapping,
+                // so a row arriving reads as the stack making room. The
+                // plot's controls slide on the same curve, and the two
+                // movements are what make adding a row feel like one action
+                // instead of three things jumping at once.
+                child: AnimatedSize(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOutCubic,
+                  alignment: Alignment.bottomCenter,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      // Rows can outgrow their share of the page, so the stack
+                      // scrolls rather than pushing the plot off the top.
+                      return ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxHeight:
+                              constraints.maxHeight.isFinite
+                                  ? constraints.maxHeight
+                                  : 260,
+                        ),
+                        child: SingleChildScrollView(
+                          // No outer horizontal scroller: each row owns its
+                          // own, so a long expression scrolls independently of
+                          // its neighbours.
+                          // Keyed here rather than on the panel above:
+                          // that box is mid-animation whenever it is
+                          // asked, and nothing rebuilds once the
+                          // animation ends, so its height would be read
+                          // on the way and never corrected. The content
+                          // is already at its target.
+                          child: KeyedSubtree(
+                            key: _rowPanelKeys.putIfAbsent(
+                              index,
+                              () => GlobalKey(),
                             ),
+                            child: _buildRowStack(index, constraints),
                           ),
-                        );
-                      },
-                    ),
+                        ),
+                      );
+                    },
                   ),
                 ),
               ),
@@ -1326,42 +1359,10 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  int _estimateNodesHeight(List<MathNode> nodes) {
-    int maxDepth = 0;
-    for (var node in nodes) {
-      int depth = _estimateNodeDepth(node);
-      if (depth > maxDepth) maxDepth = depth;
-    }
-    return maxDepth;
-  }
-
-  int _estimateNodeDepth(MathNode node) {
-    if (node is FractionNode) {
-      int numDepth = _estimateNodesHeight(node.numerator);
-      int denDepth = _estimateNodesHeight(node.denominator);
-      return 1 + (numDepth > denDepth ? numDepth : denDepth);
-    } else if (node is RootNode) {
-      return 1 + _estimateNodesHeight(node.radicand);
-    } else if (node is TrigNode) {
-      return _estimateNodesHeight(
-        node.argument,
-      ); // Sin(x) doesn't add much height unless arg is complex
-    } else if (node is ParenthesisNode) {
-      return _estimateNodesHeight(node.content);
-    } else if (node is ExponentNode) {
-      // Exponents add a bit of height but less than a full fraction level
-      return 1 + _estimateNodesHeight(node.power);
-    } else if (node is LogNode) {
-      int argDepth = _estimateNodesHeight(node.argument);
-      int baseDepth = _estimateNodesHeight(node.base);
-      return 1 + (argDepth > baseDepth ? argDepth : baseDepth);
-    }
-    return 0;
-  }
-
   @override
   void dispose() {
     _pageViewController.dispose();
+    _keypadReveal.dispose();
     _deleteTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _saveTimer?.cancel();
@@ -1378,29 +1379,8 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
       row.dispose();
     }
 
-    for (TextEditingController resController in textDisplayControllers.values) {
-      resController.dispose();
-    }
-
     for (FocusNode focusNode in focusNodes.values) {
       focusNode.dispose();
-    }
-
-    for (PageController pageController in resultPageControllers.values) {
-      pageController.dispose();
-    }
-
-    for (ValueNotifier<double> notifier in resultPageProgressNotifiers.values) {
-      notifier.dispose();
-    }
-
-    for (ValueNotifier<int> notifier in currentResultPageNotifiers.values) {
-      notifier.dispose();
-    }
-
-    for (ValueNotifier<int> notifier in exactResultVersionNotifiers.values) {
-      // ADD THIS
-      notifier.dispose();
     }
 
     super.dispose();
@@ -1486,12 +1466,6 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     // this the first edit is what establishes the baseline, so the very first
     // thing a user types has nothing to undo back to.
     _syncHistoryMark();
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      for (int i = 0; i < count; i++) {
-        _updateExactResult(i);
-      }
-    });
   }
 
   Timer? _saveTimer;
@@ -1527,10 +1501,14 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final List<List<List<MathNode>>> rowsPerPlot = <List<List<MathNode>>>[];
     final List<List<bool>> hiddenPerPlot = <List<bool>>[];
     List<Map<String, dynamic>?> plotViews = [];
+    // Where the open plot lands in what is written, which is not its key if a
+    // plot before it is skipped.
+    int savedActive = 0;
 
     for (int key in sortedKeys) {
       final List<ExpressionRow> rows = rowsOf(key);
       if (rows.isEmpty) continue;
+      if (key == activeIndex) savedActive = rowsPerPlot.length;
       rowsPerPlot.add(<List<MathNode>>[
         for (final ExpressionRow row in rows) row.controller.expression,
       ]);
@@ -1549,14 +1527,15 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
       plotViews.add(view.isInitial ? null : view.toJson());
     }
 
-    await CellPersistence.saveRows(rowsPerPlot, hiddenPerPlot, plotViews);
-    await CellPersistence.saveActiveIndex(activeIndex);
+    await CellPersistence.saveRows(
+      rowsPerPlot,
+      hiddenPerPlot,
+      plotViews,
+      activeIndex: savedActive,
+    );
   }
 
-  // In HomePageState
   void _onSettingsChanged() {
-    // Clear texture cache when theme changes
-    TextureGenerator.clearCache();
     // The built plot themes are keyed on the palette, the colour mode and the
     // theme type. That covers the settings they derive from, but clearing here
     // means a palette that changes in some other way cannot leave a stale
@@ -1569,49 +1548,20 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
       controller.refreshDisplay();
     }
 
-    // Force rebuild to reload textures
     setState(() {});
   }
 
-  void _cascadeUpdates(int changedIndex) {
+  /// A row's editor changed its expression outside [updateMathEditor] — a
+  /// paste, an undo inside the editor, a drag-to-tune.
+  ///
+  /// This used to cascade: re-evaluate the cell exactly, then every later cell
+  /// that might reference it through `ans`. Nothing has shown those results
+  /// since the result display was removed, and the ANS key went with it, so
+  /// all that is left is to bring the plot up to date.
+  void _onRowResultChanged(int plot) {
+    // [updateMathEditor] recalculates every row and rebuilds once at the end.
     if (_isUpdating) return;
-    _isUpdating = true;
-
-    try {
-      mathEditorControllers[changedIndex]?.updateAnswer(
-        textDisplayControllers[changedIndex],
-      );
-
-      // NEW: Update exact result
-      _updateExactResult(changedIndex);
-
-      List<int> keys = _rows.keys.toList()..sort();
-
-      for (int key in keys) {
-        if (key > changedIndex) {
-          String expr = mathEditorControllers[key]?.expr ?? '';
-
-          if (expr.contains('ans$changedIndex') || expr.contains('ans')) {
-            Map<int, String> ansValues = _getAnsValues();
-            mathEditorControllers[key]?.onCalculate(ansValues: ansValues);
-            mathEditorControllers[key]?.updateAnswer(
-              textDisplayControllers[key],
-            );
-            // NEW: Update exact result for cascaded cells
-            _updateExactResult(key);
-          }
-        }
-      }
-    } finally {
-      _isUpdating = false;
-    }
-
     setState(() {});
-  }
-
-  void focusManager(int index) {
-    focusNodes[index]?.requestFocus();
-    activeIndex = index;
   }
 
   void _clearAllSelectionOverlays() {
@@ -1667,6 +1617,11 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
       // Need to shift existing controllers to make room
       _shiftControllersUp(insertIndex);
     }
+    // A new cell starts with a blank plot. Appending skips the shift, and
+    // after a clear-all the index can still hold the plot of a cell that was
+    // there before — kept on purpose, so undoing the clear brings the views
+    // back, but not something a new cell should open with.
+    _forgetPlot(insertIndex);
 
     _createControllers(insertIndex);
 
@@ -1685,87 +1640,65 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
           curve: Curves.easeOutCubic,
         );
       }
-      // Recalculate results for cells after the inserted one (ans references
-      // may have shifted)
-      for (int i = insertIndex + 1; i < count; i++) {
-        _updateExactResult(i);
-      }
     });
   }
 
   void _shiftControllersUp(int fromIndex) {
-    // Work backwards from the end to avoid overwriting
-    for (int i = count - 1; i >= fromIndex; i--) {
-      int newIndex = i + 1;
-
-      // Move all controller references.
-      //
-      // The rows move as one list. The three editor maps are derived from it
-      // now, and assigning into a derived map writes into the temporary it
-      // just built — legal Dart, and silently nothing at all. That is what
-      // these three lines were doing.
-      if (_rows[i] case final List<ExpressionRow> rows) _rows[newIndex] = rows;
-      textDisplayControllers[newIndex] = textDisplayControllers[i]!;
-      focusNodes[newIndex] = focusNodes[i]!;
-      exactResultNodes[newIndex] = exactResultNodes[i];
-      exactResultExprs[newIndex] = exactResultExprs[i];
-      currentResultPage[newIndex] = currentResultPage[i] ?? 0;
-      currentResultPageNotifiers[newIndex] = currentResultPageNotifiers[i]!;
-      resultPageProgressNotifiers[newIndex] = resultPageProgressNotifiers[i]!;
-      exactResultVersionNotifiers[newIndex] = exactResultVersionNotifiers[i]!;
-
-      // Move resultPageControllers if it exists
-      if (resultPageControllers.containsKey(i)) {
-        resultPageControllers[newIndex] = resultPageControllers[i]!;
-      }
-
-      // Move plot expanded state
-      if (_plotExpanded.containsKey(i)) {
-        _plotExpanded[newIndex] = _plotExpanded[i]!;
+    // Each per-cell map moves up one from [fromIndex], working down from the
+    // end so nothing is overwritten before it has moved. A cell missing from a
+    // map stays missing, rather than inheriting the entry of the one below.
+    void shift<T>(Map<int, T> map) {
+      for (int i = count - 1; i >= fromIndex; i--) {
+        final T? value = map.remove(i);
+        if (value != null) {
+          map[i + 1] = value;
+        } else {
+          map.remove(i + 1);
+        }
       }
     }
 
-    // Clear the old references at fromIndex (will be replaced by _createControllers)
-    _rows.remove(fromIndex);
-    textDisplayControllers.remove(fromIndex);
-    focusNodes.remove(fromIndex);
-    resultPageControllers.remove(fromIndex);
-    exactResultNodes.remove(fromIndex);
-    exactResultExprs.remove(fromIndex);
-    currentResultPage.remove(fromIndex);
-    currentResultPageNotifiers.remove(fromIndex);
-    resultPageProgressNotifiers.remove(fromIndex);
-    exactResultVersionNotifiers.remove(fromIndex);
-    _plotExpanded.remove(fromIndex);
+    // The rows move as one list. The three editor maps are derived from it,
+    // and assigning into a derived map writes into the temporary it just
+    // built — legal Dart, and silently nothing at all.
+    shift(_rows);
+    shift(focusNodes);
+
+    // The plot moves with its cell. Left behind, the new cell opened with the
+    // plot of the one it pushed along — its view, its error marks and, through
+    // the panel's GlobalKey, the panel itself — and that cell got a fresh one.
+    shift(_plotPanelKeys);
+    shift(_restoredViews);
+    shift(_rowErrors);
+    shift(_rowPanelHeight);
+    shift(_rowPanelKeys);
+  }
+
+  /// Drop what the plot side remembers about the cell at [index].
+  void _forgetPlot(int index) {
+    _plotPanelKeys.remove(index);
+    _restoredViews.remove(index);
+    _rowErrors.remove(index);
+    _rowPanelHeight.remove(index);
+    _rowPanelKeys.remove(index);
   }
 
   void _removeDisplay(int indexToRemove) {
     if (count <= 1) return;
 
-    mathEditorControllers[indexToRemove]?.dispose();
-    _rows.remove(indexToRemove);
-    textDisplayControllers[indexToRemove]?.dispose();
-    textDisplayControllers.remove(indexToRemove);
-    focusNodes[indexToRemove]?.dispose();
-    focusNodes.remove(indexToRemove);
-    scrollControllers[indexToRemove]?.dispose();
-
-    resultPageControllers[indexToRemove]?.dispose();
-    resultPageControllers.remove(indexToRemove);
-    exactResultNodes.remove(indexToRemove);
-    currentResultPage.remove(indexToRemove);
-    currentResultPageNotifiers[indexToRemove]?.dispose();
-    currentResultPageNotifiers.remove(indexToRemove);
-    resultPageProgressNotifiers[indexToRemove]?.dispose();
-    resultPageProgressNotifiers.remove(indexToRemove);
-    exactResultVersionNotifiers[indexToRemove]?.dispose(); // ADD THIS
-    exactResultVersionNotifiers.remove(indexToRemove); // ADD THIS
+    // Every row of the plot, not only the one being edited. Disposing through
+    // the derived maps reached the focused row alone, and looked the scroll
+    // controller up after the row had already been removed, so it was never
+    // disposed at all.
+    for (final ExpressionRow row
+        in _rows.remove(indexToRemove) ?? const <ExpressionRow>[]) {
+      row.dispose();
+    }
+    focusNodes.remove(indexToRemove)?.dispose();
 
     // The cell's plot goes with it: its panel key, the view it was left at,
-    // and whether it was expanded.
-    _plotPanelKeys.remove(indexToRemove);
-    _restoredViews.remove(indexToRemove);
-    _plotExpanded.remove(indexToRemove);
+    // its error marks and its measured row panel.
+    _forgetPlot(indexToRemove);
 
     int newActiveIndex;
     if (activeIndex == indexToRemove) {
@@ -1898,43 +1831,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   void _clearAllDisplays() {
     _saveAppStateForUndo();
-
-    for (var controller in allControllers) {
-      controller.dispose();
-    }
-    for (var controller in textDisplayControllers.values) {
-      controller.dispose();
-    }
-    for (var focusNode in focusNodes.values) {
-      focusNode.dispose();
-    }
-    for (var scrollController in _allRows.map((ExpressionRow r) => r.scroll)) {
-      scrollController.dispose();
-    }
-    // We don't dispose resultPageControllers here because they are owned by the widgets.
-    // When the widgets are removed/replaced, they will dispose their own controllers.
-
-    for (var notifier in resultPageProgressNotifiers.values) {
-      notifier.dispose();
-    }
-    for (var notifier in currentResultPageNotifiers.values) {
-      notifier.dispose();
-    }
-    for (var notifier in exactResultVersionNotifiers.values) {
-      notifier.dispose();
-    }
-
-    _rows.clear();
-    textDisplayControllers.clear();
-    focusNodes.clear();
-    resultPageControllers.clear();
-    exactResultNodes.clear();
-    exactResultExprs.clear();
-    currentResultPage.clear();
-    currentResultPageNotifiers.clear();
-    resultPageProgressNotifiers.clear();
-    exactResultVersionNotifiers.clear();
-
+    _disposeAllCells(keep: 1);
     _createControllers(0);
 
     setState(() {
@@ -1943,95 +1840,74 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     });
   }
 
+  /// Dispose every cell's editors and controllers, ready for a fresh set of
+  /// [keep] cells.
+  ///
+  /// What the plot side remembers is kept for the cells that will exist again,
+  /// so a panel and the view it was left at survive an undo of a clear. Past
+  /// [keep] it is dropped: a cell made at one of those indices later would
+  /// otherwise open with error marks that belonged to another expression.
+  void _disposeAllCells({required int keep}) {
+    for (final ExpressionRow row in _allRows) {
+      row.dispose();
+    }
+    for (final FocusNode focusNode in focusNodes.values) {
+      focusNode.dispose();
+    }
+    _rows.clear();
+    focusNodes.clear();
+
+    bool gone(int index) => index >= keep;
+    _plotPanelKeys.removeWhere((int i, _) => gone(i));
+    _rowErrors.removeWhere((int i, _) => gone(i));
+    _rowPanelHeight.removeWhere((int i, _) => gone(i));
+    _rowPanelKeys.removeWhere((int i, _) => gone(i));
+  }
+
   void _reindexControllers() {
     List<int> oldKeys = _rows.keys.toList()..sort();
 
-    final Map<int, List<ExpressionRow>> newRows = <int, List<ExpressionRow>>{};
-    Map<int, TextEditingController> newDisplayControllers = {};
-    Map<int, FocusNode> newFocusNodes = {};
-    Map<int, PageController> newResultPageControllers = {};
-    Map<int, List<MathNode>?> newExactResultNodes = {};
-    Map<int, Expr?> newExactResultExprs = {};
-    Map<int, int> newCurrentResultPage = {};
-    Map<int, ValueNotifier<int>> newCurrentResultPageNotifiers = {};
-    Map<int, ValueNotifier<double>> newResultPageProgressNotifiers = {};
-    Map<int, ValueNotifier<int>> newExactResultVersionNotifiers =
-        {}; // ADD THIS
+    // Not every map has an entry for every cell — a plot that has not been
+    // built has no panel key, no measured height and no errors yet — so an
+    // entry is carried only where there is one. Dereferencing a missing one
+    // with `!` once threw part-way through renumbering, which aborted the
+    // removal and left the cell on screen.
+    Map<int, T> renumbered<T>(Map<int, T> from) => <int, T>{
+      for (int newIndex = 0; newIndex < oldKeys.length; newIndex++)
+        if (from[oldKeys[newIndex]] case final T value) newIndex: value,
+    };
 
-    // Not every map has an entry for every cell. resultPageControllers in
-    // particular is filled in by the result widgets when a cell actually has
-    // more than one result page, so for most cells it holds nothing at all.
-    // Dereferencing it with `!` threw part-way through renumbering, which
-    // aborted the removal and left the cell on screen — the reason backspace
-    // on an empty cell appeared to do nothing.
-    void carry<T>(Map<int, T> from, Map<int, T> to, int oldKey, int newIndex) {
-      final T? value = from[oldKey];
-      if (value != null) to[newIndex] = value;
-    }
+    final Map<int, List<ExpressionRow>> newRows = renumbered(_rows);
+    focusNodes = renumbered(focusNodes);
 
-    final Map<int, GlobalKey<InlinePlotPanelState>> newPlotPanelKeys = {};
-    final Map<int, PlotViewState> newRestoredViews = {};
-    final Map<int, bool> newPlotExpanded = {};
+    // The plot side has to move with the cell too. Left behind, a surviving
+    // cell inherits the panel, saved view and error marks of a different one
+    // — and for a GlobalKey that means two panels claiming the same key.
+    final Map<int, GlobalKey<InlinePlotPanelState>> newPlotPanelKeys =
+        renumbered(_plotPanelKeys);
+    final Map<int, PlotViewState> newRestoredViews = renumbered(_restoredViews);
+    final Map<int, Map<int, String>> newRowErrors = renumbered(_rowErrors);
+    final Map<int, double> newRowPanelHeight = renumbered(_rowPanelHeight);
+    final Map<int, GlobalKey> newRowPanelKeys = renumbered(_rowPanelKeys);
 
-    for (int newIndex = 0; newIndex < oldKeys.length; newIndex++) {
-      int oldKey = oldKeys[newIndex];
-      // Guaranteed: oldKeys is this map's own key list.
-      if (_rows[oldKey] case final List<ExpressionRow> r) newRows[newIndex] = r;
-      carry(textDisplayControllers, newDisplayControllers, oldKey, newIndex);
-      carry(focusNodes, newFocusNodes, oldKey, newIndex);
-      carry(resultPageControllers, newResultPageControllers, oldKey, newIndex);
-      newExactResultNodes[newIndex] = exactResultNodes[oldKey];
-      newExactResultExprs[newIndex] = exactResultExprs[oldKey];
-      newCurrentResultPage[newIndex] = currentResultPage[oldKey] ?? 0;
-      carry(
-        currentResultPageNotifiers,
-        newCurrentResultPageNotifiers,
-        oldKey,
-        newIndex,
-      );
-      carry(
-        resultPageProgressNotifiers,
-        newResultPageProgressNotifiers,
-        oldKey,
-        newIndex,
-      );
-      carry(
-        exactResultVersionNotifiers,
-        newExactResultVersionNotifiers,
-        oldKey,
-        newIndex,
-      );
-
-      // The plot side has to move with the cell too. Left behind, a surviving
-      // cell inherits the panel key and saved view of a different one — and
-      // for a GlobalKey that means two panels claiming the same key.
-      carry(_plotPanelKeys, newPlotPanelKeys, oldKey, newIndex);
-      carry(_restoredViews, newRestoredViews, oldKey, newIndex);
-      carry(_plotExpanded, newPlotExpanded, oldKey, newIndex);
-    }
-
+    _rows
+      ..clear()
+      ..addAll(newRows);
     _plotPanelKeys
       ..clear()
       ..addAll(newPlotPanelKeys);
     _restoredViews
       ..clear()
       ..addAll(newRestoredViews);
-    _plotExpanded
+    _rowErrors
       ..clear()
-      ..addAll(newPlotExpanded);
-
-    _rows
+      ..addAll(newRowErrors);
+    _rowPanelHeight
       ..clear()
-      ..addAll(newRows);
-    textDisplayControllers = newDisplayControllers;
-    focusNodes = newFocusNodes;
-    resultPageControllers = newResultPageControllers;
-    exactResultNodes = newExactResultNodes;
-    exactResultExprs = newExactResultExprs;
-    currentResultPage = newCurrentResultPage;
-    currentResultPageNotifiers = newCurrentResultPageNotifiers;
-    resultPageProgressNotifiers = newResultPageProgressNotifiers;
-    exactResultVersionNotifiers = newExactResultVersionNotifiers; // ADD THIS
+      ..addAll(newRowPanelHeight);
+    _rowPanelKeys
+      ..clear()
+      ..addAll(newRowPanelKeys);
   }
 
   void _restoreAppState(AppState state) {
@@ -2047,40 +1923,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   void _applyAppState(AppState state) {
-    for (var controller in allControllers) {
-      controller.dispose();
-    }
-    for (var controller in textDisplayControllers.values) {
-      controller.dispose();
-    }
-    for (var focusNode in focusNodes.values) {
-      focusNode.dispose();
-    }
-    for (var scrollController in _allRows.map((ExpressionRow r) => r.scroll)) {
-      scrollController.dispose();
-    }
-    // We don't dispose resultPageControllers here because they are owned by the widgets.
-
-    for (var notifier in resultPageProgressNotifiers.values) {
-      notifier.dispose();
-    }
-    for (var notifier in currentResultPageNotifiers.values) {
-      notifier.dispose();
-    }
-    for (var notifier in exactResultVersionNotifiers.values) {
-      notifier.dispose();
-    }
-
-    _rows.clear();
-    textDisplayControllers.clear();
-    focusNodes.clear();
-    resultPageControllers.clear();
-    exactResultNodes.clear();
-    exactResultExprs.clear();
-    currentResultPage.clear();
-    currentResultPageNotifiers.clear();
-    resultPageProgressNotifiers.clear();
-    exactResultVersionNotifiers.clear();
+    _disposeAllCells(keep: state.cells.isEmpty ? 1 : state.cells.length);
 
     for (int i = 0; i < state.cells.length; i++) {
       // Makes the cell with one row; the rest are added back beside it.
@@ -2101,8 +1944,6 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
         );
         live[r].visible = saved[r].visible;
       }
-
-      textDisplayControllers[i]?.text = state.answers[i];
     }
 
     if (state.cells.isEmpty) {
@@ -2151,12 +1992,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   /// Note the current state as the baseline, without recording an undo step.
   void _syncHistoryMark() {
-    _historyMark = AppState.capture(
-      _rowsForHistory,
-      textDisplayControllers,
-      activeIndex,
-      activeRow,
-    );
+    _historyMark = AppState.capture(_rowsForHistory, activeIndex, activeRow);
     _historySignature = _historyMark!.signature;
   }
 
@@ -2169,7 +2005,6 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     final AppState current = AppState.capture(
       _rowsForHistory,
-      textDisplayControllers,
       activeIndex,
       activeRow,
     );
@@ -2195,12 +2030,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   /// Save current app state before destructive operations
   void _saveAppStateForUndo() {
     _appUndoStack.add(
-      AppState.capture(
-        _rowsForHistory,
-        textDisplayControllers,
-        activeIndex,
-        activeRow,
-      ),
+      AppState.capture(_rowsForHistory, activeIndex, activeRow),
     );
 
     // Limit stack size
@@ -2230,12 +2060,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     // Save current state to redo stack
     _appRedoStack.add(
-      AppState.capture(
-        _rowsForHistory,
-        textDisplayControllers,
-        activeIndex,
-        activeRow,
-      ),
+      AppState.capture(_rowsForHistory, activeIndex, activeRow),
     );
 
     // Get previous state
@@ -2254,12 +2079,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     // Save current state to undo stack
     _appUndoStack.add(
-      AppState.capture(
-        _rowsForHistory,
-        textDisplayControllers,
-        activeIndex,
-        activeRow,
-      ),
+      AppState.capture(_rowsForHistory, activeIndex, activeRow),
     );
 
     // Get redo state
@@ -2299,20 +2119,15 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
         backgroundColor: colors.displayBackground,
         body: Stack(
           children: [
-            // The wallpaper SVG is not drawn.
-            //
-            // Measured, it cost 0.09 ms a frame to replay but 250-300 ms to
-            // build the first time, and the plot fills the page and covers it
-            // anyway. The plain colour and the lighting below give the same
-            // ground without either cost.
+            // A plain colour, not a picture: the plot fills the page and
+            // covers it anyway. The wallpaper SVGs this replaced cost
+            // 250-300 ms to build the first time, and are gone.
             Positioned.fill(child: ColoredBox(color: colors.displayBackground)),
-            // Light across the wallpaper.
+            // Light across the ground.
             //
-            // Over the artwork rather than baked into it: the same wash then
-            // covers all eleven themes, stays one number to tune, and leaves
-            // the SVGs as drawn. Black at the rim and white at the lit point,
-            // both at low alpha, so a dark theme deepens and a light one is
-            // shaded rather than washed out.
+            // One wash for every theme, one number to tune. Black at the rim
+            // and white at the lit point, both at low alpha, so a dark theme
+            // deepens and a light one is shaded rather than washed out.
             //
             // IgnorePointer because it spans the whole screen and must not sit
             // between the user and the keypad.
@@ -2384,80 +2199,20 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     key: _plotStripKey,
                     child: _buildPageSwipeStrip(colors),
                   ),
-                  AnimatedSize(
-                    duration: const Duration(milliseconds: 250),
-                    curve: Curves.easeInOut,
-                    // Inside the AnimatedSize, so the guard sits directly above
-                    // the keypad's own Column — the box that was reported with
-                    // no size. See [LaidOutSubtree].
-                    child: LaidOutSubtree(
-                      child: Builder(
-                        builder: (context) {
-                          final mediaQuery = MediaQuery.of(context);
-                          double screenWidth = mediaQuery.size.width;
-                          bool isLandscape =
-                              mediaQuery.orientation == Orientation.landscape;
-
-                          return CalculatorKeypad(
-                            screenWidth: screenWidth,
-                            isLandscape: isLandscape,
-                            colors: colors,
-                            activeIndex: activeIndex,
-                            activeController:
-                                activeRowOf(activeIndex)?.controller,
-                            settingsProvider: _settingsProvider!,
-                            onUpdateMathEditor: updateMathEditor,
-                            // The action key adds a row to this plot; the
-                            // swipe strip still adds a whole plot.
-                            onAddDisplay: _addRow,
-                            // Backspace on an empty row removes that row.
-                            // Only when it is the last one left does the
-                            // whole plot go, which is what it did before.
-                            onRemoveDisplay: (int plot) {
-                              if (!_removeActiveRow()) _removeDisplay(plot);
-                            },
-                            onExportPlot: _exportPlot,
-                            variableSystem: _variableSystem,
-                            unitVectorSystem: _unitVectorSystem,
-                            onVariableSystemChanged: (system) {
-                              // The two groups move together. A row of x, y, z
-                              // beside r̂, θ̂, ẑ describes a point in one system
-                              // and its directions in another, which is not a
-                              // thing anyone means to write.
-                              setState(() {
-                                _variableSystem = system;
-                                _unitVectorSystem = system;
-                              });
-                              // The symbols an expression is read in changed, so
-                              // every cell has to be recompiled and redrawn.
-                              updateMathEditor();
-                            },
-                            onUnitVectorSystemChanged: (system) {
-                              setState(() {
-                                _unitVectorSystem = system;
-                                _variableSystem = system;
-                              });
-                            },
-                            onClearAllDisplays: _confirmClearAllDisplays,
-                            onSetState: () => setState(() {}),
-                            onClearSelectionOverlay: _clearAllSelectionOverlays,
-                            canUndoAppState: canUndoAppState,
-                            canRedoAppState: canRedoAppState,
-                            onUndoAppState: undoAppState,
-                            onRedoAppState: redoAppState,
-                            // Walkthrough
-                            walkthroughService: _walkthroughService,
-                            scientificKeypadKey: _scientificKeypadKey,
-                            numberKeypadKey: _numberKeypadKey,
-                            extrasKeypadKey: _extrasKeypadKey,
-                            commandButtonKey: _commandButtonKey,
-                            mainKeypadAreaKey: _mainKeypadAreaKey,
-                            numberBlockKey: _tabletNumberBlockKey,
-                            scientificBlockKey: _tabletScientificBlockKey,
-                            extrasBlockKey: _tabletExtrasBlockKey,
-                            settingsButtonKey: _settingsButtonKey,
-                          );
-                        },
+                  _buildKeypadHandle(colors),
+                  // Folding, not removing: the keypad stays built while it is
+                  // away, so it comes back on the page it was left on. Aligned
+                  // to its top, so as the box shrinks from above the keys ride
+                  // down with it and slide off rather than being cropped in
+                  // place.
+                  SizeTransition(
+                    sizeFactor: _keypadRevealCurve,
+                    axisAlignment: -1,
+                    child: IgnorePointer(
+                      ignoring: _keypadHidden,
+                      child: ExcludeSemantics(
+                        excluding: _keypadHidden,
+                        child: _buildKeypad(colors),
                       ),
                     ),
                   ),
@@ -2470,32 +2225,83 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  Map<int, String> _getAnsValues() {
-    Map<int, String> ansValues = {};
+  /// The keypad, below its handle.
+  Widget _buildKeypad(AppColors colors) {
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeInOut,
+      // Inside the AnimatedSize, so the guard sits directly above the keypad's
+      // own Column — the box that was reported with no size. See
+      // [LaidOutSubtree].
+      child: LaidOutSubtree(
+        child: Builder(
+          builder: (context) {
+            final mediaQuery = MediaQuery.of(context);
+            double screenWidth = mediaQuery.size.width;
+            bool isLandscape = mediaQuery.orientation == Orientation.landscape;
 
-    List<int> keys = _rows.keys.toList()..sort();
-    for (int key in keys) {
-      String? result = mathEditorControllers[key]?.result;
-
-      if (result != null && result.isNotEmpty) {
-        String parseableResult = result.replaceAll('\u1D07', 'E');
-
-        if (double.tryParse(parseableResult) != null) {
-          ansValues[key] = parseableResult;
-        } else {
-          List<String> lines = parseableResult.split('\n');
-          if (lines.isNotEmpty) {
-            RegExp numRegex = RegExp(r'=\s*(-?\d+\.?\d*(?:[eE][+-]?\d+)?)');
-            Match? numMatch = numRegex.firstMatch(lines.first);
-            if (numMatch != null) {
-              ansValues[key] = numMatch.group(1)!;
-            }
-          }
-        }
-      }
-    }
-
-    return ansValues;
+            return CalculatorKeypad(
+              screenWidth: screenWidth,
+              isLandscape: isLandscape,
+              colors: colors,
+              activeIndex: activeIndex,
+              activeController: activeRowOf(activeIndex)?.controller,
+              settingsProvider: _settingsProvider!,
+              onUpdateMathEditor: updateMathEditor,
+              // The action key adds a row to this plot; the
+              // swipe strip still adds a whole plot.
+              onAddDisplay: _addRow,
+              // Backspace on an empty row removes that row.
+              // Only when it is the last one left does the
+              // whole plot go, which is what it did before.
+              onRemoveDisplay: (int plot) {
+                if (!_removeActiveRow()) _removeDisplay(plot);
+              },
+              onExportPlot: _exportPlot,
+              variableSystem: _variableSystem,
+              unitVectorSystem: _unitVectorSystem,
+              onVariableSystemChanged: (system) {
+                // The two groups move together. A row of x, y, z
+                // beside r̂, θ̂, ẑ describes a point in one system
+                // and its directions in another, which is not a
+                // thing anyone means to write.
+                setState(() {
+                  _variableSystem = system;
+                  _unitVectorSystem = system;
+                });
+                // The symbols an expression is read in changed, so
+                // every cell has to be recompiled and redrawn.
+                updateMathEditor();
+              },
+              onUnitVectorSystemChanged: (system) {
+                setState(() {
+                  _unitVectorSystem = system;
+                  _variableSystem = system;
+                });
+              },
+              onClearAllDisplays: _confirmClearAllDisplays,
+              onSetState: () => setState(() {}),
+              onClearSelectionOverlay: _clearAllSelectionOverlays,
+              canUndoAppState: canUndoAppState,
+              canRedoAppState: canRedoAppState,
+              onUndoAppState: undoAppState,
+              onRedoAppState: redoAppState,
+              // Walkthrough
+              walkthroughService: _walkthroughService,
+              scientificKeypadKey: _scientificKeypadKey,
+              numberKeypadKey: _numberKeypadKey,
+              extrasKeypadKey: _extrasKeypadKey,
+              commandButtonKey: _commandButtonKey,
+              mainKeypadAreaKey: _mainKeypadAreaKey,
+              numberBlockKey: _tabletNumberBlockKey,
+              scientificBlockKey: _tabletScientificBlockKey,
+              extrasBlockKey: _tabletExtrasBlockKey,
+              settingsButtonKey: _settingsButtonKey,
+            );
+          },
+        ),
+      ),
+    );
   }
 
   void updateMathEditor() {
@@ -2503,15 +2309,9 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _isUpdating = true;
 
     try {
-      List<int> keys = _rows.keys.toList()..sort();
-
-      for (int key in keys) {
-        Map<int, String> ansValues = _getAnsValues();
-        mathEditorControllers[key]?.onCalculate(ansValues: ansValues);
-        mathEditorControllers[key]?.updateAnswer(textDisplayControllers[key]);
-
-        // NEW: Update exact result
-        _updateExactResult(key);
+      for (final int key in _pageKeys) {
+        final MathEditorController? controller = activeRowOf(key)?.controller;
+        controller?.onCalculate();
       }
     } finally {
       _isUpdating = false;
@@ -2522,94 +2322,5 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     setState(() {});
     _scheduleSave();
-  }
-
-  bool isOperator(String x) {
-    if (x == '/' || x == 'x' || x == '-' || x == '+' || x == '=') {
-      return true;
-    }
-    return false;
-  }
-}
-
-String _describeMathNodes(List<MathNode> nodes) {
-  if (nodes.isEmpty) return '[]';
-  final parts = nodes.map(_describeMathNode).toList();
-  return '[${parts.join(', ')}]';
-}
-
-String _describeMathNode(MathNode node) {
-  if (node is LiteralNode) return 'Literal("${node.text}")';
-  if (node is FractionNode) {
-    return 'Fraction(num:${_describeMathNodes(node.numerator)}, den:${_describeMathNodes(node.denominator)})';
-  }
-  if (node is ExponentNode) {
-    return 'Exponent(base:${_describeMathNodes(node.base)}, pow:${_describeMathNodes(node.power)})';
-  }
-  if (node is ParenthesisNode) {
-    return 'Paren(${_describeMathNodes(node.content)})';
-  }
-  if (node is RootNode) {
-    return 'Root(idx:${_describeMathNodes(node.index)}, rad:${_describeMathNodes(node.radicand)})';
-  }
-  if (node is LogNode) {
-    return 'Log(base:${_describeMathNodes(node.base)}, arg:${_describeMathNodes(node.argument)})';
-  }
-  if (node is TrigNode) {
-    return 'Trig(${node.function}, arg:${_describeMathNodes(node.argument)})';
-  }
-  if (node is SummationNode) {
-    return 'Sum(var:${_describeMathNodes(node.variable)}, low:${_describeMathNodes(node.lower)}, up:${_describeMathNodes(node.upper)}, body:${_describeMathNodes(node.body)})';
-  }
-  if (node is ProductNode) {
-    return 'Prod(var:${_describeMathNodes(node.variable)}, low:${_describeMathNodes(node.lower)}, up:${_describeMathNodes(node.upper)}, body:${_describeMathNodes(node.body)})';
-  }
-  if (node is DerivativeNode) {
-    return 'Diff(var:${_describeMathNodes(node.variable)}, at:${_describeMathNodes(node.at)}, body:${_describeMathNodes(node.body)})';
-  }
-  if (node is IntegralNode) {
-    return 'Int(var:${_describeMathNodes(node.variable)}, low:${_describeMathNodes(node.lower)}, up:${_describeMathNodes(node.upper)}, body:${_describeMathNodes(node.body)})';
-  }
-  if (node is AnsNode) {
-    return 'Ans(${_describeMathNodes(node.index)})';
-  }
-  if (node is ConstantNode) return 'Const(${node.constant})';
-  if (node is UnitVectorNode) return 'Unit(${node.axis})';
-  if (node is NewlineNode) return 'Newline';
-  if (node is ComplexNode) {
-    return 'Complex(${_describeMathNodes(node.content)})';
-  }
-  return node.runtimeType.toString();
-}
-
-/// Isolated widget for the result PageView to prevent unnecessary rebuilds
-/// Isolated widget for the result PageView to prevent unnecessary rebuilds
-class AnimatedResultContent extends StatelessWidget {
-  final double animationValue;
-  final bool isAnimating;
-  final Widget child;
-
-  const AnimatedResultContent({
-    super.key,
-    required this.animationValue,
-    required this.isAnimating,
-    required this.child,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (!isAnimating) {
-      return child;
-    }
-
-    // Fade and subtle scale animation
-    return Opacity(
-      opacity: animationValue.clamp(0.0, 1.0),
-      child: Transform.scale(
-        scale: 0.95 + (0.05 * animationValue), // Scale from 0.95 to 1.0
-        alignment: Alignment.center,
-        child: child,
-      ),
-    );
   }
 }

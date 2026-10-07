@@ -1,7 +1,6 @@
 import 'dart:math';
 
 import '../../math_renderer/math_nodes.dart';
-import '../../utils/coordinate_system.dart';
 import '../models/enums.dart';
 import 'plot_expression.dart';
 
@@ -74,12 +73,13 @@ class VectorFieldParser {
 
     final terms = _splitTerms(nodes);
 
-    // Named for what they mean rather than which axis: the same slot holds x
-    // or r or ρ depending on the basis the field was written in.
-    List<MathNode>? radial;
-    List<MathNode>? azimuthal;
-    List<MathNode>? polar;
-    CoordinateSystem basis = CoordinateSystem.cartesian;
+    // What each term adds to the x, y and z components. A term is summed into
+    // every component its unit vector has, rather than dropped into one slot
+    // per axis: slots let 2x̂ + 3x̂ keep only the 3x̂, let x̂ + r̂ lose the x̂,
+    // and had no room for a ρ̂ that leans into all three axes at once.
+    final List<List<MathNode>> xParts = <List<MathNode>>[];
+    final List<List<MathNode>> yParts = <List<MathNode>>[];
+    final List<List<MathNode>> zParts = <List<MathNode>>[];
 
     for (final _Term term in terms) {
       final List<MathNode> body = term.nodes;
@@ -101,76 +101,51 @@ class VectorFieldParser {
       // `x̂` on its own means a coefficient of 1; `-x̂` means -1.
       final List<MathNode> withSign = _applySign(coefficient, term.negative);
 
-      switch (axis.axis) {
-        case 'x':
-        case 'r':
-        case 'ρ':
-          radial = withSign;
-        case 'y':
-        case 'θ':
-          azimuthal = withSign;
-        case 'z':
-        case 'φ':
-          polar = withSign;
-      }
-      if (axis.axis != 'x' && axis.axis != 'y' && axis.axis != 'z') {
-        basis =
-            (axis.axis == 'ρ' || axis.axis == 'φ')
-                ? CoordinateSystem.spherical
-                : CoordinateSystem.cylindrical;
+      final List<_Factor?> column = _cartesianColumn(axis.axis);
+      final List<List<List<MathNode>>> parts = <List<List<MathNode>>>[
+        xParts,
+        yParts,
+        zParts,
+      ];
+      for (int i = 0; i < 3; i++) {
+        final _Factor? factor = column[i];
+        if (factor == null) continue;
+        // A Cartesian unit vector contributes its coefficient as typed, so a
+        // field written in x̂, ŷ, ẑ compiles exactly as it always has.
+        if (!factor.negative && factor.nodes.isEmpty) {
+          parts[i].add(withSign);
+          continue;
+        }
+        parts[i].add(<MathNode>[
+          if (factor.negative) LiteralNode(text: '-'),
+          ParenthesisNode(content: withSign),
+          LiteralNode(text: '*'),
+          ...factor.nodes,
+        ]);
       }
     }
 
     // A field written in a rotating basis becomes Cartesian components here
-    // rather than anywhere downstream. r-hat and theta-hat point somewhere
+    // rather than anywhere downstream. r̂, θ̂, ρ̂ and φ̂ point somewhere
     // different at every sample, so the conversion is per point — but it can
-    // be *written* as an expression, because θ is itself a variable the
-    // sampler already knows how to supply:
-    //
-    //   r̂ = (cos θ, sin θ)        θ̂ = (−sin θ, cos θ)
-    //
-    // so the Cartesian components are built as node trees and compiled like
-    // any other expression. Nothing that draws a vector field need change.
-    List<MathNode>? xNodes;
-    List<MathNode>? yNodes;
-    List<MathNode>? zNodes;
-
-    if (basis == CoordinateSystem.cartesian) {
-      xNodes = radial;
-      yNodes = azimuthal;
-      zNodes = polar;
-    } else {
-      List<MathNode> trig(String fn) => <MathNode>[
-        TrigNode(function: fn, argument: <MathNode>[LiteralNode(text: 'θ')]),
+    // be *written* as an expression, because θ and φ are variables the
+    // sampler already knows how to supply (see [_cartesianColumn]). So the
+    // Cartesian components are built as node trees and compiled like any
+    // other expression. Nothing that draws a vector field need change.
+    List<MathNode>? sum(List<List<MathNode>> parts) {
+      if (parts.isEmpty) return null;
+      if (parts.length == 1) return parts.single;
+      return <MathNode>[
+        for (int i = 0; i < parts.length; i++) ...<MathNode>[
+          if (i > 0) LiteralNode(text: '+'),
+          ParenthesisNode(content: parts[i]),
+        ],
       ];
-      List<MathNode>? combine(
-        List<MathNode>? first,
-        String firstTrig,
-        bool negateFirst,
-        List<MathNode>? second,
-        String secondTrig,
-      ) {
-        if (first == null && second == null) return null;
-        return <MathNode>[
-          if (first != null) ...<MathNode>[
-            if (negateFirst) LiteralNode(text: '-'),
-            ParenthesisNode(content: first),
-            LiteralNode(text: '*'),
-            ...trig(firstTrig),
-          ],
-          if (first != null && second != null) LiteralNode(text: '+'),
-          if (second != null) ...<MathNode>[
-            ParenthesisNode(content: second),
-            LiteralNode(text: '*'),
-            ...trig(secondTrig),
-          ],
-        ];
-      }
-
-      xNodes = combine(azimuthal, 'sin', true, radial, 'cos');
-      yNodes = combine(radial, 'sin', false, azimuthal, 'cos');
-      zNodes = polar;
     }
+
+    final List<MathNode>? xNodes = sum(xParts);
+    final List<MathNode>? yNodes = sum(yParts);
+    final List<MathNode>? zNodes = sum(zParts);
 
     if (xNodes == null && yNodes == null && zNodes == null) return null;
 
@@ -193,6 +168,51 @@ class VectorFieldParser {
       zComponent: z,
       error: firstError,
     );
+  }
+
+  /// The unit vector [axis] in Cartesian components — one column of the
+  /// matrix that takes the local basis to x̂, ŷ, ẑ. Null where a component is
+  /// zero, and an empty factor where it is one.
+  ///
+  ///   r̂ = (cos θ, sin θ, 0)               θ̂ = (−sin θ, cos θ, 0)
+  ///   ρ̂ = (sin φ cos θ, sin φ sin θ, cos φ)
+  ///   φ̂ = (cos φ cos θ, cos φ sin θ, −sin φ)
+  ///
+  /// θ̂ is the same vector in cylindrical and spherical, since both measure θ
+  /// the same way, so it never needs to know which system it came from. ρ̂
+  /// and φ̂ used to be read as r̂ and ẑ, which put ρ̂ flat in the xy-plane
+  /// everywhere and pointed φ̂ up where it points down.
+  static List<_Factor?> _cartesianColumn(String axis) {
+    List<MathNode> trig(String fn, String variable) => <MathNode>[
+      TrigNode(function: fn, argument: <MathNode>[LiteralNode(text: variable)]),
+    ];
+    List<MathNode> times(List<MathNode> a, List<MathNode> b) => <MathNode>[
+      ...a,
+      LiteralNode(text: '*'),
+      ...b,
+    ];
+    _Factor plus(List<MathNode> nodes) => (negative: false, nodes: nodes);
+    _Factor minus(List<MathNode> nodes) => (negative: true, nodes: nodes);
+    const _Factor one = (negative: false, nodes: <MathNode>[]);
+
+    return switch (axis) {
+      'x' => <_Factor?>[one, null, null],
+      'y' => <_Factor?>[null, one, null],
+      'z' => <_Factor?>[null, null, one],
+      'r' => <_Factor?>[plus(trig('cos', 'θ')), plus(trig('sin', 'θ')), null],
+      'θ' => <_Factor?>[minus(trig('sin', 'θ')), plus(trig('cos', 'θ')), null],
+      'ρ' => <_Factor?>[
+        plus(times(trig('sin', 'φ'), trig('cos', 'θ'))),
+        plus(times(trig('sin', 'φ'), trig('sin', 'θ'))),
+        plus(trig('cos', 'φ')),
+      ],
+      'φ' => <_Factor?>[
+        plus(times(trig('cos', 'φ'), trig('cos', 'θ'))),
+        plus(times(trig('cos', 'φ'), trig('sin', 'θ'))),
+        minus(trig('sin', 'φ')),
+      ],
+      _ => <_Factor?>[null, null, null],
+    };
   }
 
   /// Coefficient nodes with the term's sign folded in.
@@ -296,6 +316,10 @@ class VectorFieldParser {
       'Vector(x: ${xComponent != null}, y: ${yComponent != null}, '
       'z: ${zComponent != null})';
 }
+
+/// One entry of a basis column: what a unit vector's coefficient is
+/// multiplied by to give its share of a Cartesian component.
+typedef _Factor = ({bool negative, List<MathNode> nodes});
 
 class _Term {
   final bool negative;

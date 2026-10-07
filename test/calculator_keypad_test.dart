@@ -89,9 +89,16 @@ void main() {
       await tester.pumpWidget(buildTestWidget());
       await tester.pumpAndSettle();
 
-      // Verify the widget tree contains expected structure
+      // Verify the widget tree contains expected structure: the number pad
+      // and the function pages, side by side.
       expect(find.byType(CalculatorKeypad), findsOneWidget);
-      expect(find.byType(Column), findsWidgets);
+      expect(
+        find.descendant(
+          of: find.byType(CalculatorKeypad),
+          matching: find.byType(Row),
+        ),
+        findsWidgets,
+      );
     });
 
     testWidgets('should have SizedBox for main keypad area', (tester) async {

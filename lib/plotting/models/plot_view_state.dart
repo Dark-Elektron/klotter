@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'plane_slice.dart';
 
 /// How a cell's plot is currently being looked at.
@@ -24,9 +26,12 @@ class PlotViewState {
     this.uMax = 1,
     this.vMin = 0,
     this.vMax = 1,
+    this.thetaMin = -2 * math.pi,
+    this.thetaMax = 2 * math.pi,
     this.surfaceMode,
     this.complexView,
     this.showMesh = false,
+    this.showAxes = true,
     this.sliceAxis,
     this.sliceOffset = 0,
   });
@@ -68,6 +73,13 @@ class PlotViewState {
   /// silently back to off.
   final bool showMesh;
 
+  /// Whether the axes are drawn — lines, ticks and numbers.
+  ///
+  /// On unless switched off, and kept with the view for the same reason the
+  /// mesh is: it is something you asked for, and should still be off when you
+  /// swipe away and come back.
+  final bool showAxes;
+
   /// Which complex readings are on show, packed, or null if untouched.
   ///
   /// Same convention as [surfaceMode]: null means the user has not chosen, so
@@ -78,6 +90,10 @@ class PlotViewState {
   /// expression: the sweep is something you dialled in, and swiping to the
   /// next plot and back used to hand it silently back to the default.
   final double uMin, uMax, vMin, vMax;
+
+  /// What θ is swept over for a polar curve or spherical surface, kept for
+  /// the same reason as u and v.
+  final double thetaMin, thetaMax;
 
   static const PlotViewState initial = PlotViewState();
 
@@ -100,8 +116,11 @@ class PlotViewState {
       uMax == initial.uMax &&
       vMin == initial.vMin &&
       vMax == initial.vMax &&
+      thetaMin == initial.thetaMin &&
+      thetaMax == initial.thetaMax &&
       surfaceMode == initial.surfaceMode &&
       showMesh == initial.showMesh &&
+      showAxes == initial.showAxes &&
       sliceAxis == initial.sliceAxis &&
       sliceOffset == initial.sliceOffset &&
       complexView == initial.complexView;
@@ -123,8 +142,11 @@ class PlotViewState {
     'uMax': uMax,
     'vMin': vMin,
     'vMax': vMax,
+    'thetaMin': thetaMin,
+    'thetaMax': thetaMax,
     'surfaceMode': surfaceMode,
     'showMesh': showMesh,
+    'showAxes': showAxes,
     'sliceAxis': sliceAxis,
     'sliceOffset': sliceOffset,
     'complexView': complexView,
@@ -177,6 +199,12 @@ class PlotViewState {
       vMin = initial.vMin;
       vMax = initial.vMax;
     }
+    double thetaMin = read('thetaMin', initial.thetaMin);
+    double thetaMax = read('thetaMax', initial.thetaMax);
+    if ((thetaMax - thetaMin).abs() < 1e-9) {
+      thetaMin = initial.thetaMin;
+      thetaMax = initial.thetaMax;
+    }
 
     return PlotViewState(
       show3D: json['show3D'] == true,
@@ -195,11 +223,16 @@ class PlotViewState {
       uMax: uMax,
       vMin: vMin,
       vMax: vMax,
+      thetaMin: thetaMin,
+      thetaMax: thetaMax,
       surfaceMode: switch (json['surfaceMode']) {
         final int i when i >= 0 => i,
         _ => null,
       },
       showMesh: json['showMesh'] == true,
+      // Absent from anything saved before the switch existed, and those plots
+      // all had their axes, so only an explicit false turns them off.
+      showAxes: json['showAxes'] != false,
       sliceAxis: switch (json['sliceAxis']) {
         final int i when i >= 0 && i < SliceAxis.values.length => i,
         _ => null,
@@ -229,9 +262,12 @@ class PlotViewState {
     double? uMax,
     double? vMin,
     double? vMax,
+    double? thetaMin,
+    double? thetaMax,
     int? surfaceMode,
     int? complexView,
     bool? showMesh,
+    bool? showAxes,
     int? sliceAxis,
     double? sliceOffset,
     bool clearSlice = false,
@@ -253,8 +289,11 @@ class PlotViewState {
       uMax: uMax ?? this.uMax,
       vMin: vMin ?? this.vMin,
       vMax: vMax ?? this.vMax,
+      thetaMin: thetaMin ?? this.thetaMin,
+      thetaMax: thetaMax ?? this.thetaMax,
       surfaceMode: surfaceMode ?? this.surfaceMode,
       showMesh: showMesh ?? this.showMesh,
+      showAxes: showAxes ?? this.showAxes,
       // Going back to "never chose" has to be sayable, and passing null cannot
       // say it — null is what copyWith reads as "leave alone".
       sliceAxis: clearSlice ? null : (sliceAxis ?? this.sliceAxis),

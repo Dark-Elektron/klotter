@@ -36,16 +36,19 @@ void main() {
     });
 
     test('φ is the polar angle, measured down from z', () {
-      final e = fn('φ', CoordinateSystem.spherical);
-      expect(e.isValid, isTrue, reason: e.error);
+      // Read off the conversion itself. An equation such as φ = 0 is read
+      // at every address of a point, and (−ρ, θ + π, π − φ) is one of them,
+      // so it no longer reports φ alone.
+      double phiAt(double x, double y, double z) =>
+          toCoordinates(CoordinateSystem.spherical, x, y, z).$3;
       // On the +z axis φ = 0; in the xy-plane φ = π/2; on −z it is π.
-      expect(e.evaluate(0, 0, 1), closeTo(0, 1e-9));
-      expect(e.evaluate(1, 0, 0), closeTo(1.5707963268, 1e-9));
-      expect(e.evaluate(0, 0, -1), closeTo(3.1415926536, 1e-9));
+      expect(phiAt(0, 0, 1), closeTo(0, 1e-9));
+      expect(phiAt(1, 0, 0), closeTo(1.5707963268, 1e-9));
+      expect(phiAt(0, 0, -1), closeTo(3.1415926536, 1e-9));
     });
 
     test('φ is no longer the golden ratio', () {
-      expect(fn('φ', CoordinateSystem.spherical).evaluate(0, 0, 1), 0);
+      expect(fn('φ=0', CoordinateSystem.spherical).evaluate(0, 0, 1), 0);
     });
   });
 
@@ -80,7 +83,7 @@ void main() {
       expect(e.isValid, isTrue, reason: e.error);
       expect(e.system, CoordinateSystem.cartesian);
       expect(
-        fn('ρ', CoordinateSystem.cartesian).system,
+        fn('ρ=1', CoordinateSystem.cartesian).system,
         CoordinateSystem.spherical,
       );
     });
@@ -146,7 +149,7 @@ void mixedLines() {
         isTrue,
       );
       expect(
-        PlotExpression.compile(<MathNode>[LiteralNode(text: 'ρ+θ')]).isValid,
+        PlotExpression.compile(<MathNode>[LiteralNode(text: 'ρ+θ=1')]).isValid,
         isTrue,
       );
     });

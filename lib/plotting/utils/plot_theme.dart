@@ -55,6 +55,11 @@ class PlotThemeData {
 
   final Gradient background2D;
   final Gradient background3D;
+
+  /// The colour behind a 3D plot, near enough: the middle of its ground laid
+  /// over the page. Distant parts of a surface are washed towards it, so they
+  /// recede the way far things do in air.
+  final Color fog;
   final Color grid;
   final Color subGrid;
   final Color axis;
@@ -80,6 +85,7 @@ class PlotThemeData {
     required this.controlFill,
     required this.background2D,
     required this.background3D,
+    required this.fog,
     required this.grid,
     required this.subGrid,
     required this.axis,
@@ -263,7 +269,21 @@ class PlotThemeData {
             : Color.lerp(baseColor, Colors.white, 0.20)) ??
         baseColor;
 
-    final Color accent = colors.accent;
+    // What a control that is switched on is drawn in: the theme's own accent,
+    // unless that is a neon yellow — the dark and classic themes' — which on
+    // a plot read as a warning light, louder than anything it controlled. A
+    // soft amber says "on" as plainly and sits warmer and quieter beside the
+    // data; on a light plot it is taken deeper so it still reads.
+    final HSLColor themed = HSLColor.fromColor(colors.accent);
+    final bool neonYellow =
+        themed.saturation > 0.9 &&
+        themed.lightness >= 0.5 &&
+        themed.hue >= 45 &&
+        themed.hue <= 70;
+    final Color accent =
+        !neonYellow
+            ? colors.accent
+            : (isLight ? const Color(0xFFB7791F) : const Color(0xFFF2B451));
     return PlotThemeData(
       controlActive: accent,
       // Readable on every theme, which the app's own error red is not on the
@@ -271,9 +291,13 @@ class PlotThemeData {
       errorMark: const Color(0xFFE57373),
       controlIdle: lineBase.withValues(alpha: isLight ? 0.55 : 0.60),
       controlOutline: lineBase.withValues(alpha: isLight ? 0.28 : 0.24),
-      controlFill: accent.withValues(alpha: isLight ? 0.22 : 0.30),
+      // Faint: the border and the icon carry the state, and a heavy fill
+      // under every switched-on control was most of what made the column
+      // loud.
+      controlFill: accent.withValues(alpha: isLight ? 0.16 : 0.18),
       background2D: background2D,
       background3D: background3D,
+      fog: Color.alphaBlend(sheerer(surface), colors.displayBackground),
       grid: grid,
       subGrid: subGrid,
       axis: axis,

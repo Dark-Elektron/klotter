@@ -19,6 +19,7 @@ import 'parameter_range_panel.dart';
 import 'plane_slice_gutter.dart';
 import '../models/plane_slice.dart';
 import '../../math_renderer/math_nodes.dart';
+import '../../math_engine/math_expression_serializer.dart';
 import 'axis_range_sheet.dart';
 import 'plot_2d_screen.dart';
 import 'plot_3d_screen.dart';
@@ -138,10 +139,19 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   /// and back does not hand the sweep back to the default.
   late ParameterRange _uRange;
   late ParameterRange _vRange;
+
+  /// What θ is swept over for the cell's polar curves and spherical surfaces.
+  ///
+  /// Unlike u and v it is compiled into the lines rather than handed to the
+  /// painters (see [PlotExpression.thetaRange]), so changing it recompiles.
+  late ParameterRange _thetaRange;
   bool _showContour = false;
 
   /// Whether surfaces are drawn with their own grid over them.
   bool _showMesh = false;
+
+  /// Whether the axes are drawn — lines, ticks and numbers.
+  bool _showAxes = true;
   SurfaceMode _surfaceMode = SurfaceMode.none;
 
   /// Whether the colouring is the user's choice rather than a default.
@@ -174,10 +184,13 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     PlotViewState view = widget.initialView.copyWith(
       show3D: _show3D,
       showMesh: _showMesh,
+      showAxes: _showAxes,
       uMin: _uRange.min,
       uMax: _uRange.max,
       vMin: _vRange.min,
       vMax: _vRange.max,
+      thetaMin: _thetaRange.min,
+      thetaMax: _thetaRange.max,
       surfaceMode: _surfaceModeChosen ? _surfaceMode.index : null,
       complexView: _complexViewChosen ? _complexView.bits : null,
       sliceAxis: _slice?.axis.index,
@@ -241,6 +254,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     super.initState();
     _show3D = widget.initialView.show3D;
     _showMesh = widget.initialView.showMesh;
+    _showAxes = widget.initialView.showAxes;
     final int? savedMode = widget.initialView.surfaceMode;
     if (savedMode != null && savedMode < SurfaceMode.values.length) {
       _surfaceMode = SurfaceMode.values[savedMode];
@@ -260,6 +274,10 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     }
     _uRange = (min: widget.initialView.uMin, max: widget.initialView.uMax);
     _vRange = (min: widget.initialView.vMin, max: widget.initialView.vMax);
+    _thetaRange = (
+      min: widget.initialView.thetaMin,
+      max: widget.initialView.thetaMax,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) setState(_restoreView);
     });
@@ -279,16 +297,89 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   }
 
   /// The last set reported, so an unchanged set is not sent every rebuild.
-  Map<int, String> _lastRowErrors = const <int, String>{};
+  ///
+  /// Null until the first report, which always goes out: the owner keeps the
+  /// marks per cell, and a panel built for a cell — swiped back to, or made
+  /// after an undo — must not leave it showing what an earlier panel said.
+  Map<int, String>? _lastRowErrors;
 
   void _reportRowErrors(Map<int, String> byRow) {
-    if (mapEquals(byRow, _lastRowErrors)) return;
+    final Map<int, String>? last = _lastRowErrors;
+    if (last != null && mapEquals(byRow, last)) return;
     _lastRowErrors = byRow;
     // After the frame: this runs from a parse that is itself inside a build,
     // and the owner rebuilds when it hears.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) widget.onRowErrors?.call(byRow);
     });
+  }
+
+  /// Compiled rows, so a plot swiped back to is handed the very objects it was
+  /// drawn from last time.
+  ///
+  /// Every piece of geometry — the height grid, the marched surface, its mesh,
+  /// the extent the box was fitted to — is cached against the identity of the
+  /// compiled expression, since a new object is how an edit announces itself.
+  /// But a panel is built afresh each time its page comes back, and compiling
+  /// the same text again made a new object, so all of it was thrown away and
+  /// worked out again: a plot you had just left took as long to come back to
+  /// as it took to draw the first time.
+  ///
+  /// Keyed by everything a compiled row depends on or is given — its text,
+  /// its coordinate system, its row and whether it is hidden — since the row
+  /// and the flag are written onto the object, and two plots must not share
+  /// one that either could change.
+  static final Map<String, PlotExpression> _compiledRows =
+      <String, PlotExpression>{};
+  static final Map<String, VectorFieldParser> _compiledFields =
+      <String, VectorFieldParser>{};
+
+  /// A few plots' worth. Each holds only an expression tree; the geometry it
+  /// keys lives in caches of its own, with their own limits.
+  static const int _compiledKept = 64;
+
+  static T _remember<T>(Map<String, T> memo, String key, T Function() make) {
+    final T? known = memo.remove(key);
+    if (known != null) {
+      memo[key] = known; // most recently used goes last
+      return known;
+    }
+    final T made = make();
+    memo[key] = made;
+    if (memo.length > _compiledKept) memo.remove(memo.keys.first);
+    return made;
+  }
+
+  PlotExpression _compileRow(List<MathNode> line, int row) {
+    final bool hidden = _rowHidden(row);
+    final String key =
+        '${widget.coordinateSystem.name}|$row|$hidden|'
+        '${_thetaRange.min}|${_thetaRange.max}|'
+        '${MathExpressionSerializer.serializeToJson(line)}';
+    return _remember(
+      _compiledRows,
+      key,
+      () =>
+          PlotExpression.compile(
+              line,
+              system: widget.coordinateSystem,
+              thetaRange: _thetaRange,
+            )
+            ..seriesIndex = row
+            ..hidden = hidden,
+    );
+  }
+
+  VectorFieldParser? _compileField(List<MathNode> line, int row) {
+    final String key = '$row|${MathExpressionSerializer.serializeToJson(line)}';
+    if (_compiledFields.containsKey(key)) {
+      return _remember(_compiledFields, key, () => _compiledFields[key]!);
+    }
+    final VectorFieldParser? made = VectorFieldParser.fromNodes(line);
+    // Not remembered when there is no field: that is the cheap answer, and
+    // the map holds parsers only.
+    if (made == null) return null;
+    return _remember(_compiledFields, key, () => made);
   }
 
   void _parseFunction(String expr) {
@@ -332,9 +423,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
       for (int row = 0; row < lines.length; row++)
         if (VectorFieldParser.isVectorFieldNodes(lines[row]) &&
             !_rowHidden(row))
-          if (VectorFieldParser.fromNodes(lines[row])
-              case final VectorFieldParser f)
-            f,
+          if (_compileField(lines[row], row) case final VectorFieldParser f) f,
     ];
     final VectorFieldParser? vector = fields.isEmpty ? null : fields.first;
 
@@ -350,12 +439,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
           <PlotExpression>[
             for (int row = 0; row < lines.length; row++)
               if (!VectorFieldParser.isVectorFieldNodes(lines[row]))
-                PlotExpression.compile(
-                    lines[row],
-                    system: widget.coordinateSystem,
-                  )
-                  ..seriesIndex = row
-                  ..hidden = _rowHidden(row),
+                _compileRow(lines[row], row),
           ].where((PlotExpression e) => e.isValid).toList();
 
       setState(() {
@@ -400,9 +484,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     final List<PlotExpression> compiled = <PlotExpression>[
       for (int row = 0; row < lines.length; row++)
         if (!VectorFieldParser.isVectorFieldNodes(lines[row]))
-          PlotExpression.compile(lines[row], system: widget.coordinateSystem)
-            ..seriesIndex = row
-            ..hidden = _rowHidden(row),
+          _compileRow(lines[row], row),
     ];
 
     if (compiled.isEmpty) {
@@ -590,8 +672,24 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
 
   /// Overlay controls sit on top of the data, so they are kept small — big
   /// enough to hit, small enough not to cover the plot they control.
-  static const double _overlayButtonSize = 40;
-  static const double _overlayIconSize = 18;
+  ///
+  /// A fifth smaller than the 40 they were, at the user's asking: at 40 the
+  /// toolbar and the column beside it covered a good part of the plot they
+  /// were there to serve. (Two-thirds, 27, was tried and was too small.) Under
+  /// the 48 a touch target is usually given, which is the price of that. This
+  /// one number sets every button in both panels, their icons and labels in
+  /// the proportions they had at 40.
+  static const double _overlayButtonSize = 32;
+  static const double _overlayIconSize = _overlayButtonSize * 18 / 40;
+  static const double _overlayLabelSize = _overlayButtonSize * 13 / 40;
+
+  /// A switched-on control's border. Lighter than the 2 it was: with every
+  /// control in one colour the state no longer needs shouting.
+  static const double _activeBorder = 1.5;
+
+  /// The surface menu heads the control column and was always a size up from
+  /// the rest, 48 against 40; it keeps that proportion.
+  static const double _surfaceButtonSize = _overlayButtonSize * 48 / 40;
 
   /// Whether the plot's side chrome is laid out for a left hand.
   ///
@@ -719,6 +817,12 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     ].any((PlotExpression? c) => c?.variables.contains(name) ?? false);
   }
 
+  /// Whether any line on show reads θ over the cell's range — a traced one,
+  /// or a sampled polar equation or inequality — and so has a θ range worth
+  /// offering.
+  bool get _followsThetaRange =>
+      _functions.any((PlotExpression f) => f.followsThetaRange && !f.hidden);
+
   /// Whether this plot has a third dimension to slide along.
   ///
   /// A curve in the plane has no plane to choose, so the strip stays away
@@ -773,6 +877,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     int chips = 0;
     if (_usesParameter('u')) chips++;
     if (_usesParameter('v')) chips++;
+    if (_followsThetaRange) chips++;
     // 26 apart, which is what the chips offset themselves by.
     final double chipStack = chips * 26.0;
     if (chipStack > stack) stack = chipStack;
@@ -834,6 +939,112 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     _publishView();
   }
 
+  /// Show or hide the axes, in 2D and 3D alike.
+  void _toggleAxes() {
+    setState(() => _showAxes = !_showAxes);
+    _publishView();
+  }
+
+  @visibleForTesting
+  void toggleAxesForTest() => _toggleAxes();
+
+  // ---- what the controls cover ------------------------------------------
+  //
+  // The 3D plot draws its axis numbers under whatever floats over it, and a
+  // number under a control cannot be read. The controls are measured here so
+  // the plot can leave those places out.
+  //
+  // Sizes only. Their places are worked out from the same anchors that place
+  // them, because the controls slide when the rows below change height, and a
+  // place measured part-way through that slide would be wrong once it ended —
+  // with nothing to measure it again.
+  final GlobalKey _toolbarKey = GlobalKey();
+  final GlobalKey _controlsKey = GlobalKey();
+  final GlobalKey _modeLabelKey = GlobalKey();
+
+  /// The sizes last measured on any panel.
+  ///
+  /// A panel being built — a plot swiped to — starts from these rather than
+  /// from nothing. From nothing, its first frame had no keep-out and its second
+  /// had one, and a 3D plot draws its whole scene again when that changes: a
+  /// second full paint on every arrival. The controls are the same size on
+  /// most plots, so the guess is usually right; where it is not, the
+  /// measurement below corrects it as before.
+  static final Map<String, Size> _lastOverlaySizes = <String, Size>{};
+  late final Map<String, Size> _overlaySizes = Map<String, Size>.of(
+    _lastOverlaySizes,
+  );
+  bool _overlayMeasurePending = false;
+
+  void _measureOverlays() {
+    if (_overlayMeasurePending) return;
+    _overlayMeasurePending = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _overlayMeasurePending = false;
+      if (!mounted) return;
+      bool changed = false;
+      for (final (String role, GlobalKey key) in <(String, GlobalKey)>[
+        ('toolbar', _toolbarKey),
+        ('controls', _controlsKey),
+        ('label', _modeLabelKey),
+      ]) {
+        final Size? now = laidOutBox(key.currentContext)?.size;
+        if (now == _overlaySizes[role]) continue;
+        changed = true;
+        if (now == null) {
+          _overlaySizes.remove(role);
+        } else {
+          _overlaySizes[role] = now;
+          _lastOverlaySizes[role] = now;
+        }
+      }
+      if (changed) setState(() {});
+    });
+  }
+
+  /// Where the controls sit over a plot of [panel], in its own coordinates.
+  List<Rect> _overlayRects(Size panel) {
+    final double lift = 8 + widget.bottomInset;
+    final List<Rect> out = <Rect>[];
+    final Size? toolbar = _overlaySizes['toolbar'];
+    if (toolbar != null) {
+      out.add(
+        Rect.fromLTWH(
+          (panel.width - toolbar.width) / 2,
+          panel.height - lift - toolbar.height,
+          toolbar.width,
+          toolbar.height,
+        ),
+      );
+    }
+    final Size? controls = _overlaySizes['controls'];
+    if (controls != null) {
+      out.add(
+        Rect.fromLTWH(
+          _mirrored ? 0 : panel.width - controls.width,
+          panel.height - lift - controls.height,
+          controls.width,
+          controls.height,
+        ),
+      );
+    }
+    final Size? label = _overlaySizes['label'];
+    if (label != null) {
+      out.add(
+        Rect.fromLTWH(
+          _mirrored ? panel.width - 8 - label.width : 8,
+          _errorMessage != null ? 32 : 8,
+          label.width,
+          label.height,
+        ),
+      );
+    }
+    // The error banner spans the top when there is one.
+    if (_errorMessage != null) out.add(Rect.fromLTWH(0, 0, panel.width, 26));
+    // A little room round each, so a number does not sit flush on an edge.
+    return <Rect>[for (final Rect r in out) r.inflate(4)];
+  }
+
   void _toggleComplex({
     bool? colouring,
     bool? polya,
@@ -871,14 +1082,14 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
           color: on ? _theme.controlFill : Colors.black.withValues(alpha: 0.5),
           border: Border.all(
             color: on ? _theme.controlActive : _theme.controlOutline,
-            width: on ? 2 : 1,
+            width: on ? _activeBorder : 1,
           ),
         ),
         child: Text(
           label,
           style: TextStyle(
             color: on ? _theme.controlActive : _theme.controlIdle,
-            fontSize: 12,
+            fontSize: _overlayLabelSize,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -1015,6 +1226,13 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
       builder: (context, constraints) {
         final bool showOverlays = constraints.maxHeight > 140;
         _sliceStripShowing = showOverlays && !_show3D && _canSlice;
+        _measureOverlays();
+        final List<Rect> covered =
+            showOverlays
+                ? _overlayRects(
+                  Size(constraints.maxWidth, constraints.maxHeight),
+                )
+                : const <Rect>[];
         return Stack(
           children: [
             // Only the plot layers are inside the capture boundary. The
@@ -1043,10 +1261,13 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                       vRange: _vRange,
                       complexView: _complexView,
                       showMesh: _showMesh,
+                      showAxes: _showAxes,
+                      labelKeepOut: covered,
                       showContour: _showContour,
                       surfaceMode: _surfaceMode,
                       zoomAxis: _zoomAxis,
                       colors: _colorsNoListen(context),
+                      initialView: widget.initialView,
                     ),
                   ),
                   _plotLayer(
@@ -1067,10 +1288,12 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                       vRange: _vRange,
                       complexView: _complexView,
                       showContour: _showContour,
+                      showAxes: _showAxes,
                       surfaceMode: _surfaceMode,
                       slice: _slice,
                       externallyInteracting: _slidingSlice,
                       colors: _colorsNoListen(context),
+                      initialView: widget.initialView,
                     ),
                   ),
                 ],
@@ -1112,6 +1335,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                 right: _mirrored ? null : 0,
                 bottom: 8 + widget.bottomInset,
                 child: Column(
+                  key: _controlsKey,
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (_canShowSurface()) _buildSurfaceMenuButton(),
@@ -1121,7 +1345,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                       _buildModeButton(
                         icon: Icons.show_chart,
                         isSelected: _showContour,
-                        selectedColor: Colors.purpleAccent,
+                        selectedColor: _theme.controlActive,
                         onTap: _toggleContour,
                         tooltip: 'Contour',
                       ),
@@ -1131,14 +1355,14 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                       _buildModeButton(
                         icon: Icons.grid_4x4,
                         isSelected: _showMesh,
-                        selectedColor: Colors.tealAccent,
+                        selectedColor: _theme.controlActive,
                         onTap: _toggleMesh,
                         tooltip: 'Mesh',
                       ),
                     _buildModeButton(
                       icon: Icons.grain,
                       isSelected: _plotMode == PlotMode.field,
-                      selectedColor: Colors.orangeAccent,
+                      selectedColor: _theme.controlActive,
                       onTap: _togglePlotMode,
                       tooltip: 'Field',
                     ),
@@ -1171,6 +1395,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                 bottom: 8 + widget.bottomInset,
                 child: Center(
                   child: Row(
+                    key: _toolbarKey,
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       _buildModeButton(
@@ -1205,6 +1430,17 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                           tooltip: 'Set range',
                         ),
                       ],
+                      // Last, after the controls that move the view: this one
+                      // changes what is drawn over it. Lit while the axes are
+                      // showing, as the mesh button is while its grid is.
+                      _buildModeButton(
+                        key: const ValueKey<String>('axes-toggle'),
+                        icon: Icons.line_axis,
+                        isSelected: _showAxes,
+                        selectedColor: _theme.controlActive,
+                        onTap: _toggleAxes,
+                        tooltip: _showAxes ? 'Hide axes' : 'Show axes',
+                      ),
                     ],
                   ),
                 ),
@@ -1219,6 +1455,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                 left: _mirrored ? null : 8,
                 right: _mirrored ? 8 : null,
                 child: Container(
+                  key: _modeLabelKey,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 8,
                     vertical: 4,
@@ -1301,9 +1538,34 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
               ),
 
             // Bottom left, where the description used to be: one chip per
-            // parameter the expression actually uses, u above v. A curve in u
-            // has nothing to say about v, so showing both would offer a
-            // control that changes nothing.
+            // parameter the expression actually uses, θ above u above v. A
+            // curve in u has nothing to say about v, so showing both would
+            // offer a control that changes nothing.
+            if (showOverlays && _followsThetaRange)
+              AnimatedPositioned(
+                duration: _insetSlide,
+                curve: Curves.easeOutCubic,
+                left: _mirrored ? null : 8,
+                right: _mirrored ? 8 : null,
+                bottom:
+                    _overlayButtonSize +
+                    14 +
+                    (_usesParameter('u') ? 26 : 0) +
+                    (_usesParameter('v') ? 26 : 0) +
+                    widget.bottomInset,
+                child: ParameterRangeChip(
+                  name: 'θ',
+                  range: _thetaRange,
+                  resetTo: PlotExpression.defaultThetaRange,
+                  onChanged: (r) {
+                    setState(() => _thetaRange = r);
+                    // Compiled into the lines, so they are compiled again.
+                    _parseFunction(widget.expression);
+                    _publishView();
+                  },
+                ),
+              ),
+
             if (showOverlays && _usesParameter('u'))
               AnimatedPositioned(
                 duration: _insetSlide,
@@ -1366,6 +1628,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   }
 
   Widget _buildModeButton({
+    Key? key,
     IconData? icon,
     String? label,
     required bool isSelected,
@@ -1374,6 +1637,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     String? tooltip,
   }) {
     final button = GestureDetector(
+      key: key,
       onTap: onTap,
       child: Container(
         width: _overlayButtonSize,
@@ -1381,11 +1645,11 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
         decoration: BoxDecoration(
           color:
               isSelected
-                  ? selectedColor.withValues(alpha: 0.3)
+                  ? selectedColor.withValues(alpha: _theme.controlFill.a)
                   : Colors.black.withValues(alpha: 0.5),
           border: Border.all(
             color: isSelected ? selectedColor : _theme.controlOutline,
-            width: isSelected ? 2 : 1,
+            width: isSelected ? _activeBorder : 1,
           ),
         ),
         child: Center(
@@ -1401,7 +1665,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                     style: TextStyle(
                       color: isSelected ? selectedColor : _theme.controlIdle,
                       fontWeight: FontWeight.bold,
-                      fontSize: 13,
+                      fontSize: _overlayLabelSize,
                     ),
                   ),
         ),
@@ -1532,7 +1796,7 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                   : Colors.black.withValues(alpha: 0.5),
           border: Border.all(
             color: isSelected ? _theme.controlActive : _theme.controlOutline,
-            width: isSelected ? 2 : 1,
+            width: isSelected ? _activeBorder : 1,
           ),
         ),
         child: Stack(
@@ -1541,22 +1805,19 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
             Icon(Icons.zoom_out_map, color: tint, size: _overlayIconSize),
             if (_zoomAxis != ZoomAxis.free)
               Positioned(
-                right: 3,
-                bottom: 3,
+                right: 1,
+                bottom: 1,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 3,
-                    vertical: 1,
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
                   decoration: BoxDecoration(
                     color: _theme.controlActive,
-                    borderRadius: BorderRadius.circular(3),
+                    borderRadius: BorderRadius.circular(2),
                   ),
                   child: Text(
                     _getZoomAxisShortLabel(),
                     style: TextStyle(
                       color: colors.containerBackground,
-                      fontSize: 8,
+                      fontSize: _overlayButtonSize * 0.24,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -1627,8 +1888,8 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
       onSelected: _setSurfaceMode,
       itemBuilder: (context) => menuItems,
       child: Container(
-        width: 48,
-        height: 48,
+        width: _surfaceButtonSize,
+        height: _surfaceButtonSize,
         decoration: BoxDecoration(
           color:
               isSelected
@@ -1636,14 +1897,14 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
                   : Colors.black.withValues(alpha: 0.5),
           border: Border.all(
             color: isSelected ? _theme.controlActive : _theme.controlOutline,
-            width: isSelected ? 2 : 1,
+            width: isSelected ? _activeBorder : 1,
           ),
         ),
         child: Center(
           child: Icon(
             Icons.landscape,
             color: isSelected ? _theme.controlActive : _theme.controlIdle,
-            size: 20,
+            size: _surfaceButtonSize * 20 / 48,
           ),
         ),
       ),

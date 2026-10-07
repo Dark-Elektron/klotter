@@ -24,7 +24,6 @@ class MathEditorController extends ChangeNotifier {
   final Map<String, NodeLayoutInfo> _layoutRegistry = {};
   Map<String, NodeLayoutInfo> get layoutRegistry => _layoutRegistry;
 
-  String? result = '';
   String expr = '';
   int _structureVersion = 0;
   int get structureVersion => _structureVersion;
@@ -3321,23 +3320,16 @@ class MathEditorController extends ChangeNotifier {
     _notifyStructureChanged();
   }
 
-  // function to calculate the input operation
-  void onCalculate({Map<int, String>? ansValues}) {
-    // Get expression from the math editor (lightweight serialization only)
+  /// Note that the expression changed: serialize it, and tell the owner, which
+  /// redraws the plot from it.
+  ///
+  /// Nothing is evaluated here. klotter plots its expressions and shows no
+  /// result, so the answer this once worked out — and the background isolate
+  /// meant to work it out off the UI thread, which was never connected — had
+  /// nobody to show it to.
+  void onCalculate() {
     expr = MathExpressionSerializer.serialize(expression);
-
-    // NOTE: Heavy computation (ExactMathEngine.evaluate + MathSolverNew.solve)
-    // has been moved to ComputeService which runs in a background isolate.
-    // This method now only serializes and notifies, keeping the UI responsive.
-
-    // Notify that expression changed (triggers async compute pipeline)
     onResultChanged?.call();
-  }
-
-  void updateAnswer(TextEditingController? textDisplayController) {
-    if (textDisplayController != null) {
-      textDisplayController.text = result ?? '';
-    }
   }
 
   void recalculateCursorRect() {
@@ -3923,7 +3915,6 @@ class MathEditorController extends ChangeNotifier {
   void clear() {
     saveStateForUndo();
     expression = [LiteralNode()];
-    result = '';
     cursor = const EditorCursor(); // Reset cursor to initial state
     // The range pointed at nodes that no longer exist; left standing, the next
     // backspace deleted "the selection" out of the fresh literal.

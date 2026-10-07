@@ -171,21 +171,20 @@ void main() {
   });
 
   group('the signature tracks expressions only', () {
-    test('answers and the active cell do not count as edits', () {
-      AppState one(String text, String answer, int active) => AppState(
+    test('the active cell does not count as an edit', () {
+      AppState one(String text, int active) => AppState(
         cells: <List<RowState>>[
           <RowState>[
             RowState(nodes: <MathNode>[LiteralNode(text: text)], visible: true),
           ],
         ],
-        answers: <String>[answer],
         activeIndex: active,
         activeRow: 0,
       );
 
-      final AppState a = one('2+2', '4', 0);
-      final AppState b = one('2+2', 'pending', 1);
-      final AppState c = one('2+3', '4', 0);
+      final AppState a = one('2+2', 0);
+      final AppState b = one('2+2', 1);
+      final AppState c = one('2+3', 0);
 
       expect(a.signature, b.signature);
       expect(a.signature, isNot(c.signature));
@@ -203,7 +202,6 @@ void main() {
             ),
         ],
       ],
-      answers: const <String>[''],
       activeIndex: 0,
       activeRow: 0,
     );

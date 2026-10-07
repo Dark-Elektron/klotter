@@ -1,6 +1,7 @@
 // Regression tests for Tier 3 fix 3.6: cells and the active index are now
 // written as a single atomic blob, with backward-compatible reads of the old
-// two-key format.
+// two-key format. And for what a damaged blob costs: the cells that cannot be
+// read, not every cell.
 
 import 'dart:convert';
 
@@ -15,12 +16,16 @@ void main() {
 
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test('saveAll round-trips cells and active index atomically', () async {
-    final expressions = <List<MathNode>>[
-      [LiteralNode(text: '1+2')],
-      [LiteralNode(text: '3*4')],
-      [LiteralNode(text: '5')],
-    ];
+  /// One row per plot, which is all these tests need.
+  List<List<List<MathNode>>> oneRowEach(List<String> texts) => [
+    for (final String t in texts)
+      [
+        [LiteralNode(text: t)],
+      ],
+  ];
+
+  test('saveRows round-trips cells and active index atomically', () async {
+    final rows = oneRowEach(<String>['1+2', '3*4', '5']);
     // The result display was removed, so a cell no longer stores an answer;
     // it stores where its plot was left instead.
     final views = <Map<String, dynamic>?>[
@@ -29,7 +34,7 @@ void main() {
       const PlotViewState(show3D: true, rotationX: 1.2).toJson(),
     ];
 
-    await CellPersistence.saveAll(expressions, views, 2);
+    await CellPersistence.saveRows(rows, const [], views, activeIndex: 2);
 
     final cells = await CellPersistence.loadCells();
     final activeIndex = await CellPersistence.loadActiveIndex();
@@ -48,16 +53,15 @@ void main() {
   });
 
   test('active index is stored inside the single blob (one key)', () async {
-    await CellPersistence.saveAll(
-      [
-        [LiteralNode(text: '9')],
-      ],
+    await CellPersistence.saveRows(
+      oneRowEach(<String>['9']),
+      const [],
       <Map<String, dynamic>?>[null],
-      0,
+      activeIndex: 0,
     );
 
     final prefs = await SharedPreferences.getInstance();
-    // The legacy separate key is not written by saveAll.
+    // The legacy separate key is not written any more.
     expect(prefs.getInt('active_cell'), isNull);
 
     final raw = prefs.getString('calculator_cells');
@@ -94,5 +98,64 @@ void main() {
   test('returns empty list and index 0 when nothing is stored', () async {
     expect(await CellPersistence.loadCells(), isEmpty);
     expect(await CellPersistence.loadActiveIndex(), equals(0));
+  });
+
+  test('a cell that cannot be read costs only itself', () async {
+    // The middle entry is not a cell at all. Loading used to give up on the
+    // whole list over it, and the next save wrote that empty list over
+    // everything.
+    final String stored = jsonEncode(<String, dynamic>{
+      'cells': <dynamic>[
+        <String, dynamic>{
+          'expression': '',
+          'rows': <String>['a'],
+        },
+        'not a cell',
+        <String, dynamic>{'expression': 42},
+        <String, dynamic>{
+          'expression': '',
+          'rows': <String>['b'],
+        },
+      ],
+      'activeIndex': 1,
+    });
+    SharedPreferences.setMockInitialValues({'calculator_cells': stored});
+
+    final cells = await CellPersistence.loadCells();
+    expect(cells.map((c) => c.rowsJson.single), <String>['a', 'b']);
+
+    // And the blob as it was is kept, since the next save will not carry the
+    // two entries that were dropped.
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('calculator_cells_unreadable'), stored);
+  });
+
+  test('a blob that cannot be read at all is kept, not overwritten', () async {
+    SharedPreferences.setMockInitialValues({
+      'calculator_cells': '{"cells": [{"expression": "',
+    });
+
+    expect(await CellPersistence.loadCells(), isEmpty);
+
+    // The app then saves what it has — nothing — over the original key.
+    await CellPersistence.saveRows(oneRowEach(<String>['1']), const [], []);
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(
+      prefs.getString('calculator_cells_unreadable'),
+      '{"cells": [{"expression": "',
+    );
+  });
+
+  test('a readable blob leaves no copy behind', () async {
+    await CellPersistence.saveRows(
+      oneRowEach(<String>['1', '2']),
+      const [],
+      [],
+    );
+    expect(await CellPersistence.loadCells(), hasLength(2));
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('calculator_cells_unreadable'), isNull);
   });
 }

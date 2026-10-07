@@ -65,29 +65,51 @@ void main() {
   double distance(Color a, Color b) =>
       (a.r - b.r).abs() + (a.g - b.g).abs() + (a.b - b.b).abs();
 
-  // 45% of 400 = 180, inside the 80..220 clamp, pushed against the right
-  // edge with the same 10px margin it has from the top.
+  // 45% of 400 = 180, inside the 80..220 clamp, 10px from the top.
   const double barWidth = 180;
-  const double barLeft = 400 - barWidth - 10;
   const int mid = 16; // 10px margin + half of a 12px bar
+
+  /// The bar's left end. It stands 18px off the right edge plus the width of
+  /// the high number hanging off its end — the heatmap of x + y over ±5 peaks
+  /// at exactly 10 — so that number is never off the screen.
+  double barLeft() {
+    final TextPainter high = TextPainter(
+      text: const TextSpan(text: '10', style: TextStyle(fontSize: 10)),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    return 400 - 18 - high.width - 4 - barWidth;
+  }
 
   test('the bar sits across the top right', () {
     // Its left end carries the bottom of the ramp.
+    final int x = barLeft().toInt() + 3;
     expect(
-      distance(at(barLeft.toInt() + 3, mid), plotColormapStops.first),
+      distance(at(x, mid), plotColormapStops.first),
       lessThan(0.35),
-      reason: 'left end is ${at(barLeft.toInt() + 3, mid)}',
+      reason: 'left end is ${at(x, mid)}',
     );
   });
 
   test('it runs low to high, left to right', () {
+    final int x = (barLeft() + barWidth).toInt() - 3;
     expect(
-      distance(
-        at((barLeft + barWidth).toInt() - 3, mid),
-        plotColormapStops.last,
-      ),
+      distance(at(x, mid), plotColormapStops.last),
       lessThan(0.35),
-      reason: 'right end is ${at((barLeft + barWidth).toInt() - 3, mid)}',
+      reason: 'right end is ${at(x, mid)}',
+    );
+  });
+
+  test('its high number ends clear of the screen edge', () {
+    // A phone's display is rounded at this corner, and the number hanging off
+    // the bar's right end was drawn from six pixels short of the edge, so most
+    // of it was off the screen.
+    final TextPainter high = TextPainter(
+      text: const TextSpan(text: '10', style: TextStyle(fontSize: 10)),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    expect(
+      barLeft() + barWidth + 4 + high.width,
+      lessThanOrEqualTo(400 - 18),
     );
   });
 

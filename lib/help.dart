@@ -77,6 +77,14 @@ class HelpPage extends StatelessWidget {
           ),
           _buildHelpStep(
             context,
+            icon: Icons.tonality,
+            title: 'Equations And Regions',
+            description:
+                'Add = to draw where two sides are equal: x²+y²=1 is a circle, and with z a sphere. Use <, ≤, > or ≥ (long-press ≥) to shade a region instead — a dashed edge means the edge itself is left out — and chain them, as in 1 ≤ x²+y² ≤ 4 for a ring. In 3D a region is a see-through solid, closed where the box cuts it.',
+            colors: colors,
+          ),
+          _buildHelpStep(
+            context,
             icon: Icons.touch_app,
             title: 'Read A Point',
             description:
@@ -88,7 +96,7 @@ class HelpPage extends StatelessWidget {
             icon: Icons.threed_rotation,
             title: '2D And 3D',
             description:
-                'Switch dimension with the buttons on the right of the plot. Drag to rotate a 3D view, flick to leave it spinning, and tap to stop. Pinch to zoom — in 2D, pinching up and down scales y, sideways scales x.',
+                'Switch dimension with the buttons beside the plot. Drag to rotate a 3D view, flick to leave it spinning, and tap to stop. Pinch to zoom — in 2D, pinching up and down scales y, sideways scales x.',
             colors: colors,
           ),
           _buildHelpStep(
@@ -112,7 +120,7 @@ class HelpPage extends StatelessWidget {
             icon: Icons.settings,
             title: 'Customization',
             description:
-                'Tap the gear icon to adjust decimal precision, themes, and haptic feedback.',
+                'Tap \u2630 to adjust decimal precision, themes, and haptic feedback.',
             colors: colors,
           ),
 

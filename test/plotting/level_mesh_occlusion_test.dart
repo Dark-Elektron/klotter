@@ -69,19 +69,27 @@ void main() {
   }
 
   /// Grid pixels in the middle of the canvas, away from the colorbar and the
-  /// legend. The grid is the only near-black ink drawn over a surface.
+  /// legend.
+  ///
+  /// The grid is drawn in a deeper shade of the surface it lies on rather
+  /// than in black, so it is found as ink much darker than the surface around
+  /// it — whatever its hue — rather than as near-black.
   int gridPixels(ByteData data) {
-    int dark = 0;
+    final List<double> lum = <double>[];
     for (int y = side ~/ 4; y < side * 3 ~/ 4; y++) {
       for (int x = side ~/ 4; x < side * 3 ~/ 4; x++) {
         final int p = (y * side + x) * 4;
-        final int r = data.getUint8(p);
-        final int g = data.getUint8(p + 1);
-        final int b = data.getUint8(p + 2);
-        if (r < 40 && g < 40 && b < 40) dark++;
+        lum.add(
+          0.2126 * data.getUint8(p) +
+              0.7152 * data.getUint8(p + 1) +
+              0.0722 * data.getUint8(p + 2),
+        );
       }
     }
-    return dark;
+    // The plane covers the whole middle, so the median is its own colour.
+    final List<double> sorted = List<double>.of(lum)..sort();
+    final double surface = sorted[sorted.length ~/ 2];
+    return lum.where((double l) => l < surface * 0.6).length;
   }
 
   testWidgets('a surface behind an opaque one does not show its grid through', (

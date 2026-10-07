@@ -207,47 +207,71 @@ class WalkthroughOverlay extends StatelessWidget {
       }
     }
 
-    final keypadTop = keypadRect?.top ?? screenSize.height * 0.50;
-    final adjustedKeypadTop = keypadTop - 5;
+    Widget blocker() => GestureDetector(
+      onTap: () {},
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: _overlayDarkness),
+      ),
+    );
 
-    return Column(
-      children: [
-        GestureDetector(
-          onTap: () {},
-          child: Container(
-            height: adjustedKeypadTop,
-            width: screenSize.width,
-            color: Colors.black.withValues(alpha: _overlayDarkness),
-          ),
+    // Not laid out yet: nothing to light, so nothing gets through. Skip is
+    // still on top, so this can never strand anyone.
+    final Rect? lit = keypadRect;
+    if (lit == null) return SizedBox.expand(child: blocker());
+
+    // Only the keys that actually slide. The function pages share the
+    // keypad's height with the number pad beside them now, so the lit area is
+    // a box rather than a band across the screen — a band lit the number pad
+    // too and let a tap on a digit through, mid-tour. Everything around the
+    // box blocks; the box itself passes the swipe on to the keys.
+    final Rect band = Rect.fromLTRB(
+      lit.left,
+      lit.top - 5,
+      lit.right,
+      lit.bottom,
+    );
+    return Stack(
+      children: <Widget>[
+        Positioned(
+          left: 0,
+          top: 0,
+          right: 0,
+          height: band.top.clamp(0.0, screenSize.height),
+          child: blocker(),
         ),
-        // Only the rows that actually slide. This used to run to the bottom of
-        // the screen, so a step about swiping the top rows lit the number pad
-        // underneath as well — which never moves.
-        IgnorePointer(
-          ignoring: true,
-          child: Container(
-            height: keypadRect?.height,
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: _swipeAreaDimness),
-              border: Border(
-                top: BorderSide(
-                  color: Colors.amber.withValues(alpha: 0.5),
-                  width: 2,
-                ),
-                bottom: BorderSide(
+        Positioned(
+          left: 0,
+          top: band.bottom,
+          right: 0,
+          bottom: 0,
+          child: blocker(),
+        ),
+        Positioned(
+          left: 0,
+          top: band.top,
+          width: band.left.clamp(0.0, screenSize.width),
+          height: band.height,
+          child: blocker(),
+        ),
+        Positioned(
+          left: band.right,
+          top: band.top,
+          right: 0,
+          height: band.height,
+          child: blocker(),
+        ),
+        Positioned.fromRect(
+          rect: band,
+          child: IgnorePointer(
+            ignoring: true,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: _swipeAreaDimness),
+                border: Border.all(
                   color: Colors.amber.withValues(alpha: 0.5),
                   width: 2,
                 ),
               ),
-            ),
-          ),
-        ),
-        Expanded(
-          child: GestureDetector(
-            onTap: () {},
-            child: Container(
-              width: screenSize.width,
-              color: Colors.black.withValues(alpha: _overlayDarkness),
             ),
           ),
         ),

@@ -403,4 +403,107 @@ void main() {
       );
     });
   });
+
+  /// One frame of the sphere `x²+y²+z²=4`, as raw pixels.
+  Future<ByteData> sphere({
+    required bool mesh,
+    SurfaceMode mode = SurfaceMode.none,
+  }) async {
+    final PlotExpression e = PlotExpression.compile(<MathNode>[
+      LiteralNode(text: 'x^2+y^2+z^2=4'),
+    ]);
+    final painter = Plot3DPainter(
+      function: e,
+      functions: <PlotExpression>[e],
+      showMesh: mesh,
+      is3DFunction: true,
+      rotationX: 0.6,
+      rotationZ: 0.8,
+      rangeX: 3,
+      rangeY: 3,
+      rangeZ: 3,
+      panX: 0,
+      panY: 0,
+      plotMode: PlotMode.function,
+      fieldType: FieldType.scalar,
+      showContour: false,
+      surfaceMode: mode,
+      colors: colors,
+      plotTheme: theme,
+    );
+    final recorder = ui.PictureRecorder();
+    painter.paint(Canvas(recorder), const Size(300, 300));
+    final ui.Image image = await recorder.endRecording().toImage(side, side);
+    return (await image.toByteData())!;
+  }
+
+  double luminance(ByteData d, int o) =>
+      0.2126 * d.getUint8(o) +
+      0.7152 * d.getUint8(o + 1) +
+      0.0722 * d.getUint8(o + 2);
+
+  testWidgets('grid lines take the colour of the surface they lie on', (
+    tester,
+  ) async {
+    // A black line keeps its value whatever the light does around it, so the
+    // grid read as a cage hung in front of the shape. Drawn in a deeper shade
+    // of the surface's own colour it takes the same hue and the same light,
+    // and reads as drawn on it.
+    await tester.runAsync(() async {
+      final ByteData off = await sphere(mesh: false);
+      final ByteData on = await sphere(mesh: true);
+
+      double r = 0, g = 0, b = 0;
+      int ink = 0;
+      for (int i = 0; i < side * side; i++) {
+        final int o = i * 4;
+        if (on.getUint8(o + 3) < 200) continue;
+        final double plain = luminance(off, o);
+        if (plain < 30) continue; // not on the sphere
+        if (luminance(on, o) > plain * 0.75) continue; // not a grid line
+        ink++;
+        r += on.getUint8(o);
+        g += on.getUint8(o + 1);
+        b += on.getUint8(o + 2);
+      }
+      expect(ink, greaterThan(200), reason: 'the sphere drew no grid');
+      r /= ink;
+      g /= ink;
+      b /= ink;
+      // The dark theme's first series colour is a blue, so its ink is a
+      // deeper blue — not a grey, and not black.
+      expect(b, greaterThan(r * 1.4), reason: 'ink ($r, $g, $b) is not blue');
+      expect(b, greaterThan(45), reason: 'ink ($r, $g, $b) is black');
+    });
+  });
+
+  testWidgets('a solid level surface has no colorbar', (tester) async {
+    // A solid surface has no ramp, so a bar of numbers beside it labels
+    // nothing. Height surfaces always held the bar back; level surfaces drew
+    // it regardless, so a plain blue shape came with a rainbow scale.
+    await tester.runAsync(() async {
+      int rampPixels(ByteData d) {
+        int n = 0;
+        // The bar runs along the top right of the plot.
+        for (int y = 0; y < 40; y++) {
+          for (int x = side ~/ 2; x < side; x++) {
+            final int o = (y * side + x) * 4;
+            final int red = d.getUint8(o);
+            final int green = d.getUint8(o + 1);
+            final int blue = d.getUint8(o + 2);
+            // The warm end of the ramp: nothing else up there is red.
+            if (red > 180 && green < 90 && blue < 90) n++;
+          }
+        }
+        return n;
+      }
+
+      expect(
+        rampPixels(await sphere(mesh: false, mode: SurfaceMode.magnitude)),
+        greaterThan(0),
+        reason: 'coloured by height, the bar should be there',
+      );
+      expect(rampPixels(await sphere(mesh: false)), 0);
+    });
+  });
 }

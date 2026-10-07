@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:math';
 import 'dart:math' as math;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import '../models/plot_view_state.dart';
 import '../models/view_fit.dart';
 import '../utils/level_extent.dart';
 import 'package:flutter/scheduler.dart';
@@ -52,6 +54,13 @@ class Plot3DScreen extends StatefulWidget {
 
   /// Draw the surface's own grid over it.
   final bool showMesh;
+
+  /// Draw the axes — their lines, ticks and numbers.
+  final bool showAxes;
+
+  /// Where the controls float over the plot, in the plot's own coordinates,
+  /// so no axis number is drawn underneath one.
+  final List<Rect> labelKeepOut;
   final SurfaceMode surfaceMode;
   final ZoomAxis zoomAxis; // New
   final AppColors colors;
@@ -59,6 +68,14 @@ class Plot3DScreen extends StatefulWidget {
   /// Built once per panel rather than per paint, and carries the plot's
   /// colour mode and the theme's series palette.
   final PlotThemeData plotTheme;
+
+  /// Where the plot was left, to open on rather than restore afterwards.
+  ///
+  /// It used to arrive a frame late, from the panel once this screen had been
+  /// laid out. The surface was then drawn at a box of its own choosing and
+  /// drawn again at the saved one, and for a level surface each of those is a
+  /// march of its own — so every plot swiped to paid for two.
+  final PlotViewState? initialView;
 
   const Plot3DScreen({
     super.key,
@@ -77,10 +94,13 @@ class Plot3DScreen extends StatefulWidget {
     this.vRange = defaultParameterRange,
     required this.showContour,
     this.showMesh = false,
+    this.showAxes = true,
+    this.labelKeepOut = const <Rect>[],
     required this.surfaceMode,
     required this.zoomAxis, // New
     required this.colors,
     required this.plotTheme,
+    this.initialView,
   });
 
   @override
@@ -137,8 +157,16 @@ class Plot3DScreenState extends State<Plot3DScreen>
   VelocityTracker? _velocityTracker;
   bool _wasRotating = false;
 
-  /// True while a finger is down or the plot is still spinning. The surface
-  /// samples coarsely for the duration and sharpens when it settles.
+  /// True while the plot is moving — turned, panned or zoomed under a finger,
+  /// or spinning after a flick. The surface samples coarsely for the duration
+  /// and sharpens when it settles.
+  ///
+  /// Set by the movement, not by a finger merely being down: a tap or a long
+  /// press moves nothing, and dropping to the coarse grid under a still finger
+  /// only showed the trace marker sitting on a blurred surface. Nor by the
+  /// start of the gesture, which stops any spin and so clears this — that is
+  /// how a drag came to be drawn on the fine grid, every frame, for the whole
+  /// of it.
   bool _interacting = false;
 
   void _setInteracting(bool value) {
@@ -150,7 +178,6 @@ class Plot3DScreenState extends State<Plot3DScreen>
     _velocityTracker = VelocityTracker.withKind(event.kind);
     _velocityTracker!.addPosition(event.timeStamp, event.position);
     _pinch.down(event.pointer, event.localPosition);
-    _setInteracting(true);
   }
 
   void _trackPointerMove(PointerMoveEvent event) {
@@ -214,6 +241,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
   @override
   void dispose() {
     _spinTicker?.dispose();
+    _resizeSettleTimer?.cancel();
     super.dispose();
   }
   // -----------------------------------------------------------------------
@@ -305,6 +333,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
     double halfOf(double lo, double hi) =>
         math.max(lo.abs(), hi.abs()).clamp(_minRange, _maxRange);
     setState(() {
+      _typedBox = true;
       xRange = halfOf(xMin, xMax);
       yRange = halfOf(yMin, yMax);
       if (zMin != null && zMax != null) {
@@ -318,6 +347,35 @@ class Plot3DScreenState extends State<Plot3DScreen>
   /// view — stop re-fitting it on every edit.
   bool _manualZ = false;
 
+  /// Whether the box is exactly what was typed into the range fields. A typed
+  /// box is held to the letter, through a resize as well; zooming it, or going
+  /// home, makes it an ordinary view again.
+  bool _typedBox = false;
+
+  /// Whether the box has been zoomed since it was last framed automatically.
+  ///
+  /// A zoomed view has been chosen as much as a restored one, so a resize keeps
+  /// it rather than framing the shape afresh — which threw the zoom away every
+  /// time the keypad was folded.
+  bool _zoomedSinceFit = false;
+
+  /// Whether any level set is on show.
+  bool get _showsLevelSets =>
+      _curves.any((PlotExpression e) => e.isLevelSet && !e.hidden);
+
+  /// Whether the box has to keep its proportions through a resize.
+  ///
+  /// A level set is a shape, and its proportions are what make it read as that
+  /// shape: a box left to stretch with the panel turns a sphere into an egg.
+  /// The exception is a box typed in by hand, which is held exactly.
+  bool get _keepsAspect => !_typedBox && _showsLevelSets;
+
+  /// Note a zoom: the box is now the user's, not the fit's.
+  void _zoomed() {
+    _zoomedSinceFit = true;
+    _typedBox = false;
+  }
+
   /// Re-fit the box height to the current surface and window.
   @visibleForTesting
   void autoScaleForTest() => _autoScaleIfNeeded();
@@ -329,6 +387,8 @@ class Plot3DScreenState extends State<Plot3DScreen>
       // allowed to run again — whether that window was set by hand or came
       // back with a restored view.
       _manualZ = false;
+      _typedBox = false;
+      _zoomedSinceFit = false;
       rotationX = 0.6;
       rotationZ = 0.8;
       xRange = 5.0;
@@ -347,6 +407,105 @@ class Plot3DScreenState extends State<Plot3DScreen>
   /// Whether a change of panel shape should re-fit. Only the equal-aspect path
   /// depends on the shape, so nothing else pays for this.
   bool _refitOnResize = false;
+
+  /// True from a change of panel size until the size has held still for
+  /// [_resizeSettle].
+  bool _resizing = false;
+  Timer? _resizeSettleTimer;
+
+  /// The panel size the box stays fitted to while the panel is still moving,
+  /// or null when it is fitted to the panel as it is.
+  Size? _fitSize;
+
+  /// The panel's size before the current resize began, for a chosen view to
+  /// be rescaled from once it settles.
+  Size? _resizeFrom;
+
+  /// How long the panel has to keep one size before the box is fitted to it.
+  ///
+  /// Folding the keypad away resizes the plot on every frame of the slide —
+  /// fifteen sizes in a quarter of a second. Fitting a level surface to each
+  /// one re-probed it for its extent and re-marched it at the new range: the
+  /// probe alone measured 39 ms a frame on x⁴+y⁴+z⁴−2(x²+y²+z²)+8xyz+1, with a
+  /// full march on top. Waiting for the size to stop moving does that once.
+  static const Duration _resizeSettle = Duration(milliseconds: 160);
+
+  /// The panel changed size after its first layout.
+  void _panelResized(Size before) {
+    // Held at the old fit, but only where the box is put back in proportion
+    // once the panel settles — which is what keeps a sphere round — so letting
+    // it stretch in the meantime would show a sphere swelling into an egg and
+    // snapping back. Elsewhere the stretch is the box filling its new room,
+    // and it is smoother to watch it happen.
+    //
+    // Holding the fit also keeps the scale still, and the level mesh is
+    // cached against the scale: a box resized every frame rebuilt it every
+    // frame, three times the cost of drawing it.
+    if (_keepsAspect) {
+      _fitSize ??= before;
+      _resizeFrom ??= before;
+    }
+    _resizing = true;
+    _resizeSettleTimer?.cancel();
+    _resizeSettleTimer = Timer(_resizeSettle, _panelSettled);
+  }
+
+  void _panelSettled() {
+    if (!mounted) return;
+    final Size? from = _resizeFrom;
+    _resizeFrom = null;
+    // A view that was chosen — restored, or zoomed since it was framed — is
+    // not framed afresh. It used to be left alone instead, and a level set in
+    // it was stretched with the panel: the sphere restored in a cell came back
+    // an egg once the keypad folded. Rescaled, it keeps its size and its
+    // proportions, and the box gains or loses room around it.
+    final bool chosen = _manualZ || _zoomedSinceFit;
+    setState(() {
+      _resizing = false;
+      _fitSize = null;
+      if (chosen && from != null && _keepsAspect) _keepScaleAcross(from);
+    });
+    if (!chosen && _refitOnResize) _autoScaleIfNeeded();
+  }
+
+  /// Rescale the box so every axis keeps its pixels per unit across the panel
+  /// changing from [from] to the size it is now.
+  ///
+  /// The painter draws `planar / range` pixels to a unit of x and y and
+  /// `vertical / range` to a unit of z, so scaling each range by how far its
+  /// budget moved leaves every unit the size it was.
+  void _keepScaleAcross(Size from) {
+    final Size? to = _panelSize;
+    if (to == null || to.isEmpty || from.isEmpty) return;
+    final ViewFit before = Plot3DPainter.viewExtentsFor(from);
+    final ViewFit after = Plot3DPainter.viewExtentsFor(to);
+    if (before.planar <= 0 || before.vertical <= 0) return;
+    final double planar = after.planar / before.planar;
+    final double vertical = after.vertical / before.vertical;
+    if (!planar.isFinite || !vertical.isFinite) return;
+    if (planar <= 0 || vertical <= 0) return;
+    xRange = (xRange * planar).clamp(_minRange, _maxRange);
+    yRange = (yRange * planar).clamp(_minRange, _maxRange);
+    zRange = (zRange * vertical).clamp(_minRange, _maxRange);
+  }
+
+  /// How to frame each level set (see [levelSetFraming]), kept with its
+  /// compiled expression.
+  ///
+  /// The probe depends on nothing but the expression, and a cell compiles
+  /// afresh on every edit, so an entry can never go stale. Without this a
+  /// resize — which re-fits the box to the new panel — repeated the probe to
+  /// arrive at the same answer.
+  static final Expando<({bool volume, LevelExtent? at})> _extents =
+      Expando<({bool volume, LevelExtent? at})>('levelSetExtent');
+
+  LevelExtent? _extentOf(PlotExpression set, {required bool volume}) {
+    final ({bool volume, LevelExtent? at})? known = _extents[set];
+    if (known != null && known.volume == volume) return known.at;
+    final LevelExtent? at = levelSetFraming(set, volume: volume);
+    _extents[set] = (volume: volume, at: at);
+    return at;
+  }
 
   double? _computeAutoZRange() {
     if (widget.fieldType != FieldType.scalar || !widget.is3DFunction) {
@@ -486,7 +645,23 @@ class Plot3DScreenState extends State<Plot3DScreen>
   @override
   void initState() {
     super.initState();
-    _autoScaleIfNeeded();
+    final PlotViewState? saved = widget.initialView;
+    if (saved != null && !saved.isInitial) {
+      restoreView(
+        rotX: saved.rotationX,
+        rotZ: saved.rotationZ,
+        pX: saved.panX,
+        pY: saved.panY,
+        rX: saved.rangeX,
+        rY: saved.rangeY,
+        rZ: saved.rangeZ,
+      );
+    }
+    // Not fitted here: the fit depends on the panel's proportions, and there
+    // is no panel yet. It used to fit at a guessed aspect of one and again
+    // once the panel was laid out, and since the two boxes differ a level
+    // surface was marched twice on every arrival, the first march thrown
+    // away. The first layout fits it once (see build).
   }
 
   @override
@@ -549,7 +724,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
       return padded.isFinite && padded > 0.5 ? padded : 0.5;
     }
 
-    setState(() {
+    _apply(() {
       xRange = axis(extent.x);
       yRange = axis(extent.y);
       zRange = axis(extent.z);
@@ -557,20 +732,46 @@ class Plot3DScreenState extends State<Plot3DScreen>
     return true;
   }
 
-  void _autoScaleIfNeeded() {
+  /// True while a fit is being made from inside this screen's own build.
+  bool _fittingInBuild = false;
+
+  /// Make [change], rebuilding for it unless this is the build already.
+  void _apply(VoidCallback change) {
+    if (_fittingInBuild) {
+      change();
+    } else {
+      setState(change);
+    }
+  }
+
+  /// Fit the box to what is drawn in it, unless the view was chosen.
+  ///
+  /// [inBuild] is for the first layout, which fits in place: the painter is
+  /// made from these ranges a few lines later in the same build, so there is
+  /// nothing to rebuild for — and asking would be an error there.
+  void _autoScaleIfNeeded({bool inBuild = false}) {
     if (_manualZ) return;
-    // A sweep is framed by its own extent; the height-surface fit below has
-    // nothing to say about it.
-    if (_frameParametric()) return;
-    final newZ = _computeAutoZRange();
-    // A level set is framed by where its surface is, which the height fit
-    // cannot tell it. Run both: a cell may hold a sphere and a height surface
-    // at once, and home is meant to show both.
-    final bool framed = _frameLevelSets(floorZ: newZ);
-    if (framed || newZ == null) return;
-    setState(() {
-      zRange = newZ;
-    });
+    // Nothing to fit to before the first layout, which fits it.
+    if (_panelSize == null) return;
+    // Framed afresh, so whatever zoom there was is gone.
+    _zoomedSinceFit = false;
+    _fittingInBuild = inBuild;
+    try {
+      // A sweep is framed by its own extent; the height-surface fit below
+      // has nothing to say about it.
+      if (_frameParametric()) return;
+      final newZ = _computeAutoZRange();
+      // A level set is framed by where its surface is, which the height fit
+      // cannot tell it. Run both: a cell may hold a sphere and a height
+      // surface at once, and home is meant to show both.
+      final bool framed = _frameLevelSets(floorZ: newZ);
+      if (framed || newZ == null) return;
+      _apply(() {
+        zRange = newZ;
+      });
+    } finally {
+      _fittingInBuild = false;
+    }
   }
 
   /// Sizes the box around every level set in the cell.
@@ -590,7 +791,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
     double x = 0, y = 0, z = 0;
     bool found = false;
     for (final PlotExpression set in sets) {
-      final LevelExtent? at = levelSetExtent(set, volume: widget.is3DFunction);
+      final LevelExtent? at = _extentOf(set, volume: widget.is3DFunction);
       if (at == null) continue;
       found = true;
       x = max(x, at.x);
@@ -632,7 +833,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
     final double planFromZ = min(needZ, 3 * max(planX, planY)) / aspect;
     final double plan = <double>[planX, planY, planFromZ].reduce(max);
 
-    setState(() {
+    _apply(() {
       xRange = plan;
       yRange = plan;
       zRange = max(plan * aspect, floorZ ?? 0);
@@ -644,7 +845,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
   ///
   /// Above 1 the panel has vertical room to spare and the plan is the binding
   /// constraint; below 1 the height is. One when nothing has been laid out
-  /// yet, which the post-frame re-fit corrects.
+  /// yet, though nothing fits before then.
   double _boxAspect() {
     final Size? size = _panelSize;
     if (size == null || size.isEmpty) return 1;
@@ -660,18 +861,18 @@ class Plot3DScreenState extends State<Plot3DScreen>
         if (constraints.maxHeight <= 0 || constraints.maxWidth <= 0) {
           return const SizedBox.shrink();
         }
-        // The box's proportions depend on the panel, and the first fit runs in
-        // initState with no layout yet. Recorded here so the fit can ask, and
-        // re-run once when it becomes known — and again if the panel changes
-        // shape, which is what a rotation to landscape is.
+        // The box's proportions depend on the panel, which is first known
+        // here. Recorded so the fit can ask, and the box fitted now, before
+        // the painter below is made from it — and fitted again if the panel
+        // changes shape, which is what a rotation to landscape is.
         final Size now = Size(constraints.maxWidth, constraints.maxHeight);
         if (_panelSize != now) {
-          final bool first = _panelSize == null;
+          final Size? before = _panelSize;
           _panelSize = now;
-          if (first || _refitOnResize) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) _autoScaleIfNeeded();
-            });
+          if (before == null) {
+            _autoScaleIfNeeded(inBuild: true);
+          } else {
+            _panelResized(before);
           }
         }
         return Listener(
@@ -692,6 +893,9 @@ class Plot3DScreenState extends State<Plot3DScreen>
             },
             onScaleUpdate: (details) {
               setState(() {
+                // Lifting the finger clears this (see _trackPointerUp), unless
+                // a flick has left the plot spinning.
+                _interacting = true;
                 if (details.pointerCount == 2) {
                   if (widget.toolMode == Tool3DMode.pan) {
                     panX += details.focalPointDelta.dx;
@@ -714,14 +918,23 @@ class Plot3DScreenState extends State<Plot3DScreen>
                         if ((hScaleDelta - 1.0).abs() > 0.001) {
                           xRange /= hScaleDelta;
                           xRange = xRange.clamp(_minRange, _maxRange);
+                          _zoomed();
                         }
                         if ((vScaleDelta - 1.0).abs() > 0.001) {
                           yRange /= vScaleDelta;
                           yRange = yRange.clamp(_minRange, _maxRange);
+                          _zoomed();
                         }
-                        // Keep Z in sync with data when possible
+                        // Keep Z in sync with data when possible. A level set
+                        // has no height to fit, so z follows the plan in the
+                        // proportion that draws a unit of z the size of a unit
+                        // of x — a sphere stays round under the pinch, where
+                        // z at the plan's own range made it an egg.
                         final autoZ = _computeAutoZRange();
-                        zRange = autoZ ?? ((xRange + yRange) / 2);
+                        final double planZ = (xRange + yRange) / 2;
+                        zRange =
+                            autoZ ??
+                            (_showsLevelSets ? planZ * _boxAspect() : planZ);
                         break;
 
                       case ZoomAxis.x:
@@ -732,6 +945,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
                           xRange = xRange.clamp(_minRange, _maxRange);
                           final autoZ = _computeAutoZRange();
                           if (autoZ != null) zRange = autoZ;
+                          _zoomed();
                         }
                         break;
 
@@ -743,6 +957,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
                           yRange = yRange.clamp(_minRange, _maxRange);
                           final autoZ = _computeAutoZRange();
                           if (autoZ != null) zRange = autoZ;
+                          _zoomed();
                         }
                         break;
 
@@ -752,6 +967,7 @@ class Plot3DScreenState extends State<Plot3DScreen>
                         if ((scaleDelta - 1.0).abs() > 0.001) {
                           zRange /= scaleDelta;
                           zRange = zRange.clamp(_minRange, _maxRange);
+                          _zoomed();
                         }
                         break;
                     }
@@ -823,7 +1039,11 @@ class Plot3DScreenState extends State<Plot3DScreen>
                   uRange: widget.uRange,
                   vRange: widget.vRange,
                   tracePoint: _tracePoint,
-                  interacting: _interacting,
+                  // A resize is motion too: the coarser grid keeps the frames
+                  // of a sliding keypad cheap, and the fine one returns when
+                  // the panel settles.
+                  interacting: _interacting || _resizing,
+                  fitSize: _fitSize,
                   plotTheme: widget.plotTheme,
                   function: widget.function,
                   functions: widget.functions,
@@ -843,6 +1063,8 @@ class Plot3DScreenState extends State<Plot3DScreen>
                   vectorSeriesBase: widget.vectorSeriesBase,
                   showContour: widget.showContour,
                   showMesh: widget.showMesh,
+                  showAxes: widget.showAxes,
+                  labelKeepOut: widget.labelKeepOut,
                   surfaceMode: widget.surfaceMode,
                   colors: widget.colors,
                 ),

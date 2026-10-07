@@ -36,8 +36,23 @@ void main() {
       );
     });
 
-    test('$type: the highlight is the theme accent, not a fixed teal', () {
-      expect(theme.controlActive, colors.accent);
+    test('$type: the highlight is the theme accent, softened if neon', () {
+      // A neon yellow accent — the dark and classic themes' — reads on a plot
+      // as a warning light, so those take a soft amber instead. Every other
+      // theme keeps its own accent, not a fixed colour belonging to none.
+      final HSLColor accent = HSLColor.fromColor(colors.accent);
+      final bool neonYellow =
+          accent.saturation > 0.9 &&
+          accent.lightness >= 0.5 &&
+          accent.hue >= 45 &&
+          accent.hue <= 70;
+      if (!neonYellow) {
+        expect(theme.controlActive, colors.accent);
+        return;
+      }
+      final HSLColor active = HSLColor.fromColor(theme.controlActive);
+      expect(active.hue, inInclusiveRange(30, 45), reason: 'amber: $active');
+      expect(active.saturation, lessThan(0.9), reason: 'still neon: $active');
     });
 
     test('$type: active and idle are told apart', () {

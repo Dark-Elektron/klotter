@@ -59,6 +59,20 @@ void main() {
     );
   });
 
+  test('a surface that falls between the first lattice is still found', () {
+    // Negative only in four lobes along the diagonals, none of which holds a
+    // point of a lattice four units apart — so the first pass saw F positive
+    // everywhere, reported nothing, and the surface was never framed.
+    final LevelExtent? e = levelSetExtent(
+      eq('x^4+y^4+z^4-2x^2-2y^2-2z^2+8xyz+1=0'),
+    );
+    expect(e, isNotNull, reason: 'the surface was not found at all');
+    // Along (t, t, -t) it stays inside until t is about 3.5.
+    for (final double reach in <double>[e!.x, e.y, e.z]) {
+      expect(reach, inInclusiveRange(2.5, 5), reason: 'reach $e');
+    }
+  });
+
   test('an equation that is nowhere reports nothing', () {
     // No real solution, so there is nothing to frame and the caller should
     // keep whatever window it had.
@@ -72,5 +86,52 @@ void main() {
     ]);
     expect(h.isLevelSet, isFalse);
     expect(levelSetExtent(h), isNull);
+  });
+
+  group('framing an unbounded surface', () {
+    // The extent of an unbounded surface is the edge of the probe, which is
+    // true but no frame: two paraboloids touching at the origin were framed
+    // sixty units across, a speck in the middle of the box.
+    LevelExtent frame(String text) => levelSetFraming(eq(text))!;
+
+    test('a bounded shape is framed by its reach, as before', () {
+      final LevelExtent f = frame('x^2+y^2+z^2=1');
+      final LevelExtent e = levelSetExtent(eq('x^2+y^2+z^2=1'))!;
+      expect(f, e);
+    });
+
+    test('unbounded every way, through the origin: a few units', () {
+      for (final String text in <String>[
+        'x^4+z^4+2x^2z^2-3y(x^2+z^2)+2y^2=0', // paraboloids at their tips
+        'x^2+y^2=z', // a paraboloid
+        'x+y+z=0', // a plane
+        'x^2+y^2-z^2=0', // a cone
+      ]) {
+        final LevelExtent f = frame(text);
+        for (final double reach in <double>[f.x, f.y, f.z]) {
+          expect(reach, closeTo(unboundedFrame, 0.01), reason: '$text: $f');
+        }
+      }
+    });
+
+    test('unbounded every way, away from the origin: it is kept in view', () {
+      // The plane's nearest point is 17.3 from the origin.
+      final LevelExtent plane = frame('x+y+z=30');
+      expect(plane.x, inInclusiveRange(30, 40), reason: '$plane');
+      // A hyperboloid's waist has radius 5, and is shown whole.
+      final LevelExtent waist = frame('x^2+y^2-z^2=25');
+      expect(waist.x, inInclusiveRange(8, 12), reason: '$waist');
+    });
+
+    test('unbounded one way: three times the bounded reach that way', () {
+      // A unit cylinder is a stretch of tube, not a speck in a tall column.
+      final LevelExtent tube = frame('x^2+y^2=1');
+      expect(tube.x, closeTo(1.28, 0.1));
+      expect(tube.z, closeTo(3 * tube.x, 0.3), reason: '$tube');
+      // A plane parallel to the floor keeps its height and gets some floor.
+      final LevelExtent floor = frame('z=0.5');
+      expect(floor.z, lessThan(1), reason: '$floor');
+      expect(floor.x, closeTo(unboundedFrame, 0.01), reason: '$floor');
+    });
   });
 }

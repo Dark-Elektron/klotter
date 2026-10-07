@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klotter/main.dart';
 import 'package:klotter/math_renderer/math_nodes.dart';
 import 'package:klotter/plotting/parsers/plot_expression.dart';
+import 'package:klotter/plotting/utils/level_set.dart';
 import 'package:klotter/plotting/utils/plot_cache.dart';
 import 'package:klotter/settings/settings_provider.dart';
 import 'package:klotter/utils/crash_log.dart';
@@ -63,6 +64,65 @@ void main() {
       final List<List<double>> after = cachedHeightGrid(f, 5, 5, 8);
       expect(after[3][4], sample);
       expect(identical(after, before), isFalse, reason: 'it was not released');
+    });
+
+    test('the marched level sets go too', () {
+      // A marched surface is the largest geometry the app holds — a
+      // hyperboloid is 33,000 triangles — and the marching caches were a class
+      // of their own that the release never reached.
+      PlotExpression fn(String t) =>
+          PlotExpression.compile(<MathNode>[LiteralNode(text: t)]);
+      final PlotExpression sphere = fn('xx+yy+zz=1');
+      final PlotExpression circle = fn('xx+yy=1');
+
+      final LevelSurface surface = marchedSurface(
+        sphere,
+        -2,
+        2,
+        -2,
+        2,
+        -2,
+        2,
+        resolution: 8,
+      );
+      final List<LevelSegment> curve = marchingSquares(
+        circle,
+        -2,
+        2,
+        -2,
+        2,
+        resolution: 16,
+      );
+      expect(surface.triangles, isNotEmpty);
+      expect(curve, isNotEmpty);
+
+      expect(
+        releaseMemoryForBackground().plotEntries,
+        greaterThanOrEqualTo(2),
+        reason: 'the marched surface and curve were not released',
+      );
+
+      // Marched again rather than handed back, and to the same answer.
+      final LevelSurface again = marchedSurface(
+        sphere,
+        -2,
+        2,
+        -2,
+        2,
+        -2,
+        2,
+        resolution: 8,
+      );
+      expect(
+        identical(again.triangles, surface.triangles),
+        isFalse,
+        reason: 'still cached',
+      );
+      expect(again.triangles.length, surface.triangles.length);
+      expect(
+        identical(marchingSquares(circle, -2, 2, -2, 2, resolution: 16), curve),
+        isFalse,
+      );
     });
 
     test('every cache is registered, not just the ones named by hand', () {

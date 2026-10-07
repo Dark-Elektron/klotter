@@ -67,14 +67,31 @@ class CellData {
 
 class CellPersistence {
   static const String _key = 'calculator_cells';
+
+  /// Where the active index was kept before it moved into the cells blob.
+  /// Read as a fallback for saves made then; no longer written.
   static const String _activeKey = 'active_cell';
 
-  /// Save every plot's rows.
+  /// Where a stored blob that could not be read in full is copied before
+  /// anything is written over it.
+  ///
+  /// Loading hands back what it could read, and the next save then writes that
+  /// over [_key] — so without a copy, a blob this build cannot read would be
+  /// destroyed by simply opening the app. Nothing reads it back: it is there to
+  /// be recovered by hand, or by a build that understands it.
+  static const String _unreadableKey = 'calculator_cells_unreadable';
+
+  /// Save every plot's rows, and which plot is open, as one write.
+  ///
+  /// One blob rather than two keys, so a process killed between two writes can
+  /// never leave the cells and the active index out of step — restoring a
+  /// stale index against a different set of cells.
   static Future<void> saveRows(
     List<List<List<MathNode>>> rowsPerPlot,
     List<List<bool>> hiddenPerPlot,
-    List<Map<String, dynamic>?> plotViews,
-  ) async {
+    List<Map<String, dynamic>?> plotViews, {
+    int activeIndex = 0,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     final List<Map<String, dynamic>> cells = <Map<String, dynamic>>[];
     for (int i = 0; i < rowsPerPlot.length; i++) {
@@ -97,53 +114,9 @@ class CellPersistence {
         ).toJson(),
       );
     }
-    await prefs.setString(_key, jsonEncode(cells));
-  }
-
-  static List<Map<String, dynamic>> _buildCellMaps(
-    List<List<MathNode>> expressions,
-    List<Map<String, dynamic>?> plotViews,
-  ) {
-    List<Map<String, dynamic>> cells = [];
-    for (int i = 0; i < expressions.length; i++) {
-      cells.add(
-        CellData(
-          expressionJson: MathExpressionSerializer.serializeToJson(
-            expressions[i],
-          ),
-          plotView: i < plotViews.length ? plotViews[i] : null,
-        ).toJson(),
-      );
-    }
-    return cells;
-  }
-
-  /// Save all cells and the active index as a single atomic blob, so a crash
-  /// or process kill can never leave the cells and the active index out of
-  /// sync (they were previously two separate writes).
-  static Future<void> saveAll(
-    List<List<MathNode>> expressions,
-    List<Map<String, dynamic>?> plotViews,
-    int activeIndex,
-  ) async {
-    final prefs = await SharedPreferences.getInstance();
-    final blob = {
-      'cells': _buildCellMaps(expressions, plotViews),
-      'activeIndex': activeIndex,
-    };
-    await prefs.setString(_key, jsonEncode(blob));
-  }
-
-  /// Save all cells (legacy list-only form, kept for callers that don't track
-  /// the active index).
-  static Future<void> saveCells(
-    List<List<MathNode>> expressions,
-    List<Map<String, dynamic>?> plotViews,
-  ) async {
-    final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
       _key,
-      jsonEncode(_buildCellMaps(expressions, plotViews)),
+      jsonEncode(<String, dynamic>{'cells': cells, 'activeIndex': activeIndex}),
     );
   }
 
@@ -161,28 +134,38 @@ class CellPersistence {
     return null;
   }
 
-  /// Load all cells
+  /// Load all cells.
+  ///
+  /// A cell that cannot be read is skipped rather than costing every cell. One
+  /// malformed entry used to make this return nothing at all, and the next
+  /// save then wrote that nothing over the lot. Whenever anything is skipped,
+  /// the blob as stored is copied aside first (see [_unreadableKey]).
   static Future<List<CellData>> loadCells({SharedPreferences? prefs}) async {
     final sharedPrefs = prefs ?? await SharedPreferences.getInstance();
-    final list = _decodeCellList(sharedPrefs.getString(_key));
-    if (list == null) return [];
-    try {
-      return list
-          .map((json) => CellData.fromJson(json as Map<String, dynamic>))
-          .toList();
-    } catch (e) {
+    final String? raw = sharedPrefs.getString(_key);
+    final list = _decodeCellList(raw);
+    if (list == null) {
+      if (raw != null && raw.isNotEmpty) {
+        await sharedPrefs.setString(_unreadableKey, raw);
+      }
       return [];
     }
-  }
 
-  /// Save active cell index (legacy separate key; [saveAll] is preferred).
-  static Future<void> saveActiveIndex(int index) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_activeKey, index);
+    final List<CellData> cells = <CellData>[];
+    bool skipped = false;
+    for (final dynamic json in list) {
+      try {
+        cells.add(CellData.fromJson(json as Map<String, dynamic>));
+      } catch (_) {
+        skipped = true;
+      }
+    }
+    if (skipped) await sharedPrefs.setString(_unreadableKey, raw!);
+    return cells;
   }
 
   /// Load active cell index. Prefers the value embedded in the cells blob and
-  /// falls back to the legacy separate key.
+  /// falls back to the legacy separate key, for saves made before it moved.
   static Future<int> loadActiveIndex({SharedPreferences? prefs}) async {
     final sharedPrefs = prefs ?? await SharedPreferences.getInstance();
     try {

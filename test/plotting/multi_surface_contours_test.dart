@@ -32,7 +32,11 @@ void main() {
     return e..seriesIndex = row;
   }
 
-  Future<int> ink({required int surfaces, required bool contours}) async {
+  /// One frame of the scene, with or without contours.
+  Future<ByteData> frame({
+    required int surfaces,
+    required bool contours,
+  }) async {
     final curves = <PlotExpression>[
       fn('x^2+y', 0),
       if (surfaces > 1) fn('x^2+y^2', 1),
@@ -58,31 +62,29 @@ void main() {
     final recorder = ui.PictureRecorder();
     painter.paint(Canvas(recorder), canvas);
     final ui.Image image = await recorder.endRecording().toImage(340, 340);
-    final ByteData data = (await image.toByteData())!;
+    return (await image.toByteData())!;
+  }
 
+  /// How many pixels switching contours on changes: the contours' own ink.
+  ///
+  /// Counted as change rather than as colourful pixels. A contour over a lit,
+  /// coloured surface lands on pixels that were already colourful, so a count
+  /// of colour measured the surface's shading as much as the contours — and
+  /// moved whenever the shading did.
+  Future<int> ink({required int surfaces}) async {
+    final ByteData off = await frame(surfaces: surfaces, contours: false);
+    final ByteData on = await frame(surfaces: surfaces, contours: true);
     int n = 0;
-    for (int i = 0; i < 340 * 340; i++) {
-      final int o = i * 4;
-      if (data.getUint8(o + 3) < 200) continue;
-      final int r = data.getUint8(o);
-      final int g = data.getUint8(o + 1);
-      final int b = data.getUint8(o + 2);
-      final int mx = [r, g, b].reduce((a, c) => a > c ? a : c);
-      final int mn = [r, g, b].reduce((a, c) => a < c ? a : c);
-      if (mx > 60 && mx - mn > 30) n++;
+    for (int i = 0; i < off.lengthInBytes; i += 4) {
+      if (off.getUint32(i) != on.getUint32(i)) n++;
     }
     return n;
   }
 
   testWidgets('a second surface gets contours too', (tester) async {
     await tester.runAsync(() async {
-      final int oneOff = await ink(surfaces: 1, contours: false);
-      final int oneOn = await ink(surfaces: 1, contours: true);
-      final int twoOff = await ink(surfaces: 2, contours: false);
-      final int twoOn = await ink(surfaces: 2, contours: true);
-
-      final int addedForOne = oneOn - oneOff;
-      final int addedForTwo = twoOn - twoOff;
+      final int addedForOne = await ink(surfaces: 1);
+      final int addedForTwo = await ink(surfaces: 2);
       expect(
         addedForOne,
         greaterThan(0),

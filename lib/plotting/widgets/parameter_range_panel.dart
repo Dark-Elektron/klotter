@@ -37,6 +37,13 @@ double? parseParameterBound(String text) {
 String formatParameterBound(double value) {
   if (value == 0) return '0';
   final double turns = value / math.pi;
+  // Whole multiples well past a turn or two: a θ range for a spiral is
+  // several turns, and 12π says that where 37.7 does not.
+  final double whole = turns.abs().roundToDouble();
+  if (whole >= 1 && whole <= 64 && (turns.abs() - whole).abs() < 1e-9) {
+    final String sign = value < 0 ? '-' : '';
+    return whole == 1 ? '$signπ' : '$sign${whole.toInt()}π';
+  }
   // Only for the fractions worth naming; anything else reads better as a
   // decimal than as a ratio of π nobody recognises.
   for (final int d in const <int>[1, 2, 3, 4, 6]) {
@@ -56,7 +63,7 @@ String formatParameterBound(double value) {
 
 /// The translucent chip showing what one parameter is swept over.
 ///
-/// Bottom left of the plot, stacked with u above v, and only for the
+/// Bottom left of the plot, stacked θ above u above v, and only for the
 /// parameters the expression actually uses — a curve in u has nothing to say
 /// about v.
 class ParameterRangeChip extends StatelessWidget {
@@ -65,17 +72,24 @@ class ParameterRangeChip extends StatelessWidget {
     required this.name,
     required this.range,
     required this.onChanged,
+    this.resetTo = defaultParameterRange,
   });
 
-  /// 'u' or 'v'.
+  /// 'u', 'v' or 'θ'.
   final String name;
   final ParameterRange range;
   final ValueChanged<ParameterRange> onChanged;
 
+  /// What the dialog's Reset puts back: the unit interval for u and v, but
+  /// θ has a range of its own.
+  final ParameterRange resetTo;
+
   Future<void> _edit(BuildContext context) async {
     final ParameterRange? next = await showDialog<ParameterRange>(
       context: context,
-      builder: (_) => _ParameterRangeDialog(name: name, range: range),
+      builder:
+          (_) =>
+              _ParameterRangeDialog(name: name, range: range, resetTo: resetTo),
     );
     if (next != null) onChanged(next);
   }
@@ -106,10 +120,15 @@ class ParameterRangeChip extends StatelessWidget {
 }
 
 class _ParameterRangeDialog extends StatefulWidget {
-  const _ParameterRangeDialog({required this.name, required this.range});
+  const _ParameterRangeDialog({
+    required this.name,
+    required this.range,
+    required this.resetTo,
+  });
 
   final String name;
   final ParameterRange range;
+  final ParameterRange resetTo;
 
   @override
   State<_ParameterRangeDialog> createState() => _ParameterRangeDialogState();
@@ -183,7 +202,7 @@ class _ParameterRangeDialogState extends State<_ParameterRangeDialog> {
           child: const Text('Cancel'),
         ),
         TextButton(
-          onPressed: () => Navigator.of(context).pop(defaultParameterRange),
+          onPressed: () => Navigator.of(context).pop(widget.resetTo),
           child: const Text('Reset'),
         ),
         FilledButton(onPressed: _submit, child: const Text('Apply')),

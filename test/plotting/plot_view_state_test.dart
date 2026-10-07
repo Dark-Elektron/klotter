@@ -15,6 +15,26 @@ void main() {
       expect(back.yMax, equals(2));
     });
 
+    test('a θ range survives, and an untouched one is not stored', () {
+      const v = PlotViewState(thetaMin: 0, thetaMax: 6 * 3.141592653589793);
+      final back = PlotViewState.fromJson(v.toJson());
+      expect(back.thetaMin, equals(0));
+      expect(back.thetaMax, closeTo(6 * 3.141592653589793, 1e-12));
+      expect(back.isInitial, isFalse);
+      expect(const PlotViewState().isInitial, isTrue);
+
+      // Missing from anything saved before it existed, and a zero-width one
+      // draws nothing: both come back as the default two turns.
+      for (final Map<String, dynamic> json in <Map<String, dynamic>>[
+        <String, dynamic>{},
+        <String, dynamic>{'thetaMin': 1.0, 'thetaMax': 1.0},
+      ]) {
+        final restored = PlotViewState.fromJson(json);
+        expect(restored.thetaMin, const PlotViewState().thetaMin);
+        expect(restored.thetaMax, const PlotViewState().thetaMax);
+      }
+    });
+
     test('a 3D camera survives', () {
       const v = PlotViewState(
         show3D: true,

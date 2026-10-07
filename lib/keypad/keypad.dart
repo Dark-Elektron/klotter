@@ -154,60 +154,97 @@ class CalculatorKeypad extends StatefulWidget {
 }
 
 class _CalculatorKeypadState extends State<CalculatorKeypad> {
-  // ---- klotter keypad density -------------------------------------------
-  // klotter shares the screen with a live plot, so the phone keypad runs at
-  // 10 columns x 2 rows instead of klator's 5 x 4. That is 96dp instead of
-  // 288dp, leaving ~190dp more for the plot while keeping the expression
-  // editable — the whole point of plotting inline rather than modally.
+  // ---- klotter phone keypad ---------------------------------------------
+  // Two halves side by side, each a 5 x 4 grid: the number pad fixed on one
+  // side, the function pages swiping on the other. Ten keys across and four
+  // down, so the keys are the size they always were and the keypad takes the
+  // same height — only what is where has changed.
+  //
+  // It was 10 x 2 halves stacked: two rows of functions over two rows of
+  // numbers, the digits laid 5 6 7 8 9 over 0 1 2 3 4. That reads in neither
+  // calculator order nor keyboard order, and the user found it unnatural. A
+  // block of digits is the arrangement everyone already knows, so the numbers
+  // went back to one, and the functions took the space beside it.
   //
   // At 10 columns a 360dp phone gives 36dp-wide keys, under the 48dp Material
   // minimum, so keys are made taller than wide (0.75) with a hard 48dp floor —
   // the same geometry a phone QWERTY uses. Unlike a keyboard a calculator has
   // no autocorrect, so a mis-tap is a wrong answer nobody notices.
   //
-  // Tablets keep klator's 5 x 4: two pages sit side by side there, so the
-  // effective density is already 10 across.
-  static const int _phoneGridColumns = 10;
-  static const int _phoneGridRows = 2;
+  // Tablets keep their own single grid; see below.
+  static const int _phoneGridColumns = 5;
+
+  /// The room either side of a label inside a phone key: half a dp, against
+  /// the 2 dp a key leaves elsewhere (see [keyLabelPadding]). The glyphs keep
+  /// their own side bearings, so even a label filling its key does not touch
+  /// the edge — and the 3 dp it gives back is what lets cos and tan be drawn
+  /// at full size.
+  static const double _phoneLabelPadding = 0.5;
+  static const int _phoneGridRows = 4;
   static const double _phonePortraitTileAspect = 0.75;
   static const double _minPhoneTileHeight = 48.0;
 
-  // ---- klotter phone key order ------------------------------------------
-  // The button lists and their itemBuilders are written for klator's 5x4
-  // grid, where index i lands at (row i~/5, col i%5). Reflowed to 10x2 that
-  // same order reads as nonsense — the number pad becomes "7 8 9 ( <- 4 5 6
-  // + -" across one row.
-  //
-  // Rather than reorder the lists (the itemBuilders branch on specific
-  // indices, so that would rewire every button's behaviour), these tables map
-  // a *visual position* to the original list index. Builders are untouched.
-  //
-  // Row 0 = digits ascending, like a phone keyboard's number row.
-  // Row 1 = separators, operators and editing keys.
-  // Mirrors the old pull-up pad: digits fill the left five columns, operators
-  // and editing keys the right five.
-  //   5 6 7 8 9 | ( ) + - CE ⌫
-  //   0 1 2 3 4 | .  x /  E  ⌘
-  // Destructive keys (clear, backspace) sit together on the top right; the
-  // action button takes the bottom-right corner where Enter belongs.
-  static const List<int> _numberPhoneOrder = <int>[
-    6, 7, 0, 1, 2, 3, 8, 9, 18, 4, // 5 6 7 8 9 | () + - CE back
-    15, 10, 11, 12, 5, 16, 13, 14, 17, 19, // 0 1 2 3 4 | . x / E cmd
+  /// The fixed number pad, as seen by a right-hander.
+  ///
+  /// A calculator's block: 7 8 9 on top, 0 beside the point. The operators are
+  /// klator's two-by-two — + beside −, × beside ÷, each over its inverse's
+  /// partner. Backspace takes the top corner and the action key the bottom
+  /// one, where Enter belongs.
+  ///
+  /// Clear is kept away from backspace, beside the action key at the foot:
+  /// the two are reached for in the same breath, and a thumb going for
+  /// backspace that lands one key short should cost a character, not the
+  /// whole expression. The user laid it out that way on purpose.
+  static const List<List<String>> _phoneNumberGrid = <List<String>>[
+    <String>['num.7', 'num.8', 'num.9', 'num.paren', 'num.back'],
+    <String>['num.4', 'num.5', 'num.6', 'num.plus', 'num.minus'],
+    <String>['num.1', 'num.2', 'num.3', 'num.times', 'num.div'],
+    <String>['num.0', 'num.dot', 'num.exp', 'num.ce', 'num.cmd'],
   ];
 
-  /// The phone number pad, mirrored for a left-hander so the digits move to
-  /// the right half and the operators to the left.
-  List<int> get _phoneNumberOrder =>
-      _leftHanded
-          ? _mirrorRows(_numberPhoneOrder, _phoneGridColumns)
-          : _numberPhoneOrder;
+  /// The scientific page, five keys across and four down.
+  ///
+  /// Every key sits over its relative, as it did when the page was two long
+  /// rows: each variable over its unit vector, each trig function over its
+  /// inverse, = over ≥, x² over √, π over e. What builds an expression is the
+  /// top half; what is applied to it, the bottom.
+  static const List<List<String>> _phoneScientificPage = <List<String>>[
+    <String>['sci.x', 'sci.y', 'sci.z', 'sci.eq', 'sci.sq'],
+    <String>['sci.xhat', 'sci.yhat', 'sci.zhat', 'sci.geq', 'sci.root'],
+    <String>['sci.sin', 'sci.cos', 'sci.tan', 'sci.pi', 'sci.log'],
+    <String>['sci.asin', 'sci.acos', 'sci.atan', 'sci.e', 'sci.deg'],
+  ];
 
-  /// Maps a grid position to the index the itemBuilder expects. Tablets keep
-  /// klator's 5x4 order untouched.
-  int _phoneIndex(List<int> order, int position) {
-    if (_isTabletLayout || position >= order.length) return position;
-    return order[position];
-  }
+  /// The extras page: the old two rows' left halves over their right halves,
+  /// so every pair still shares a column.
+  ///
+  /// Values and the operators on them across the top. Below them, the
+  /// whole-document keys — clear-all, undo, redo, export, help, settings — as
+  /// one block on the outer edge, settings in the very corner: the far left
+  /// for a right-hander, where a tablet has it too, and away from the thumb
+  /// that is on the numbers. The discrete and calculus keys take the columns
+  /// nearest the numbers, since they are reached far more often.
+  static const List<List<String>> _phoneExtrasPage = <List<String>>[
+    <String>['ext.sin', 'ext.i', 'ext.u', 'ext.sq', 'ext.fact'],
+    <String>['ext.asin', 'ext.pi', 'ext.v', 'ext.root', 'ext.abs'],
+    <String>['ext.clear', 'ext.undo', 'ext.redo', 'ext.npr', 'ext.deriv'],
+    <String>['ext.settings', 'ext.export', 'ext.help', 'ext.sum', 'ext.int'],
+  ];
+
+  /// [grid], each row reflected for a left-hander.
+  ///
+  /// A left-hander's phone keypad is the right-hander's in a mirror, as a
+  /// tablet's is: the halves trade sides and every row of every page is
+  /// reflected. Reflected rather than moved, so whatever sat nearest the
+  /// dominant thumb still does, and what was kept out of its way — settings
+  /// and clear-all, backspace and the action key on the outer edge — still
+  /// is, on the other side.
+  List<List<String>> _handed(List<List<String>> grid) =>
+      _leftHanded
+          ? <List<String>>[
+            for (final List<String> r in grid) r.reversed.toList(),
+          ]
+          : grid;
   // -----------------------------------------------------------------------
 
   bool get _isTabletLayout => widget.isLandscape || widget.screenWidth > 600;
@@ -234,10 +271,6 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
   /// it is known before the first build and needs no frame to settle.
   int get _pagesPerView => _isTabletLayout ? 2 : 1;
 
-  // One shape everywhere: each half of the keypad is a single 20-key grid, so
-  // 10 columns x 2 rows. Splitting the keypad into a swipeable function half
-  // and a fixed number half means a 5 x 4 tablet grid would stack to eight
-  // rows; tablets keep their larger key aspect instead (see below).
   // ---- tablet keypad ----------------------------------------------------
   // A tablet has room for every key at once, so it drops the phone's
   // fixed/swipeable split: one grid, three 20-key blocks left to right —
@@ -293,21 +326,26 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
   ];
 
   /// Names for `_extrasButtons()`, in the order it builds them.
+  ///
+  /// Kept in step by hand, so the test that each name is the key it says is
+  /// what holds it there. It had drifted: the builder put sin first and these
+  /// still began with i, so on a tablet the slot authored for i showed sin,
+  /// the one for x² showed u, and so on round four keys of each row.
   static const List<String> _extNames = <String>[
+    'ext.sin',
     'ext.i',
     'ext.u',
     'ext.sq',
-    'ext.sin',
     'ext.fact',
     'ext.npr',
     'ext.deriv',
     'ext.undo',
     'ext.redo',
     'ext.clear',
+    'ext.asin',
     'ext.pi',
     'ext.v',
     'ext.root',
-    'ext.asin',
     'ext.abs',
     'ext.sum',
     'ext.int',
@@ -540,19 +578,6 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     return hi < 0 ? null : (first: lo, last: hi);
   }
 
-  /// Mirror a row-major order across the vertical axis.
-  ///
-  /// Mirroring rather than merely moving the block keeps the reach the same:
-  /// whatever fell under the dominant thumb still does, just on the other side.
-  List<int> _mirrorRows(List<int> order, int columns) {
-    final List<int> out = <int>[];
-    for (int start = 0; start < order.length; start += columns) {
-      final int stop = math.min(start + columns, order.length);
-      out.addAll(order.sublist(start, stop).reversed);
-    }
-    return out;
-  }
-
   List<Widget> _mirrorWidgetRows(List<Widget> items, int columns) {
     final List<Widget> out = <Widget>[];
     for (int start = 0; start < items.length; start += columns) {
@@ -561,10 +586,6 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     }
     return out;
   }
-
-  int get _gridColumns => _phoneGridColumns;
-
-  int get _gridRows => _phoneGridRows;
 
   /// childAspectRatio for the main grids (width / height).
   ///
@@ -581,6 +602,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     // ordinary case at startup, not a defensive flourish. It is also passed
     // straight to GridView as childAspectRatio, where zero is just as invalid.
     if (!availableWidth.isFinite || availableWidth <= 0) return 1.0;
+    // [availableWidth] is one half of the phone keypad, five keys across.
     // Tablets use the same grid in both orientations, so the keys keep the
     // same shape too — landscape simply makes them bigger, because each block
     // gets a third of a wider screen.
@@ -605,11 +627,26 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
   int _deleteSpeed = 150;
   bool _deletedContentInCurrentBackspaceSession = false;
 
-  /// Which of the swipeable pages is showing: scientific (0) or extras (1).
+  /// How many pages the function keys swipe through: scientific (0) and
+  /// extras (1).
+  static const int _keypadPageCount = 2;
+
+  /// The pages wrap: a swipe past either end comes round to the other (see
+  /// [EasySnapPageView.wrap]). So the controller counts pages without end,
+  /// and starts this many turns in to leave room both ways — a thousand
+  /// turns of swiping in one direction before it would run out.
+  static const int _wrapTurns = 1000;
+
+  /// The controller's own page: the page showing, plus however many whole
+  /// turns the swipes have made — so the page showing is this modulo
+  /// [_keypadPageCount]. It keeps counting the way the swipes went, which is
+  /// what says which way a swipe was; the page alone cannot, since the
+  /// extras are both one to the left and one to the right of the scientific
+  /// keys.
   ///
-  /// Starts at the first page. It started at 1 — the number pad's index back
-  /// when the number pad was a page — which now names the extras.
-  int _currentKeypadIndex = 0;
+  /// Starts on the first page. It once started at 1 — the number pad's index
+  /// back when the number pad was a page — which now names the extras.
+  int _keypadVirtualPage = _keypadPageCount * _wrapTurns;
 
   bool _isNavigatingProgrammatically = false;
 
@@ -684,7 +721,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
 
       _keypadController!
           .animateToPage(
-            page,
+            _virtualPageFor(page),
             duration: const Duration(milliseconds: 300),
             curve: Curves.easeInOut,
           )
@@ -696,8 +733,6 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
               });
             }
           });
-
-      _currentKeypadIndex = page;
     } else {
       debugPrint('Could not navigate - controller null or no clients');
     }
@@ -726,7 +761,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
 
       _keypadController!
           .animateToPage(
-            targetPage,
+            _virtualPageFor(targetPage),
             duration: const Duration(milliseconds: 300),
             curve: Curves.easeInOut,
           )
@@ -738,20 +773,48 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
             }
           });
     }
-
-    _currentKeypadIndex = targetPage;
   }
 
   void _initializeKeypadController(int pagesPerView) {
     // Two pages now (scientific, extras) — the number pad is permanent.
     const int initialPage = 0;
-    _currentKeypadIndex = initialPage;
+    _keypadVirtualPage = _keypadPageCount * _wrapTurns + initialPage;
 
     _keypadController?.dispose();
     _keypadController = PageController(
-      initialPage: initialPage,
+      initialPage: _keypadVirtualPage,
       viewportFraction: 1 / pagesPerView,
     );
+  }
+
+  /// The controller page nearest the one showing that holds [page] — the
+  /// shortest way round, so going back to a page never spins the keys
+  /// through a turn they did not need.
+  int _virtualPageFor(int page) {
+    final int here = _keypadController?.page?.round() ?? _keypadVirtualPage;
+    int step = (page - here) % _keypadPageCount;
+    if (step > _keypadPageCount ~/ 2) step -= _keypadPageCount;
+    return here + step;
+  }
+
+  /// Whether a swipe may turn the page now.
+  ///
+  /// Any swipe may, except during the tour's swipe steps, which ask for one
+  /// direction: there the other does nothing, as it always did. Before the
+  /// pages wrapped, the end of the row was what stopped it — the tour asks
+  /// for a swipe left on the first page and a swipe right on the last, so
+  /// the wrong way had nowhere to go. Now it would come round to the other
+  /// page while the tour still waited for its swipe.
+  bool _allowKeypadSwipe(bool towardNext) {
+    final WalkthroughService tour = widget.walkthroughService;
+    if (!tour.isActive) return true;
+    final WalkthroughStep step = tour.currentStepData;
+    if (!step.requiresAction) return true;
+    return switch (step.requiredAction) {
+      WalkthroughAction.swipeLeft => towardNext,
+      WalkthroughAction.swipeRight => !towardNext,
+      _ => true,
+    };
   }
 
   MathEditorController? get _activeController => widget.activeController;
@@ -780,22 +843,6 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
       case KeypadColorMode.themeBased:
         return widget.colors.keypadButtonText;
     }
-  }
-
-  bool isOperator(String text) {
-    const operators = [
-      '+',
-      '-',
-      'x',
-      '/',
-      '=',
-      '\u002B',
-      '\u2212',
-      '\u00B7',
-      '\u00D7',
-      '\u00F7',
-    ];
-    return operators.contains(text);
   }
 
   void _startContinuousDelete() {
@@ -864,22 +911,25 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     widget.onSetState();
   }
 
-  void _onKeypadPageChanged(int newIndex) {
-    if (newIndex != _currentKeypadIndex) {
+  /// [virtualPage] is the controller's page, which counts on through the
+  /// wrap (see [_keypadVirtualPage]); which way it moved is which way the
+  /// keys were swiped.
+  void _onKeypadPageChanged(int virtualPage) {
+    if (virtualPage != _keypadVirtualPage) {
       // Don't trigger walkthrough action if navigating programmatically
       if (!_isNavigatingProgrammatically) {
         final WalkthroughAction direction;
-        if (newIndex > _currentKeypadIndex) {
+        if (virtualPage > _keypadVirtualPage) {
           direction = WalkthroughAction.swipeLeft;
         } else {
           direction = WalkthroughAction.swipeRight;
         }
         widget.walkthroughService.onUserAction(direction);
       } else {
-        debugPrint('Keypad page changed programmatically: $newIndex');
+        debugPrint('Keypad page changed programmatically: $virtualPage');
       }
 
-      _currentKeypadIndex = newIndex;
+      _keypadVirtualPage = virtualPage;
     }
   }
 
@@ -930,116 +980,150 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
       return _buildTabletKeypad();
     }
 
-    int crossAxisCount = _gridColumns;
-    int rowCount = _gridRows;
-    // Page width, not screen width: with pagesPerView > 1 each page (and so
-    // each grid) is only a fraction of the screen. The grids derive their own
-    // aspect ratio from the same width, so container and tiles stay in step.
+    // The keys, made once for both halves. Each appears in exactly one of
+    // them, so the keys that carry a GlobalKey — ⌘ and settings — are in the
+    // tree once.
+    final Map<String, Widget> keys = _keyWidgets();
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Swipeable half: functions on top. Two pages now — scientific and
-        // extras — because the number pad below is permanent.
-        // The key is on the wrapper, outside the LayoutBuilder, not on the box
-        // inside it. A LayoutBuilder builds during layout, so a GlobalKey
-        // placed in its builder has its element created — and, when this
-        // switches between the phone and tablet arrangements, *moved* — in the
-        // middle of a layout pass. Reparenting there lays out a subtree whose
-        // ancestor is still laying out, which is the assertion seen at
-        // startup:
-        //
-        //     '!_debugDoingThisLayout': is not true
-        //     #5  RenderFlex.performLayout
-        //     #7  RenderLaidOutSubtree.performLayout
-        //
-        // Out here the element is created during build, which is where moving
-        // a GlobalKey is a supported thing to do. The rect is unchanged: a
-        // LayoutBuilder takes its child's size.
-        // The key goes on the box, never on a wrapper around the
-        // LayoutBuilder. Hoisting it outside made it resolve to the
-        // LayoutBuilder's own render object, and `laidOutBox` refuses one that
-        // is pending layout — which a _RenderLayoutBuilder routinely is. The
-        // walkthrough spotlight got no rect, so nothing was lit and, with no
-        // cut-out, the overlay swallowed the very swipe it was asking for.
-        LayoutBuilder(
-          builder: (context, keypadConstraints) {
-            final double available = _usableWidth(keypadConstraints);
-            // No width to lay keys out in — the warm-up frame, before the
-            // window has a size. An empty box now, the real keypad on the
-            // frame after.
-            if (available <= 0) return const SizedBox.shrink();
-            final double pageWidth = available / pagesPerView;
-            final double cellW = pageWidth / crossAxisCount;
-            final double cellH = cellW / _gridAspectRatioFor(pageWidth);
-            return SizedBox(
-              key: widget.mainKeypadAreaKey,
-              height: cellH * rowCount,
-              // The resolved width, not infinity: with an unbounded
-              // parent, `double.infinity` is not a size a box can take.
-              width: _usableWidth(keypadConstraints),
-              child:
-                  _keypadController != null
-                      ? ListenableBuilder(
-                        listenable: widget.walkthroughService,
-                        builder: (context, _) {
-                          return EasySnapPageView(
-                            controller: _keypadController!,
-                            onPageChanged: _onKeypadPageChanged,
-                            padEnds: false,
-                            enableTransitions: !isTablet,
-                            children: [
-                              SizedBox.expand(
-                                key: widget.scientificKeypadKey,
-                                child: _buildScientificGrid(widget.isLandscape),
-                              ),
-                              SizedBox.expand(
-                                key: widget.extrasKeypadKey,
-                                child: _buildExtrasGrid(widget.isLandscape),
-                              ),
-                            ],
-                          );
-                        },
-                      )
-                      : const SizedBox.shrink(),
-            );
-          },
-        ),
+    // One LayoutBuilder for both halves, since they share a height. The boxes
+    // the walkthrough measures are keyed inside it, as they always were:
+    // `laidOutBox` refuses a LayoutBuilder's own render object, which is what
+    // a key hoisted outside one resolves to.
+    return LayoutBuilder(
+      builder: (context, keypadConstraints) {
+        final double available = _usableWidth(keypadConstraints);
+        // No width to lay keys out in — the warm-up frame, before the window
+        // has a size. An empty box now, the real keypad on the frame after.
+        if (available <= 0) return const SizedBox.shrink();
+        final double half = available / 2;
+        final double cellW = half / _phoneGridColumns;
+        final double cellH = cellW / _gridAspectRatioFor(half);
+        final double height = cellH * _phoneGridRows;
 
-        // Fixed half: the number pad never moves. Digits and operators are
-        // the keys reached most often and sit closest to the thumb, and
-        // keeping them put means swiping never costs you the numbers.
-        LayoutBuilder(
-          builder: (context, numberConstraints) {
-            final double gridWidth = _usableWidth(numberConstraints);
-            if (gridWidth <= 0) return const SizedBox.shrink();
-            final double cellW = gridWidth / crossAxisCount;
-            final double cellH = cellW / _gridAspectRatioFor(gridWidth);
-            return SizedBox(
-              key: widget.numberKeypadKey,
-              height: cellH * rowCount,
-              width: _usableWidth(numberConstraints),
-              child: _buildNumberGrid(widget.isLandscape),
-            );
-          },
-        ),
-      ],
+        // The number pad never moves. Digits and operators are the keys
+        // reached most often, and keeping them put means swiping never costs
+        // you the numbers.
+        final Widget numbers = SizedBox(
+          key: widget.numberKeypadKey,
+          width: half,
+          height: height,
+          child: _phoneGrid(_handed(_phoneNumberGrid), keys),
+        );
+
+        // The function pages swipe: scientific, then extras.
+        final Widget functions = SizedBox(
+          key: widget.mainKeypadAreaKey,
+          width: half,
+          height: height,
+          child:
+              _keypadController != null
+                  ? ListenableBuilder(
+                    listenable: widget.walkthroughService,
+                    builder: (context, _) {
+                      return EasySnapPageView(
+                        controller: _keypadController!,
+                        onPageChanged: _onKeypadPageChanged,
+                        padEnds: false,
+                        enableTransitions: !isTablet,
+                        // Past either end comes round to the other.
+                        wrap: true,
+                        allowSwipe: _allowKeypadSwipe,
+                        children: [
+                          SizedBox.expand(
+                            key: widget.scientificKeypadKey,
+                            child: _phoneGrid(
+                              _handed(_phoneScientificPage),
+                              keys,
+                            ),
+                          ),
+                          SizedBox.expand(
+                            key: widget.extrasKeypadKey,
+                            child: _phoneGrid(_handed(_phoneExtrasPage), keys),
+                          ),
+                        ],
+                      );
+                    },
+                  )
+                  : const SizedBox.shrink(),
+        );
+
+        // Numbers under the dominant thumb — on the right for a right-hander,
+        // with backspace and the action key on the outer edge — and the
+        // function pages on the other side, settings at its far edge. A
+        // left-hander gets the mirror image: numbers on the left, functions
+        // on the right, every row reflected (see [_handed]).
+        //
+        // Labels sit close to the edge of their keys, and the inverse
+        // functions are stacked, so the long labels can be drawn as large as
+        // the keys allow (see [_labelShares]).
+        return KeyLabelScale(
+          byLength: _labelShares(
+            context,
+            <Widget?>[
+              for (final List<List<String>> page in const <List<List<String>>>[
+                _phoneScientificPage,
+                _phoneExtrasPage,
+                _phoneNumberGrid,
+              ])
+                for (final List<String> row in page)
+                  for (final String name in row) keys[name],
+            ],
+            cellW -
+                widget.settingsProvider.buttonSpacing -
+                2 * _phoneLabelPadding,
+            stackArc: true,
+          ),
+          labelPadding: _phoneLabelPadding,
+          stackArc: true,
+          child: SizedBox(
+            width: available,
+            height: height,
+            child: Row(
+              children:
+                  _leftHanded
+                      ? <Widget>[numbers, functions]
+                      : <Widget>[functions, numbers],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// One half of the phone keypad: [grid] laid out five across.
+  Widget _phoneGrid(List<List<String>> grid, Map<String, Widget> keys) {
+    final List<String> names = <String>[
+      for (final List<String> row in grid) ...row,
+    ];
+    return LayoutBuilder(
+      builder:
+          (context, gridConstraints) => GridView.builder(
+            physics: const NeverScrollableScrollPhysics(),
+            padding: EdgeInsets.zero,
+            itemCount: names.length,
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: _phoneGridColumns,
+              childAspectRatio: _gridAspectRatioFor(gridConstraints.maxWidth),
+            ),
+            itemBuilder:
+                (context, position) => keys[names[position]] ?? _extrasBlank(),
+          ),
     );
   }
 
   // ============================================================
   // SCIENTIFIC PAGE
   //
-  // Authored in visual order rather than remapped from a 5x4 list, so the
-  // arrangement is readable here and no index table has to be kept in sync.
+  // The keys are built here and placed by name: on a phone by
+  // [_phoneScientificPage], on a tablet by the tablet grids.
   //
-  //   row 1  x  y  z  x̂  ŷ  ẑ  =  x²  √  ⁿ√        build the expression
-  //   row 2  sin cos tan asin acos atan log ° π e    apply a function
+  //   x     y     z     =    x²
+  //   x̂     ŷ     ẑ     ≥    √
+  //   sin   cos   tan   π    log
+  //   asin  acos  atan  e    °
   //
-  // Row 1 is what you write *with* — variables, unit vectors, equality and
-  // the power/root forms. Row 2 is what you apply *to* them, with the six
-  // trig keys in one block. Long-press collapses x² -> xⁿ and log -> ln/logᵣ,
-  // which is what freed the three slots the unit vectors now occupy.
+  // Long-press collapses x² -> xⁿ and log -> ln/logᵣ, which is what freed
+  // the three slots the unit vectors occupy.
   // ============================================================
 
   Widget _sciPlain(String label, VoidCallback onTap) {
@@ -1193,13 +1277,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
   }
 
   List<Widget> _scientificButtons() {
-    // Two rows of ten, each key above or below its relative:
-    //
-    //   x  y  z  sin   cos   tan   =  x²  π  log
-    //   x̂  ŷ  ẑ  asin  acos  atan  ≥  √   e  °
-    //
-    // Unit vectors under their variables, inverse trig under trig, the root
-    // under the square, the relational operators under equals.
+    // Built in the order of [_sciNames]; where each goes is decided by name.
     return <Widget>[
       // ---- row 1 ----
       _sciVariable(0),
@@ -1326,7 +1404,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     // is created, and moved, during layout.
     return LayoutBuilder(
       builder: (context, constraints) {
-        final Map<String, Widget> byName = _tabletKeyWidgets();
+        final Map<String, Widget> byName = _keyWidgets();
         final List<List<String?>> grid = _tabletGrid;
 
         final List<Widget> cells = <Widget>[
@@ -1371,7 +1449,22 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
           width: tabletWidth,
           child: Stack(
             children: <Widget>[
-              Positioned.fill(child: _tabletGridView(laidOut, cellW, cellH)),
+              Positioned.fill(
+                child: KeyLabelScale(
+                  byLength: _labelShares(
+                    context,
+                    <Widget?>[
+                      for (final List<String?> row in grid)
+                        for (final String? name in row)
+                          if (name != null) byName[name],
+                    ],
+                    cellW -
+                        widget.settingsProvider.buttonSpacing -
+                        2 * keyLabelPadding,
+                  ),
+                  child: _tabletGridView(laidOut, cellW, cellH),
+                ),
+              ),
               blockMarker(widget.numberBlockKey, 'num.'),
               blockMarker(widget.scientificBlockKey, 'sci.'),
               blockMarker(widget.extrasBlockKey, 'ext.'),
@@ -1380,6 +1473,83 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
         );
       },
     );
+  }
+
+  /// How large each length of label is drawn (see [KeyLabelScale]): for each
+  /// length of three characters or more, the largest share of the full size
+  /// at which every label of that length among [keys] fits in [room], the
+  /// width a key leaves for its label.
+  ///
+  /// Measured rather than guessed from the length. On a tablet nearly every
+  /// label fits whole: measured on a Xiaomi Pad 5, all of them in landscape,
+  /// and in portrait all but "acos", "d/dx" and "atan", which need about nine
+  /// tenths — where shrinking by length drew "sin" at two thirds and "asin"
+  /// at half on keys with room to spare. On a phone, with the label nearer
+  /// the edge of its key and the inverse functions stacked ([stackArc]), sin,
+  /// cos and tan come out at full size, where by length they were two thirds.
+  /// Labels of one length share their size, so those that have to come out a
+  /// little smaller still match each other.
+  ///
+  /// Shorter labels are always drawn whole: no single short label should
+  /// shrink all the others of its length, and the key's FittedBox still
+  /// catches any that would not fit. A stacked inverse function is measured
+  /// by the function under its "arc", which is all that has to fit across,
+  /// and a fraction is not measured at all.
+  Map<int, double> _labelShares(
+    BuildContext context,
+    Iterable<Widget?> keys,
+    double room, {
+    bool stackArc = false,
+  }) {
+    if (room <= 0) return const <int, double>{};
+    // The style the label is drawn in: the key's Material sets bodyMedium,
+    // and the key sets the size and the line height.
+    final TextStyle drawn = (Theme.of(context).textTheme.bodyMedium ??
+            const TextStyle())
+        .copyWith(height: 1.0);
+    final TextScaler scaler = MediaQuery.textScalerOf(context);
+
+    final Map<int, double> shares = <int, double>{};
+    for (final Widget? key in keys) {
+      final ({String text, double size})? label = switch (key) {
+        MyButton(:final String buttonText, :final double fontSize) => (
+          text: buttonText,
+          size: fontSize,
+        ),
+        PopupMenuCalcButton(:final String buttonText, :final double fontSize) =>
+          (text: buttonText, size: fontSize),
+        _ => null,
+      };
+      if (label == null) continue;
+      // Drawn as a fraction, narrower than any long label (see
+      // [fractionLabels]); measured as written out, "d/dx" would hold every
+      // other four-letter label down to its size.
+      if (fractionLabels.containsKey(label.text)) continue;
+      final String across =
+          stackArc && arcLabels.contains(label.text)
+              ? label.text.substring(1)
+              : label.text;
+      final int length = across.characters.length;
+      if (length < 3) continue;
+      final TextPainter painter = TextPainter(
+        text: TextSpan(
+          text: across,
+          style: drawn.copyWith(fontSize: label.size),
+        ),
+        textDirection: TextDirection.ltr,
+        textScaler: scaler,
+        maxLines: 1,
+      )..layout();
+      final double fits = room / painter.width;
+      painter.dispose();
+      shares[length] = math.min(shares[length] ?? 1.0, fits);
+    }
+    // A hair under the measured fit, so rounding never leaves a label a
+    // fraction too wide and its FittedBox shrinking it alone.
+    return <int, double>{
+      for (final MapEntry<int, double> e in shares.entries)
+        e.key: math.min(1.0, e.value * 0.99),
+    };
   }
 
   /// The tablet grid itself.
@@ -1396,13 +1566,14 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     );
   }
 
-  /// Every tablet key, looked up by name.
+  /// Every key, looked up by name — for the phone's halves and the tablet's
+  /// grid alike.
   ///
   /// The three builders keep producing their keys in their own order; this
   /// pairs each list with its names. If a builder gains a key and its name
   /// list is not updated the lengths stop matching, which is the check that
   /// the old index tables could not make.
-  Map<String, Widget> _tabletKeyWidgets() {
+  Map<String, Widget> _keyWidgets() {
     final List<Widget> sci = _scientificButtons();
     final List<Widget> ext = _extrasButtons();
     final List<Widget> num = <Widget>[
@@ -1416,41 +1587,6 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
       for (int i = 0; i < _extNames.length; i++) _extNames[i]: ext[i],
       for (int i = 0; i < _numNames.length; i++) _numNames[i]: num[i],
     };
-  }
-
-  Widget _buildScientificGrid(bool isLandscape) {
-    final buttons = _scientificButtons();
-    return LayoutBuilder(
-      builder:
-          (context, gridConstraints) => GridView.builder(
-            physics: const NeverScrollableScrollPhysics(),
-            padding: EdgeInsets.zero,
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: _gridColumns,
-              childAspectRatio: _gridAspectRatioFor(gridConstraints.maxWidth),
-            ),
-            itemCount: buttons.length,
-            itemBuilder: (context, position) => buttons[position],
-          ),
-    );
-  }
-
-  Widget _buildNumberGrid(bool isLandscape) {
-    return LayoutBuilder(
-      builder:
-          (context, gridConstraints) => GridView.builder(
-            physics: const NeverScrollableScrollPhysics(),
-            padding: EdgeInsets.zero,
-            itemCount: _buttons.length,
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: _gridColumns,
-              childAspectRatio: _gridAspectRatioFor(gridConstraints.maxWidth),
-            ),
-            itemBuilder:
-                (context, position) =>
-                    _numberButtonAt(_phoneIndex(_phoneNumberOrder, position)),
-          ),
-    );
   }
 
   /// One key of the number pad, addressed by its index in [_buttons] so both
@@ -1578,23 +1714,19 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
   // ============================================================
   // EXTRAS PAGE
   //
-  // Grouped **column-major**: each pair of keys that belong together shares a
-  // column, read top-then-bottom. That is what puts sin over asin and d/dx
-  // over ∫ — a related pair is one thumb-width apart rather than a row apart.
+  // Grouped in pairs: each two keys that belong together share a column,
+  // read top-then-bottom — sin over asin, d/dx over ∫. On a phone, for a
+  // right-hander:
   //
-  //   col   1    2    3     4     5     6    7     8   9   10
-  //   row1  i    x    √    sin    !    ⁿCᵣ  d/dx   ⎌   ⎏   ⌧
-  //   row2  π    x²  |x|  asin   ⁿPᵣ   ∑     ∫     ·   ⓘ   ☰
-  //         └ values ┘└trig┘└ discrete ┘└calc┘ └ history / utils ┘
+  //   sin   i     u     x²    !
+  //   asin  π     v     √     |x|
+  //   ⌧     ⎌     ⎏     ⁿPᵣ   d/dx
+  //   ☰     ⇪     ⓘ     ∑     ∫
   //
-  // Reading across: constants and variables, then the operators applied to
-  // them, then trigonometry, discrete maths, and calculus.
-  //
-  // The last three columns are the exception to the pairing. Undo, redo and
-  // clear-all act on the whole document rather than the expression, so they
-  // take the top-right corner as a block; help and settings navigate away
-  // from the calculator entirely and take the bottom-right. The single blank
-  // at (row 2, col 8) is what separates the two.
+  // The keys that act on the whole document rather than the expression —
+  // clear-all, undo, redo, export, help, settings — take the outer bottom
+  // corner as one block, settings in the corner itself. A left-hander sees
+  // the page reflected, settings in the far right corner.
   //
   // ANS is gone: removing the result display took the cell index with it, so
   // the key referenced something the user could no longer see.
@@ -1858,12 +1990,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
       }),
     );
 
-    // The grid fills row-major, so this list is the two rows back to back.
-    //
-    // sin and asin lead, and i, π and the rest follow one column right of
-    // where they were. The trig pair sat in the fourth column, which put the
-    // keys reached most often in the middle of the block rather than at the
-    // edge the thumb starts from.
+    // Built in the order of [_extNames]; where each goes is decided by name.
     return <Widget>[
       // row 1
       kSin, kI, kU, kSquare, kFactorial, kPerm, kDeriv, kUndo, kRedo,
@@ -1872,124 +1999,6 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
       kAsin, kPi, kV, kRoot, kAbs, kSum, kIntegral, kExport, kHelp,
       kSettings,
     ];
-  }
-
-  Widget _buildExtrasGrid(bool isLandscape) {
-    final buttons = _extrasButtons();
-    return LayoutBuilder(
-      builder:
-          (context, gridConstraints) => GridView.builder(
-            physics: const NeverScrollableScrollPhysics(),
-            padding: EdgeInsets.zero,
-            itemCount: buttons.length,
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: _gridColumns,
-              childAspectRatio: _gridAspectRatioFor(gridConstraints.maxWidth),
-            ),
-            itemBuilder: (context, position) => buttons[position],
-          ),
-    );
-  }
-}
-
-class CustomPageScrollPhysics extends PageScrollPhysics {
-  final double threshold; // 0.0 - 1.0
-
-  const CustomPageScrollPhysics({
-    this.threshold = 0.1, // 10% drag required
-    super.parent,
-  });
-
-  @override
-  CustomPageScrollPhysics applyTo(ScrollPhysics? ancestor) {
-    return CustomPageScrollPhysics(
-      threshold: threshold,
-      parent: buildParent(ancestor),
-    );
-  }
-}
-
-class CustomSnapPageView extends StatefulWidget {
-  final PageController controller;
-  final List<Widget> children;
-  final ValueChanged<int>? onPageChanged;
-  final double threshold; // fraction of page width to trigger snap
-
-  const CustomSnapPageView({
-    super.key,
-    required this.controller,
-    required this.children,
-    this.onPageChanged,
-    this.threshold = 0.05, // 5% of page width
-  });
-
-  @override
-  State<CustomSnapPageView> createState() => _CustomSnapPageViewState();
-}
-
-class _CustomSnapPageViewState extends State<CustomSnapPageView> {
-  double? _dragStartPage;
-  bool _isAnimating = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return NotificationListener<ScrollNotification>(
-      onNotification: (notification) {
-        if (_isAnimating) return false;
-
-        if (notification is ScrollStartNotification &&
-            notification.dragDetails != null) {
-          // User started dragging — record starting page
-          _dragStartPage = widget.controller.page;
-        }
-
-        if (notification is ScrollUpdateNotification &&
-            notification.dragDetails != null &&
-            _dragStartPage != null) {
-          final currentPage = widget.controller.page!;
-          final delta = currentPage - _dragStartPage!;
-
-          if (delta.abs() > widget.threshold) {
-            // Determine target page
-            int targetPage;
-            if (delta > 0) {
-              targetPage = _dragStartPage!.ceil(); // swiped forward
-            } else {
-              targetPage = _dragStartPage!.floor(); // swiped backward
-            }
-
-            // Clamp to valid range
-            targetPage = targetPage.clamp(0, widget.children.length - 1);
-
-            _dragStartPage = null;
-            _isAnimating = true;
-
-            widget.controller
-                .animateToPage(
-                  targetPage,
-                  duration: const Duration(milliseconds: 300),
-                  curve: Curves.easeOutCubic,
-                )
-                .then((_) {
-                  _isAnimating = false;
-                });
-          }
-        }
-
-        if (notification is ScrollEndNotification) {
-          _dragStartPage = null;
-        }
-
-        return false;
-      },
-      child: PageView(
-        controller: widget.controller,
-        physics: const PageScrollPhysics(), // Keep default physics
-        onPageChanged: widget.onPageChanged,
-        padEnds: false,
-        children: widget.children,
-      ),
-    );
   }
 }
 
@@ -2000,6 +2009,21 @@ class EasySnapPageView extends StatefulWidget {
   final bool padEnds;
   final bool enableTransitions; // Add this
 
+  /// Whether the pages come round again past either end, so a swipe off the
+  /// last page brings in the first and a swipe back off the first brings in
+  /// the last, each sliding in from the side it was swiped from.
+  ///
+  /// The pages then repeat without end in both directions: page n of the
+  /// controller shows `children[n % children.length]`, and [onPageChanged]
+  /// reports n itself, which keeps counting the way the swipes went. Start
+  /// the controller well away from zero, so there are turns to spare in both
+  /// directions.
+  final bool wrap;
+
+  /// Asked before a swipe moves the pages, with whether it heads for the next
+  /// page — a swipe to the left. Null lets every swipe through.
+  final bool Function(bool towardNext)? allowSwipe;
+
   const EasySnapPageView({
     super.key,
     required this.controller,
@@ -2007,6 +2031,8 @@ class EasySnapPageView extends StatefulWidget {
     this.onPageChanged,
     this.padEnds = false,
     this.enableTransitions = true, // Default true for phone
+    this.wrap = false,
+    this.allowSwipe,
   });
 
   @override
@@ -2030,11 +2056,15 @@ class _EasySnapPageViewState extends State<EasySnapPageView> {
 
         _handled = true;
 
+        final bool towardNext = delta < 0;
+        if (widget.allowSwipe?.call(towardNext) == false) return;
+
         final currentPage = widget.controller.page?.round() ?? 0;
+        final int step = towardNext ? 1 : -1;
         final targetPage =
-            delta > 0
-                ? (currentPage - 1).clamp(0, widget.children.length - 1)
-                : (currentPage + 1).clamp(0, widget.children.length - 1);
+            widget.wrap
+                ? currentPage + step
+                : (currentPage + step).clamp(0, widget.children.length - 1);
 
         widget.controller.animateToPage(
           targetPage,
@@ -2058,11 +2088,16 @@ class _EasySnapPageViewState extends State<EasySnapPageView> {
           physics: const NeverScrollableScrollPhysics(),
           onPageChanged: widget.onPageChanged,
           padEnds: widget.padEnds,
-          itemCount: widget.children.length,
+          itemCount: widget.wrap ? null : widget.children.length,
           itemBuilder: (context, index) {
-            double page = 0;
+            // Before the first layout there is no page to read, so it is the
+            // page the controller opens on. Taken as 0 instead, a wrapping
+            // controller — which opens a thousand turns in — drew its first
+            // page as though it were that far away, shrunk and half faded,
+            // until something scrolled it.
+            double page = widget.controller.initialPage.toDouble();
             if (widget.controller.position.hasContentDimensions) {
-              page = widget.controller.page ?? 0;
+              page = widget.controller.page ?? page;
             }
 
             final double offset = (page - index).abs();
@@ -2071,7 +2106,7 @@ class _EasySnapPageViewState extends State<EasySnapPageView> {
 
             return Transform.scale(
               scale: scale,
-              child: Opacity(opacity: opacity, child: widget.children[index]),
+              child: Opacity(opacity: opacity, child: _pageAt(index)),
             );
           },
         );
@@ -2080,14 +2115,23 @@ class _EasySnapPageViewState extends State<EasySnapPageView> {
   }
 
   Widget _buildWithoutTransitions() {
-    return PageView(
+    return PageView.builder(
       controller: widget.controller,
       physics: const NeverScrollableScrollPhysics(),
       onPageChanged: widget.onPageChanged,
       padEnds: widget.padEnds,
-      children: widget.children,
+      itemCount: widget.wrap ? null : widget.children.length,
+      itemBuilder: (context, index) => _pageAt(index),
     );
   }
+
+  /// The page shown at [index] of the controller, which keeps counting past
+  /// the last child when the pages wrap.
+  ///
+  /// Only neighbouring pages are ever on screen together, and with two or more
+  /// children they are always different ones — which matters, because the
+  /// pages carry global keys and a key may only be in the tree once.
+  Widget _pageAt(int index) => widget.children[index % widget.children.length];
 }
 
 // ---- exposed for tests ------------------------------------------------------

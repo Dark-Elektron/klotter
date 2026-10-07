@@ -4,18 +4,21 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klotter/keypad/keypad.dart';
 import 'package:klotter/keypad/buttons.dart';
+import 'package:klotter/keypad/popup_menu_button.dart';
 import 'package:klotter/walkthrough/walkthrough_service.dart';
 import 'package:klotter/settings/settings_provider.dart';
 import 'package:klotter/utils/app_colors.dart';
 import 'package:klotter/math_renderer/math_editor_controller.dart';
 
-/// Guards the phone keypad's touch-target geometry.
+/// Guards the phone keypad's geometry and arrangement.
 ///
-/// klotter runs a 10-column keypad so the plot and the keys can share the
-/// screen. At 10 columns a 360dp phone gives 36dp-wide keys, which is below
-/// Material's 48dp minimum — so the keys are deliberately taller than wide
-/// (the same trick a phone QWERTY uses). Unlike a keyboard, a calculator has no
-/// autocorrect, so a mis-tap is a wrong answer the user never notices.
+/// klotter's phone keypad is two halves side by side, each five keys across
+/// and four down: the number pad fixed on one side, the function pages
+/// swiping on the other. Ten columns across a 360dp phone gives 36dp-wide
+/// keys, which is below Material's 48dp minimum — so the keys are deliberately
+/// taller than wide (the same trick a phone QWERTY uses). Unlike a keyboard, a
+/// calculator has no autocorrect, so a mis-tap is a wrong answer the user
+/// never notices.
 void main() {
   group('Keypad touch targets', () {
     late WalkthroughService walkthroughService;
@@ -23,15 +26,14 @@ void main() {
     late Map<int, MathEditorController?> mathEditorControllers;
     late Map<int, TextEditingController?> textDisplayControllers;
 
-    setUpAll(() async {
+    setUp(() async {
+      // Fresh for every test, not once for the group: the left-hander tests
+      // save their handedness, and every test after them ran left-handed.
       SharedPreferences.setMockInitialValues({
         'dark_theme': false,
         'multiplication_sign': '×',
         'walkthrough_completed_v2': true,
       });
-    });
-
-    setUp(() async {
       walkthroughService = WalkthroughService();
       settingsProvider = await SettingsProvider.create();
       mathEditorControllers = {0: MathEditorController()};
@@ -118,18 +120,8 @@ void main() {
       );
     });
 
-    testWidgets('the fixed number pad keeps digits left, operators right', (
-      tester,
-    ) async {
-      // Mirrors the old pull-up pad: 5-9 over 0-4 in the left five columns,
-      // operators and editing keys in the right five.
-      tester.view.physicalSize = const Size(360, 800);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-
-      await tester.pumpWidget(buildKeypad(screenWidth: 360));
-      await tester.pumpAndSettle();
-
+    /// Where each main-grid key landed, by its label.
+    List<({Offset pos, String text})> keysOnScreen() {
       final entries = <({Offset pos, String text})>[];
       for (final element in find.byType(MyButton).evaluate()) {
         final size = element.size;
@@ -142,31 +134,118 @@ void main() {
           text: widget.buttonText,
         ));
       }
+      return entries;
+    }
+
+    /// The keys sharing a row with [anchor], left to right, within the half of
+    /// the keypad [anchor] is in.
+    List<String> rowOf(
+      List<({Offset pos, String text})> entries,
+      String anchor, {
+      required double halfWidth,
+    }) {
+      final a = entries.firstWhere((e) => e.text == anchor);
+      final bool leftHalf = a.pos.dx < halfWidth;
+      final row =
+          entries
+              .where(
+                (e) =>
+                    (e.pos.dy - a.pos.dy).abs() < 1.0 &&
+                    (e.pos.dx < halfWidth) == leftHalf,
+              )
+              .toList()
+            ..sort((a, b) => a.pos.dx.compareTo(b.pos.dx));
+      return row.map((e) => e.text).toList();
+    }
+
+    bool isDigit(String text) => RegExp(r'^[0-9]$').hasMatch(text);
+
+    /// Where the trig row of the scientific page is across the screen, by the
+    /// centre of each key. Its keys open a menu on a long press, so they are
+    /// not [MyButton]s and [keysOnScreen] does not see them.
+    List<double> trigRow(WidgetTester tester) => <double>[
+      for (final String l in <String>['sin', 'cos', 'tan', 'log'])
+        tester.getCenter(find.text(l).first).dx,
+    ];
+
+    testWidgets('the number pad is a calculator block under a right thumb', (
+      tester,
+    ) async {
+      // 7 8 9 on top, 0 beside the point, the operators as klator pairs them,
+      // the two keys that destroy work together on top and the action key in
+      // the bottom corner.
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(buildKeypad(screenWidth: 360));
+      await tester.pumpAndSettle();
+
+      final entries = keysOnScreen();
       expect(entries, isNotEmpty);
+      List<String> row(String anchor) => rowOf(entries, anchor, halfWidth: 180);
 
-      List<String> rowOf(String anchor) {
-        final a = entries.firstWhere((e) => e.text == anchor);
-        final row =
-            entries.where((e) => (e.pos.dy - a.pos.dy).abs() < 1.0).toList()
-              ..sort((a, b) => a.pos.dx.compareTo(b.pos.dx));
-        return row.map((e) => e.text).toList();
+      expect(row('7'), <String>['7', '8', '9', '()', '⌫']);
+      expect(row('4'), <String>['4', '5', '6', '+', '−']);
+      expect(row('1'), <String>['1', '2', '3', '×', '÷']);
+      expect(row('0'), <String>['0', '.', 'ᴇ', 'CE', '⌘']);
+
+      // The whole block is the right half, under a right-hander's thumb...
+      for (final e in entries.where((e) => isDigit(e.text))) {
+        expect(
+          e.pos.dx,
+          greaterThanOrEqualTo(180),
+          reason: '${e.text} left its half',
+        );
       }
+      // ...and the function keys are the left half, in reading order.
+      final List<double> trig = trigRow(tester);
+      expect(trig.last, lessThan(180));
+      for (int i = 1; i < trig.length; i++) {
+        expect(trig[i], greaterThan(trig[i - 1]), reason: 'trig row $trig');
+      }
+    });
 
-      expect(
-        rowOf('0').take(5).toList(),
-        equals(<String>['0', '1', '2', '3', '4']),
-        reason: 'digits 0-4 should fill the left half of their row',
-      );
-      expect(
-        rowOf('5').take(5).toList(),
-        equals(<String>['5', '6', '7', '8', '9']),
-        reason: 'digits 5-9 should fill the left half of their row',
-      );
-      // Right half is operators, not digits.
-      expect(
-        rowOf('0').skip(5).any((t) => RegExp(r'^[0-9]$').hasMatch(t)),
-        isFalse,
-      );
+    testWidgets('a left-hander gets the keypad in a mirror', (tester) async {
+      await settingsProvider.setHandedness(Handedness.leftHanded);
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(buildKeypad(screenWidth: 360));
+      await tester.pumpAndSettle();
+
+      final entries = keysOnScreen();
+      for (final e in entries.where((e) => isDigit(e.text))) {
+        expect(
+          e.pos.dx,
+          lessThan(180),
+          reason: '${e.text} stayed on the right',
+        );
+      }
+      // Reflected, not moved: what sat under the dominant thumb still does,
+      // and backspace and the action key are still on the outer edge.
+      expect(rowOf(entries, '7', halfWidth: 180), <String>[
+        '⌫',
+        '()',
+        '9',
+        '8',
+        '7',
+      ]);
+      expect(rowOf(entries, '0', halfWidth: 180), <String>[
+        '⌘',
+        'CE',
+        'ᴇ',
+        '.',
+        '0',
+      ]);
+      // The function keys moved to the right half, and they are reflected
+      // too — the whole keypad is the right-hander's in a mirror.
+      final List<double> trig = trigRow(tester);
+      expect(trig.last, greaterThan(180));
+      for (int i = 1; i < trig.length; i++) {
+        expect(trig[i], lessThan(trig[i - 1]), reason: 'trig row $trig');
+      }
     });
 
     testWidgets('the symbol key is scientific E, never percentage', (
@@ -184,9 +263,7 @@ void main() {
       expect(find.text('ᴇ'), findsOneWidget);
     });
 
-    testWidgets('clear and backspace share the top row; action sits bottom', (
-      tester,
-    ) async {
+    testWidgets('clear is kept away from backspace', (tester) async {
       tester.view.physicalSize = const Size(360, 800);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
@@ -199,8 +276,8 @@ void main() {
         return box.localToGlobal(Offset.zero).dy;
       }
 
-      // '5' anchors the upper number row, '0' the lower one.
-      final upper = yOf('5');
+      // '8' anchors the top number row, '0' the bottom one.
+      final upper = yOf('8');
       final lower = yOf('0');
       expect(lower, greaterThan(upper));
 
@@ -211,10 +288,14 @@ void main() {
         return (y - upper).abs() < (y - lower).abs();
       }
 
-      expect(onUpper('CE'), isTrue, reason: 'clear belongs on the top row');
-      expect(onUpper('⌫'), isTrue, reason: 'backspace joins clear');
+      // A thumb going for backspace that lands one key short should cost a
+      // character, not the expression, so clear sits at the foot beside the
+      // action key and backspace keeps the top corner.
+      expect(onUpper('⌫'), isTrue, reason: 'backspace takes the top corner');
+      expect(onUpper('CE'), isFalse, reason: 'clear belongs at the foot');
       expect(onUpper('⌘'), isFalse, reason: 'action sits bottom right');
       expect(onUpper('ᴇ'), isFalse, reason: 'E sits on the bottom row');
+      expect(onUpper('()'), isTrue, reason: 'brackets sit beside backspace');
     });
 
     testWidgets('extras page pairs related keys in columns', (tester) async {
@@ -225,17 +306,27 @@ void main() {
       await tester.pumpWidget(buildKeypad(screenWidth: 360));
       await tester.pumpAndSettle();
 
-      // Swipe the top rows from scientific to extras. Drag from a
-      // scientific-only key so the gesture lands in the swipeable half and
-      // not on the fixed number pad below it. ≥ serves: the nth root that
-      // used to be dragged from is now inside the square root's long press.
+      // Swipe the function keys from scientific to extras. Drag from a
+      // scientific-only key so the gesture lands on the swiping half and not
+      // on the fixed number pad beside it.
       await tester.drag(find.text('≥'), const Offset(-400, 0));
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pump(const Duration(milliseconds: 400));
 
       // Centres, not left edges: a 4-character label is wider than a
       // 1-character one, so their text origins differ even in the same column.
-      Offset posOf(String label) => tester.getCenter(find.text(label).first);
+      // Found by the key's own label where there is one: asin is drawn as
+      // "arc" over "sin" and d/dx as a fraction, so neither is a text.
+      Offset posOf(String label) {
+        final Finder key = find.byWidgetPredicate(
+          (Widget w) =>
+              (w is PopupMenuCalcButton && w.buttonText == label) ||
+              (w is MyButton && w.buttonText == label),
+        );
+        return tester.getCenter(
+          key.evaluate().isNotEmpty ? key.first : find.text(label).first,
+        );
+      }
       double x(String l) => posOf(l).dx;
       double y(String l) => posOf(l).dy;
 
@@ -246,29 +337,73 @@ void main() {
       expect(y('d/dx'), lessThan(y('∫')));
       expect(x('i'), closeTo(x('π'), 2));
 
-      // Values lead; history takes the last three of the top row.
-      // Redo is a mirrored undo, so both carry U+238C: first is undo.
+      expect(x('ⁿPᵣ'), closeTo(x('∑'), 2));
+
+      // The whole-document keys are one block on the outer edge: clear-all,
+      // undo and redo over settings, export and help. Redo is a mirrored
+      // undo, so both carry U+238C: the first is undo.
       final undoRedo = find.text('⎌');
       final double undoX = tester.getCenter(undoRedo.first).dx;
       final double redoX = tester.getCenter(undoRedo.last).dx;
       final double undoY = tester.getCenter(undoRedo.first).dy;
-
-      // sin and asin lead the block, with i and π one column to their right.
-      // They were the fourth column, which put the keys reached most often in
-      // the middle of the block rather than at the edge.
-      expect(x('sin'), lessThan(x('i')));
-      expect(x('i'), lessThan(undoX));
+      expect(x('⌧'), lessThan(undoX));
       expect(undoX, lessThan(redoX));
-      expect(redoX, lessThan(x('⌧')));
-      expect(undoY, closeTo(y('i'), 2));
+      expect(undoY, closeTo(y('⌧'), 2));
+      expect(undoX, closeTo(x('⇪'), 2));
+      expect(x('ⓘ'), closeTo(redoX, 2));
+      expect(x('☰'), closeTo(x('⌧'), 2));
+      expect(y('☰'), greaterThan(undoY));
 
-      // Utilities take the last two of the bottom row.
-      expect(x('ⓘ'), lessThan(x('☰')));
-      expect(y('ⓘ'), closeTo(y('π'), 2));
-      expect(x('☰'), greaterThan(x('∫')));
+      // Values lead the top row; the document block sits below them.
+      expect(y('i'), lessThan(undoY));
+      expect(x('sin'), lessThan(x('i')));
+
+      // Settings is in the far left corner, out of the way of the thumb on
+      // the numbers — where a tablet has it too.
+      expect(x('☰'), closeTo(x('sin'), 2));
+      expect(tester.getTopLeft(find.text('☰')).dx, lessThan(36));
+      expect(y('☰'), greaterThan(y('d/dx')));
 
       // ANS is gone: the cell index it referred to no longer has a display.
       expect(find.text('ans'), findsNothing);
+    });
+
+    testWidgets('a left-hander finds settings in the far right corner', (
+      tester,
+    ) async {
+      await settingsProvider.setHandedness(Handedness.leftHanded);
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(buildKeypad(screenWidth: 360));
+      await tester.pumpAndSettle();
+
+      await tester.drag(find.text('≥'), const Offset(-400, 0));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      final Offset settings = tester.getCenter(find.text('☰'));
+      // Rightmost of every key on screen, and on the bottom row.
+      for (final e in keysOnScreen()) {
+        expect(
+          e.pos.dx,
+          lessThan(settings.dx),
+          reason: '${e.text} is further right than settings',
+        );
+      }
+      expect(settings.dx, greaterThan(360 - 36));
+      // d/dx is drawn as a fraction, so it is found by its key.
+      final Finder deriv = find.byWidgetPredicate(
+        (Widget w) => w is PopupMenuCalcButton && w.buttonText == 'd/dx',
+      );
+      expect(settings.dy, greaterThan(tester.getCenter(deriv).dy));
+      // The page is the right-hander's reflected, pairs and all.
+      expect(tester.getCenter(find.text('⌧')).dx, closeTo(settings.dx, 2));
+      expect(
+        tester.getCenter(deriv).dx,
+        closeTo(tester.getCenter(find.text('∫')).dx, 2),
+      );
     });
 
     testWidgets('phone keys are taller than wide, like a phone keyboard', (

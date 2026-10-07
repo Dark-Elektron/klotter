@@ -478,15 +478,23 @@ void main() {
     double xOf(WidgetTester tester, String label) =>
         tester.getTopLeft(find.text(label).first).dx;
 
-    testWidgets('right-handed keeps digits on the left half', (tester) async {
+    testWidgets('right-handed has the digits on the right half', (
+      tester,
+    ) async {
       await pumpPhone(tester, Handedness.rightHanded);
-      // 5 and 0 lead their rows; the operators follow.
+      // Under the right thumb, 5 and 0 leading their rows; the operators
+      // follow.
+      expect(xOf(tester, '5'), greaterThanOrEqualTo(180));
       expect(xOf(tester, '5'), lessThan(xOf(tester, '+')));
       expect(xOf(tester, '0'), lessThan(xOf(tester, '.')));
     });
 
-    testWidgets('left-handed moves digits to the right half', (tester) async {
+    testWidgets('left-handed moves the digits to the left half', (
+      tester,
+    ) async {
       await pumpPhone(tester, Handedness.leftHanded);
+      // Reflected: the operators now come first, reading left to right.
+      expect(xOf(tester, '5'), lessThan(180));
       expect(xOf(tester, '5'), greaterThan(xOf(tester, '+')));
       expect(xOf(tester, '0'), greaterThan(xOf(tester, '.')));
     });
@@ -508,9 +516,51 @@ void main() {
     await tester.pumpWidget(host(width: 360, landscape: false));
     await tester.pumpAndSettle();
 
-    // Phone: 2 rows of functions + 2 rows of numbers.
+    // Phone: four rows, the number pad beside the function pages.
     expect(rowCount(tester), equals(4));
-    // And the scientific page is swipeable, so extras is not on screen at once.
-    expect(find.text('sin'), findsOneWidget);
+    // And the scientific page is swipeable, so extras is not on screen at once:
+    // one sin key, not the scientific page's and the extras' both. (Counted
+    // by key, since a phone draws asin as "arc" over a second "sin".)
+    expect(
+      find.byWidgetPredicate(
+        (Widget w) => w is PopupMenuCalcButton && w.buttonText == 'sin',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('every extras key lands in the slot authored for it', (
+    tester,
+  ) async {
+    // The grids place keys by name, and a name is only as good as the list
+    // that pairs it with its key. That list had drifted from the order the
+    // keys are built in, so the slot authored for i showed sin and the one
+    // for u showed i — four keys of each row, each in another's place.
+    await pumpTablet(tester, landscape: true);
+    const double cell = 1280 / 20;
+
+    ({int row, int col}) slotOf(String label) {
+      final Finder key = find.ancestor(
+        of: find.text(label).first,
+        matching: find.byWidgetPredicate(
+          (w) => w is MyButton || w is PopupMenuCalcButton,
+        ),
+      );
+      final Offset at = tester.getCenter(key.first);
+      final double top = tester.getTopLeft(find.byType(CalculatorKeypad)).dy;
+      return (
+        row: ((at.dy - top) / tester.getSize(key.first).height).floor(),
+        col: (at.dx / cell).floor(),
+      );
+    }
+
+    // Row 0 of the landscape grid opens: clear, i, π, √, x², |x|, sin.
+    expect(slotOf('i'), (row: 0, col: 1));
+    expect(slotOf('|x|'), (row: 0, col: 5));
+    // Row 1: undo, redo, asin, !, nPr, u.
+    expect(slotOf('u'), (row: 1, col: 5));
+    expect(slotOf('!'), (row: 1, col: 3));
+    // Row 2 ends its extras block with v.
+    expect(slotOf('v'), (row: 2, col: 5));
   });
 }

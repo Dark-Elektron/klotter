@@ -281,10 +281,12 @@ void main() {
 
           // Rows in the top strip that are a solid run of colour across the
           // bar's width. A bar is 12 px tall, so one bar and two are far apart.
+          // Scanned across most of the width: the bar stands off the right
+          // edge by the width of the number hanging off its end.
           int rows = 0;
           for (int y = 0; y < 60; y++) {
             int run = 0;
-            for (int x = 200; x < 280; x++) {
+            for (int x = 40; x < 290; x++) {
               final int o = (y * 300 + x) * 4;
               if (data.getUint8(o + 3) < 250) continue;
               final int r = data.getUint8(o);
@@ -294,7 +296,7 @@ void main() {
               final int mn = [r, g, b].reduce((a, c) => a < c ? a : c);
               if (mx > 60 && mx - mn > 25) run++;
             }
-            if (run > 60) rows++;
+            if (run > 100) rows++;
           }
           return rows;
         }

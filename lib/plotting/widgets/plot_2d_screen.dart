@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/complex_view.dart';
 import '../models/enums.dart';
 import '../models/plane_slice.dart';
+import '../models/plot_view_state.dart';
 import '../../utils/app_colors.dart';
 import '../parsers/vector_field_parser.dart';
 import '../utils/parametric.dart';
@@ -39,6 +40,9 @@ class Plot2DScreen extends StatefulWidget {
   final ParameterRange uRange;
   final ParameterRange vRange;
   final bool showContour;
+
+  /// Draw the axes — their lines, ticks and numbers. The grid stays.
+  final bool showAxes;
   final SurfaceMode surfaceMode;
   final AppColors colors;
 
@@ -73,12 +77,18 @@ class Plot2DScreen extends StatefulWidget {
     this.uRange = defaultParameterRange,
     this.vRange = defaultParameterRange,
     required this.showContour,
+    this.showAxes = true,
     required this.surfaceMode,
     required this.colors,
     required this.plotTheme,
     this.slice,
     this.externallyInteracting = false,
+    this.initialView,
   });
+
+  /// Where the plot was left, to open on rather than restore a frame late —
+  /// which drew the curves once at the home window and again at the saved one.
+  final PlotViewState? initialView;
 
   @override
   State<Plot2DScreen> createState() => Plot2DScreenState();
@@ -138,6 +148,10 @@ class Plot2DScreenState extends State<Plot2DScreen> {
   @override
   void initState() {
     super.initState();
+    final PlotViewState? saved = widget.initialView;
+    if (saved != null && !saved.isInitial) {
+      restoreWindow(saved.xMin, saved.xMax, saved.yMin, saved.yMax);
+    }
   }
 
   @override
@@ -384,6 +398,7 @@ class Plot2DScreenState extends State<Plot2DScreen> {
                   vectorFields: widget.vectorFields,
                   vectorSeriesBase: widget.vectorSeriesBase,
                   showContour: widget.showContour,
+                  showAxes: widget.showAxes,
                   surfaceMode: widget.surfaceMode,
                   colors: widget.colors,
                   slice: widget.slice,

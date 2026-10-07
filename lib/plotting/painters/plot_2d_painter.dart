@@ -1,6 +1,8 @@
 import 'dart:ui' show Vertices, VertexMode;
 import 'dart:math';
+import 'dart:typed_data' show Float64List;
 import '../../utils/app_colors.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import '../models/complex_view.dart';
 import '../models/enums.dart';
@@ -56,6 +58,10 @@ class Plot2DPainter extends CustomPainter {
               ? const <VectorFieldParser>[]
               : <VectorFieldParser>[vectorParser!]);
   final bool showContour;
+
+  /// Whether the axes are drawn: the two lines through the origin, their
+  /// ticks and their numbers. The grid stays, as the floor does in 3D.
+  final bool showAxes;
   final SurfaceMode surfaceMode;
   final AppColors colors;
 
@@ -93,6 +99,7 @@ class Plot2DPainter extends CustomPainter {
     this.vectorFields = const <VectorFieldParser>[],
     this.vectorSeriesBase = 0,
     required this.showContour,
+    this.showAxes = true,
     required this.surfaceMode,
     required this.colors,
     this.interacting = false,
@@ -115,8 +122,11 @@ class Plot2DPainter extends CustomPainter {
 
   /// True when this line is read as the surface `z = f(x, y)` rather than as a
   /// curve in the plane.
-  static bool _isHeightSurface(PlotExpression p) =>
-      !p.isLevelSet && p.variables.contains('x') && p.variables.contains('y');
+  ///
+  /// Asked by position rather than by name, so a cylindrical height such as
+  /// z = rθ counts too: r and θ are its first two variables the way x and y
+  /// are a Cartesian one's.
+  static bool _isHeightSurface(PlotExpression p) => p.isSurface;
 
   /// The plane [p] is cut on.
   PlaneSlice sliceFor(PlotExpression p) =>
@@ -231,8 +241,12 @@ class Plot2DPainter extends CustomPainter {
         visible - (y - yMin) / (yMax - yMin) * visible;
     final bool showSurface = surfaceMode != SurfaceMode.none;
 
-    _drawGrid(canvas, size, toScreenX, toScreenY);
-    _drawAxes(canvas, size, toScreenX, toScreenY);
+    // The grid is the 2D plot's plane, and goes with the axes, as the floor
+    // does in 3D.
+    if (showAxes) {
+      _drawGrid(canvas, size, toScreenX, toScreenY);
+      _drawAxes(canvas, size, toScreenX, toScreenY);
+    }
 
     // Draw surface (heatmap) if enabled
     if (showSurface) {
@@ -282,8 +296,10 @@ class Plot2DPainter extends CustomPainter {
           // fills the window edge to edge, so it painted over them — the plot
           // came out with no axes at all, only the tick labels that are drawn
           // later. They go back on top.
-          _drawGrid(canvas, size, toScreenX, toScreenY);
-          _drawAxes(canvas, size, toScreenX, toScreenY);
+          if (showAxes) {
+            _drawGrid(canvas, size, toScreenX, toScreenY);
+            _drawAxes(canvas, size, toScreenX, toScreenY);
+          }
         }
         if (complexView.showsPolya) {
           _drawPolyaField(canvas, size, toScreenX, toScreenY);
@@ -327,7 +343,7 @@ class Plot2DPainter extends CustomPainter {
       }
     }
 
-    _drawLabels(canvas, size, toScreenX, toScreenY);
+    if (showAxes) _drawLabels(canvas, size, toScreenX, toScreenY);
     _drawTrace(canvas, size, toScreenX, toScreenY);
   }
 
@@ -1112,10 +1128,6 @@ class Plot2DPainter extends CustomPainter {
   }
 
   /// Shade every point that satisfies an inequality.
-  ///
-  /// Sampled on its own lattice rather than reusing the heatmap grid: this is
-  /// a yes/no test, so the only thing that matters is how closely the edge is
-  /// followed, and the boundary curve is drawn over the top anyway.
   void _drawRegion(
     Canvas canvas,
     Size size,
@@ -1124,45 +1136,160 @@ class Plot2DPainter extends CustomPainter {
     PlotExpression parser,
     Color color,
   ) {
-    const int cells = 110;
-    final double dx = (xMax - xMin) / cells;
-    final double dy = (yMax - yMin) / cells;
-    final double cellW = size.width / cells + 1;
-    final double cellH = size.height / cells + 1;
-
-    // One path of many small rectangles, filled once. A fill per cell would
-    // be 22,500 draw calls a frame.
-    final Path region = Path();
-    for (int i = 0; i < cells; i++) {
-      final double x = xMin + (i + 0.5) * dx;
-      for (int j = 0; j < cells; j++) {
-        final double y = yMin + (j + 0.5) * dy;
-        if (!parser.relation.holds(
-          sliceFor(parser).sample(parser, x, y) - isoFor(parser),
-        )) {
-          continue;
-        }
-        region.addRect(
-          Rect.fromLTWH(
-            toScreenX(xMin + i * dx),
-            toScreenY(yMin + (j + 1) * dy),
-            cellW,
-            cellH,
-          ),
-        );
-      }
-    }
-
     // Strong enough to read as a shaded region rather than a change of
     // background. An unbounded region like x² + y² ≥ 1 covers nearly the whole
     // plot, and at a light tint that is indistinguishable from no shading at
     // all — there is no unshaded area left to compare it against.
     canvas.drawPath(
-      region,
+      _regionPath(size, toScreenX, toScreenY, parser),
       Paint()
         ..color = color.withValues(alpha: 0.38)
         ..style = PaintingStyle.fill,
     );
+  }
+
+  /// The outline [_drawRegion] fills for [parser] on a canvas of [size].
+  @visibleForTesting
+  Path regionPath(PlotExpression parser, Size size) {
+    final double visible = max(1.0, size.height - bottomInset);
+    return _regionPath(
+      size,
+      (double x) => (x - xMin) / (xMax - xMin) * size.width,
+      (double y) => visible - (y - yMin) / (yMax - yMin) * visible,
+      parser,
+    );
+  }
+
+  /// Where an inequality holds, as a path in screen coordinates.
+  ///
+  /// Sampled on a lattice of its own and cut along the boundary, rather than
+  /// filled cell by cell. Whole cells left a staircase along every curved edge
+  /// — on a tablet a cell was a dozen pixels across, and the steps stood out
+  /// well past the boundary line drawn over them. A cell the boundary crosses
+  /// keeps the part on the region's side, its edge placed by interpolating
+  /// between corners as the boundary curve's own march places it, so the
+  /// shading meets the line.
+  Path _regionPath(
+    Size size,
+    double Function(double) toScreenX,
+    double Function(double) toScreenY,
+    PlotExpression parser,
+  ) {
+    final PlotRelation relation = parser.relation;
+    // A few pixels a cell, as the boundary curve is, and coarser while a
+    // gesture is moving the window, as the curve is too.
+    final int cells =
+        interacting
+            ? 110
+            : (max(size.width, size.height) / 6).round().clamp(110, 220);
+    final double dx = (xMax - xMin) / cells;
+    final double dy = (yMax - yMin) / cells;
+    final int side = cells + 1;
+
+    // Turned so the region is where the value is below zero, whichever way
+    // the relation faces. ≠ has no side to cut along — every point but the
+    // boundary holds — so its corners are only in or out.
+    final bool below =
+        relation == PlotRelation.less || relation == PlotRelation.lessEqual;
+    final bool cuts = relation != PlotRelation.notEqual;
+    final PlaneSlice slice = sliceFor(parser);
+    final double iso = isoFor(parser);
+    final Float64List value = Float64List(side * side);
+    for (int i = 0; i <= cells; i++) {
+      final double x = xMin + i * dx;
+      for (int j = 0; j <= cells; j++) {
+        final double v = slice.sample(parser, x, yMin + j * dy) - iso;
+        value[i * side + j] =
+            !v.isFinite
+                ? double.nan
+                : !cuts
+                ? (relation.holds(v) ? -1 : 1)
+                : (below ? v : -v);
+      }
+    }
+    // A corner on the boundary itself belongs to the region only when the
+    // boundary does; either way the sliver it decides is too thin to see.
+    bool inside(double v) => relation.includesBoundary ? v <= 0 : v < 0;
+
+    // Every piece is wound the same way round, clockwise on screen, so where
+    // two overlap by a rounding error their windings add, rather than cancel
+    // to an unshaded sliver.
+    final Path region = Path();
+    final List<Offset> piece = <Offset>[];
+    final Float64List cv = Float64List(4);
+    final Float64List cx = Float64List(4);
+    final Float64List cy = Float64List(4);
+    for (int i = 0; i < cells; i++) {
+      final double left = toScreenX(xMin + i * dx);
+      final double right = toScreenX(xMin + (i + 1) * dx);
+      // A run of whole cells up the column, added as one rectangle.
+      int runFrom = -1;
+      void endRun(int j) {
+        if (runFrom < 0) return;
+        final double top = toScreenY(yMin + j * dy);
+        final double bottom = toScreenY(yMin + runFrom * dy);
+        region.addPolygon(<Offset>[
+          Offset(left, top),
+          Offset(right, top),
+          Offset(right, bottom),
+          Offset(left, bottom),
+        ], true);
+        runFrom = -1;
+      }
+
+      for (int j = 0; j < cells; j++) {
+        // Round the cell from its top left: (i, j+1) (i+1, j+1) (i+1, j)
+        // (i, j).
+        cv[0] = value[i * side + j + 1];
+        cv[1] = value[(i + 1) * side + j + 1];
+        cv[2] = value[(i + 1) * side + j];
+        cv[3] = value[i * side + j];
+        if (cv[0].isNaN || cv[1].isNaN || cv[2].isNaN || cv[3].isNaN) {
+          endRun(j);
+          continue;
+        }
+        int count = 0;
+        for (int c = 0; c < 4; c++) {
+          if (inside(cv[c])) count++;
+        }
+        if (count == 4) {
+          if (runFrom < 0) runFrom = j;
+          continue;
+        }
+        endRun(j);
+        if (count == 0) continue;
+
+        final double top = toScreenY(yMin + (j + 1) * dy);
+        final double bottom = toScreenY(yMin + j * dy);
+        cx[0] = left;
+        cy[0] = top;
+        cx[1] = right;
+        cy[1] = top;
+        cx[2] = right;
+        cy[2] = bottom;
+        cx[3] = left;
+        cy[3] = bottom;
+        // Sutherland–Hodgman against the region's side: the corners inside,
+        // and where each edge crosses over. Interpolating on screen is the
+        // same as in the plane — the mapping between them is linear.
+        piece.clear();
+        for (int c = 0; c < 4; c++) {
+          final int d = (c + 1) & 3;
+          final bool inA = inside(cv[c]);
+          if (inA) piece.add(Offset(cx[c], cy[c]));
+          if (inA != inside(cv[d])) {
+            final double t =
+                cuts && cv[c] != cv[d] ? cv[c] / (cv[c] - cv[d]) : 0.5;
+            piece.add(
+              Offset(cx[c] + (cx[d] - cx[c]) * t, cy[c] + (cy[d] - cy[c]) * t),
+            );
+          }
+        }
+        if (piece.length >= 3) region.addPolygon(piece, true);
+      }
+      endRun(cells);
+    }
+    return region;
   }
 
   /// Trace an equation's solution set.
@@ -1241,43 +1368,116 @@ class Plot2DPainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeCap = StrokeCap.round;
 
+    // The second argument is not the vertical coordinate but the other held
+    // variable: cut at y = c this reads f(x, c), and cut at x = c it reads
+    // f(c, x) with x running along the y axis. What comes back is the height
+    // either way. A sample that throws is a gap, like one that is not finite.
+    final PlaneSlice slice = sliceFor(parser);
+    double at(double x) {
+      try {
+        return slice.sample(parser, x, 0);
+      } catch (_) {
+        return double.nan;
+      }
+    }
+
+    // A rise bigger than half the window between two samples is looked into
+    // before it is drawn — see [_joins].
+    final double span = (yMax - yMin).abs();
+    final double near = span * 0.5;
+
+    // How far past the window a point is still drawn where it is. Beyond this
+    // it is pulled in to it, which keeps the path's coordinates a size the
+    // rasteriser handles while leaving the line's direction across the window
+    // as it was.
+    //
+    // It replaces a fixed cut-off at 1e6 that dropped such points altogether.
+    // That was too far for a small window and nowhere near far enough for a
+    // large one: zoomed out on y = 2000x, every point past x = 500 was over
+    // it, and the line simply stopped there.
+    final double centre = (yMin + yMax) / 2;
+    final double reach = span * 1e3;
+    double drawable(double y) => y.clamp(centre - reach, centre + reach);
+
     final path = Path();
     const steps = 1000;
-    bool started = false;
+    double? lastX;
     double? lastY;
 
     for (int i = 0; i <= steps; i++) {
       final x = xMin + i * (xMax - xMin) / steps;
-      double y;
-      try {
-        // The second argument is not the vertical coordinate but the other
-        // held variable: cut at y = c this reads f(x, c), and cut at x = c it
-        // reads f(c, x) with x running along the y axis. What comes back is
-        // the height either way.
-        y = sliceFor(parser).sample(parser, x, 0);
-      } catch (e) {
-        started = false;
+      final double y = at(x);
+      if (!y.isFinite) {
+        lastX = null;
         lastY = null;
         continue;
       }
-
-      if (y.isFinite && y.abs() < 1e6) {
-        if (lastY != null && (y - lastY).abs() > (yMax - yMin) * 0.5) {
-          started = false;
-        }
-        if (!started) {
-          path.moveTo(toScreenX(x), toScreenY(y));
-          started = true;
-        } else {
-          path.lineTo(toScreenX(x), toScreenY(y));
-        }
-        lastY = y;
+      final Offset point = Offset(toScreenX(x), toScreenY(drawable(y)));
+      if (lastX != null &&
+          lastY != null &&
+          _joins(at, lastX, lastY, x, y, near, _continuityDepth)) {
+        path.lineTo(point.dx, point.dy);
       } else {
-        started = false;
-        lastY = null;
+        path.moveTo(point.dx, point.dy);
       }
+      lastX = x;
+      lastY = y;
     }
     canvas.drawPath(path, paint);
+  }
+
+  /// How many times a large rise between two samples is halved to decide
+  /// whether the curve really runs across it.
+  static const int _continuityDepth = 6;
+
+  /// Whether a curve sampled by [at] runs unbroken from (x0, y0) to (x1, y1),
+  /// rather than jumping between them.
+  ///
+  /// Two neighbouring samples far apart in y are either a steep stretch of a
+  /// continuous curve or a jump — a pole, a step. The old test told them apart
+  /// by the size of the rise alone, more than half the window, and so broke
+  /// both: tan(x) was not joined across its asymptote, but neither was
+  /// y = 2000x, every step of which rises that far, so the line was never
+  /// drawn at all.
+  ///
+  /// So the rise is looked into. Along a continuous stretch the value halfway
+  /// lies between the two ends and each half carries a share of the rise. At a
+  /// pole the halfway value overshoots both ends or is not finite; at a step,
+  /// one half carries all of it. Only the half with the larger rise is
+  /// followed, since a jump would have to be in it, so a steep line costs at
+  /// most [depth] extra samples per step.
+  static bool _joins(
+    double Function(double) at,
+    double x0,
+    double y0,
+    double x1,
+    double y1,
+    double near,
+    int depth,
+  ) {
+    double a = x0, ya = y0, b = x1, yb = y1;
+    for (int level = 0; level < depth; level++) {
+      final double rise = (yb - ya).abs();
+      if (rise <= near) return true;
+      final double xm = (a + b) / 2;
+      final double ym = at(xm);
+      if (!ym.isFinite) return false;
+      final double slack = rise * 1e-9;
+      if (ym < min(ya, yb) - slack || ym > max(ya, yb) + slack) return false;
+      final double left = (ym - ya).abs();
+      final double right = (yb - ym).abs();
+      if (max(left, right) > 0.9 * rise) return false;
+      if (left >= right) {
+        b = xm;
+        yb = ym;
+      } else {
+        a = xm;
+        ya = ym;
+      }
+    }
+    // Still steep after every halving, but it has behaved like a continuous
+    // curve at each one: a line far steeper than the window, not a jump.
+    return true;
   }
 
   /// Crosshair readout: "what is f(2.3)?".
@@ -1802,18 +2002,32 @@ class Plot2DPainter extends CustomPainter {
     Size size,
     double minVal,
     double maxVal, {
-    List<Color> stops = plotColormapStops,
+    List<Color>? stops,
     int row = 0,
   }) {
+    // The ramp in use unless told otherwise; it is a setting, so it cannot be
+    // the parameter's default.
+    final List<Color> ramp = stops ?? plotColormapStops;
     final theme = plotTheme;
     const double barHeight = 12.0;
     const double margin = 10.0;
+    // Clear of the corner: a phone's display is rounded there, and the high
+    // label, which hangs off the bar's right end, was drawn from six pixels
+    // short of the edge — so all but its first digit was off the screen.
+    const double rightMargin = 18.0;
     // Bounded so it neither dominates a wide plot nor vanishes on a narrow
     // one, and always leaves room for a label at each end.
     final double barWidth = (size.width * 0.45).clamp(80.0, 220.0);
 
+    final textStyle = TextStyle(color: theme.colorbarText, fontSize: 10);
+    TextPainter label(double v) => TextPainter(
+      text: TextSpan(text: _formatNumber(v), style: textStyle),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final TextPainter maxTp = label(maxVal);
+
     final barRect = Rect.fromLTWH(
-      size.width - barWidth - margin,
+      size.width - rightMargin - maxTp.width - 4 - barWidth,
       margin + row * (barHeight + 6),
       barWidth,
       barHeight,
@@ -1827,7 +2041,7 @@ class Plot2DPainter extends CustomPainter {
         ..shader = LinearGradient(
           begin: Alignment.centerLeft,
           end: Alignment.centerRight,
-          colors: stops,
+          colors: ramp,
         ).createShader(barRect),
     );
 
@@ -1839,12 +2053,6 @@ class Plot2DPainter extends CustomPainter {
         ..strokeWidth = 1,
     );
 
-    final textStyle = TextStyle(color: theme.colorbarText, fontSize: 10);
-    TextPainter label(double v) => TextPainter(
-      text: TextSpan(text: _formatNumber(v), style: textStyle),
-      textDirection: TextDirection.ltr,
-    )..layout();
-
     // Low at the left end, high at the right, each outside the bar so neither
     // sits on top of the ramp it is labelling.
     final minTp = label(minVal);
@@ -1852,9 +2060,7 @@ class Plot2DPainter extends CustomPainter {
       canvas,
       Offset(barRect.left - minTp.width - 4, barRect.center.dy - 6),
     );
-    label(
-      maxVal,
-    ).paint(canvas, Offset(barRect.right + 4, barRect.center.dy - 6));
+    maxTp.paint(canvas, Offset(barRect.right + 4, barRect.center.dy - 6));
   }
 
   void _drawLabels(
@@ -1953,7 +2159,20 @@ class Plot2DPainter extends CustomPainter {
       old.surfaceMode != surfaceMode ||
       old.traceX != traceX ||
       old.traceFeature != traceFeature ||
-      old.functions != functions ||
+      !listEquals(old.functions, functions) ||
       old.slice != slice ||
-      old.colors != colors;
+      old.colors != colors ||
+      // Each of these changes the picture by itself. Missing from the list,
+      // the arg and ↗ toggles did not redraw, the u and v chips did nothing
+      // until the plot was next panned, and an implicit curve stayed at its
+      // coarse dragging lattice after the finger lifted.
+      old.interacting != interacting ||
+      old.complexView != complexView ||
+      old.uRange != uRange ||
+      old.vRange != vRange ||
+      old.vectorParser != vectorParser ||
+      !listEquals(old.vectorFields, vectorFields) ||
+      old.vectorSeriesBase != vectorSeriesBase ||
+      old.plotTheme != plotTheme ||
+      old.showAxes != showAxes;
 }

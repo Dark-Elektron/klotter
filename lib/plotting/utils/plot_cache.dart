@@ -2,6 +2,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import '../parsers/plot_expression.dart';
+import 'colormap.dart';
 
 /// A small most-recently-used cache.
 ///
@@ -18,8 +19,9 @@ class PlotCache<T> {
   /// Every cache that has been made, so they can all be emptied at once.
   ///
   /// A registry rather than a list written out by hand in
-  /// [releasePlotGeometry]: the caches are private top-level finals in two
-  /// files already, and the next one added would silently not be released.
+  /// [releasePlotGeometry]: the caches are private top-level finals spread
+  /// over several files, and the next one added would silently not be
+  /// released.
   static final List<PlotCache<dynamic>> _live = <PlotCache<dynamic>>[];
 
   final int capacity;
@@ -41,6 +43,19 @@ class PlotCache<T> {
       _entries.remove(_entries.keys.first);
     }
     return value;
+  }
+
+  /// Whether [key] is held, without touching its place in the order.
+  bool contains(Object key) => _entries.containsKey(key);
+
+  /// Hold [value] under [key] as the most recently used, worked out
+  /// elsewhere — off the UI thread, say.
+  void put(Object key, T value) {
+    _entries.remove(key);
+    _entries[key] = value;
+    if (_entries.length > capacity) {
+      _entries.remove(_entries.keys.first);
+    }
   }
 
   void clear() => _entries.clear();
@@ -122,8 +137,14 @@ List<List<double>> cachedHeightGrid(
 /// per projection plus a `Color` list per triangle came to roughly half a
 /// million allocations per frame.
 class LevelMesh {
-  LevelMesh(this.world, this.colors, this.meshLines)
-    : triangleCount = colors.length ~/ 3,
+  LevelMesh(
+    this.world,
+    this.colors,
+    this.reach,
+    this.meshLines,
+    this.meshLineColors,
+    this.meshLineTriangle,
+  ) : triangleCount = colors.length ~/ 3,
       meshLineCount = meshLines.length ~/ 6;
 
   /// World-space vertices, nine floats per triangle: (x, y, z) x 3.
@@ -138,6 +159,9 @@ class LevelMesh {
 
   final int triangleCount;
 
+  /// Each triangle's longest edge, in the same space as [world].
+  final Float32List reach;
+
   /// The surface's grid lines, six floats per segment: (x, y, z) x 2, in the
   /// same view-scaled space as [world].
   ///
@@ -149,12 +173,77 @@ class LevelMesh {
   /// frame to arrive at the same 19,000 segments as the frame before.
   final Float32List meshLines;
 
+  /// The ink each grid line is drawn in, two packed colours per segment — one
+  /// for each end, so a line can fade along its length.
+  ///
+  /// The surface's own lit colour where the line lies, darkened, and fainter
+  /// where its family of planes is giving way to another; see
+  /// [meshInkArgb].
+  final Int32List meshLineColors;
+
   final int meshLineCount;
+
+  /// The triangle each grid line was cut from, one per segment.
+  ///
+  /// A line is lifted towards the camera so its own surface does not cover
+  /// it, and the lift needed is about the size of that triangle — no more, or
+  /// where two sheets of a surface come closer together than the lift, the
+  /// lines of the one behind show through the one in front.
+  final Int32List meshLineTriangle;
 }
 
 /// Room for several surfaces at once plus a previous window, since a cell can
 /// now hold more than one equation on the same axes.
 final PlotCache<LevelMesh> _meshCache = PlotCache<LevelMesh>(8);
+
+/// What identifies a [LevelMesh] in the cache.
+Object _levelMeshKey(
+  PlotExpression f,
+  List<double> bounds,
+  int resolution,
+  double scaleX,
+  double scaleY,
+  double scaleZ,
+  int colouring,
+  List<double>? meshSteps,
+  bool refined,
+) => plotCacheKey(
+  f,
+  <double>[...bounds, scaleX, scaleY, scaleZ, ...?meshSteps],
+  // The colours are baked into the mesh, so what they were made from is part
+  // of its identity. So is whether the grid was built: a mesh made with the
+  // grid off has an empty [LevelMesh.meshLines], and handing that back when
+  // the grid is switched on would draw no grid at all. And whether its thin
+  // parts were looked into, since the one made while the box was moving is
+  // not.
+  (((resolution * 2 + (refined ? 1 : 0)) * 16 + colouring) * 2) +
+      (meshSteps == null ? 0 : 1),
+);
+
+/// Whether [cachedLevelMesh] would hand back a mesh without building one.
+bool hasCachedLevelMesh(
+  PlotExpression f,
+  List<double> bounds,
+  int resolution,
+  double scaleX,
+  double scaleY,
+  double scaleZ,
+  int colouring, {
+  List<double>? meshSteps,
+  bool refined = true,
+}) => _meshCache.contains(
+  _levelMeshKey(
+    f,
+    bounds,
+    resolution,
+    scaleX,
+    scaleY,
+    scaleZ,
+    colouring,
+    meshSteps,
+    refined,
+  ),
+);
 
 /// Flatten marched triangles into a [LevelMesh], cached per window.
 LevelMesh cachedLevelMesh(
@@ -180,19 +269,25 @@ LevelMesh cachedLevelMesh(
   double scaleY,
   double scaleZ,
   Float32List Function() normals,
+  // [light] is how square the surface stands to the key light, from 0 edge-on
+  // to 1 square on — see [keyLightOn]. What that does to the colour is the
+  // caller's to decide.
   int Function(double dataZ, double light) shade,
   int colouring, {
   List<double>? meshSteps,
+  bool refined = true,
 }) {
   return _meshCache.resolve(
-    plotCacheKey(
+    _levelMeshKey(
       f,
-      <double>[...bounds, scaleX, scaleY, scaleZ, ...?meshSteps],
-      // The colours are baked into the mesh, so what they were made from is
-      // part of its identity. So is whether the grid was built: a mesh made
-      // with the grid off has an empty [LevelMesh.meshLines], and handing that
-      // back when the grid is switched on would draw no grid at all.
-      (resolution * 16 + colouring) * 2 + (meshSteps == null ? 0 : 1),
+      bounds,
+      resolution,
+      scaleX,
+      scaleY,
+      scaleZ,
+      colouring,
+      meshSteps,
+      refined,
     ),
     () {
       final tris = march();
@@ -232,56 +327,56 @@ LevelMesh cachedLevelMesh(
           _lightOn(vertexNormals, w + 6, scaleX, scaleY, scaleZ),
         );
       }
+      final _SlicedLines lines =
+          meshSteps == null
+              ? (
+                lines: _noMeshLines,
+                colors: _noMeshColors,
+                triangle: _noMeshColors,
+              )
+              : _sliceMeshLines(
+                world,
+                tris.length,
+                meshSteps,
+                vertexNormals,
+                colors,
+                scaleX,
+                scaleY,
+                scaleZ,
+              );
+      // How big each triangle is, which caps how far a grid line on it is
+      // lifted (see [LevelMesh.meshLineTriangle]).
+      final Float32List reach = Float32List(tris.length);
+      for (int i = 0; i < tris.length; i++) {
+        final int w = i * 9;
+        double longest = 0;
+        for (int e = 0; e < 3; e++) {
+          final int p = w + e * 3;
+          final int q = w + ((e + 1) % 3) * 3;
+          final double dx = world[q] - world[p];
+          final double dy = world[q + 1] - world[p + 1];
+          final double dz = world[q + 2] - world[p + 2];
+          longest = max(longest, dx * dx + dy * dy + dz * dz);
+        }
+        reach[i] = sqrt(longest);
+      }
       return LevelMesh(
         world,
         colors,
-        meshSteps == null
-            ? _noMeshLines
-            : _sliceMeshLines(
-              world,
-              tris.length,
-              meshSteps,
-              vertexNormals,
-              scaleX,
-              scaleY,
-              scaleZ,
-            ),
+        reach,
+        lines.lines,
+        lines.colors,
+        lines.triangle,
       );
     },
   );
 }
 
 final Float32List _noMeshLines = Float32List(0);
+final Int32List _noMeshColors = Int32List(0);
 
-/// Which way the light comes from, in the view's own space.
-///
-/// Fixed to the box rather than to the camera, because that is the only kind
-/// of light whose effect can be worked out once and kept: the camera moves on
-/// every frame of a rotation and the box does not. What the viewer sees is a
-/// surface lit from over their left shoulder that keeps its lighting as it is
-/// turned, which is how a held object behaves.
-final Float64List _lightDirection = () {
-  const double x = -0.35, y = -0.62, z = 0.70;
-  final double len = sqrt(x * x + y * y + z * z);
-  return Float64List.fromList(<double>[x / len, y / len, z / len]);
-}();
-
-/// How lit a surface facing away from the light still is.
-///
-/// Well short of black. The light is two-sided — see [_lightOn] — so what this
-/// floor applies to is a band around the surface rather than a whole far side,
-/// and the point of the shading is to let the eye read a fold, not to stage a
-/// photograph. It also keeps a colour-mapped surface close enough to its
-/// colorbar to still be read against it.
-const double _ambientLight = 0.55;
-
-/// How much light reaches the vertex whose normal starts at [at].
-///
-/// Two-sided: the brightness goes on `|n·l|`, not on `n·l`. Marching gives a
-/// normal pointing the way f increases, and which side of the surface that is
-/// depends on whether the equation was written `f = 0` or `-f = 0` — the same
-/// sphere either way. A one-sided light would have lit one of those two and
-/// left the other in the dark.
+/// How square the vertex whose normal starts at [at] stands to the key light,
+/// from 0 edge-on to 1 square on. See [keyLightOn].
 double _lightOn(
   Float32List normals,
   int at,
@@ -294,69 +389,89 @@ double _lightOn(
   // factor on z than on x and y, and a direction does not carry over by being
   // multiplied by that — it takes the reciprocals. Skip this and a surface in
   // a tall thin window is lit as though it were in a cubic one.
-  final double nx = normals[at] / scaleX;
-  final double ny = normals[at + 1] / scaleY;
-  final double nz = normals[at + 2] / scaleZ;
-  final double len = sqrt(nx * nx + ny * ny + nz * nz);
-  if (len == 0 || !len.isFinite) return 1;
-
-  final double lambert =
-      ((nx * _lightDirection[0] +
-                  ny * _lightDirection[1] +
-                  nz * _lightDirection[2]) /
-              len)
-          .abs();
-  return _ambientLight + (1 - _ambientLight) * lambert;
+  return keyLightOn(
+    normals[at] / scaleX,
+    normals[at + 1] / scaleY,
+    normals[at + 2] / scaleZ,
+  );
 }
 
-/// Which of the three families to leave off this triangle: the one whose axis
-/// points most nearly along the surface normal.
+/// How wide the band is, in direction cosines, over which a family of grid
+/// lines hands over to the next.
+///
+/// Narrow, so most of the surface still carries exactly two families and the
+/// crossings stay as square as the hard switch made them, while the hand-over
+/// is wide enough on a phone to read as a fade rather than a step.
+const double _familyFade = 0.12;
+
+/// How strongly the family of planes on [axis] is drawn where the surface's
+/// normal is (nx, ny, nz), from 0 (left off) to 1 (full ink).
 ///
 /// Two families make a grid; three make a thicket. A plane cuts the surface in
 /// a contour running along `n × axis`, so three axis-aligned families give
 /// three directions in the tangent plane — and wherever the surface faces a
 /// diagonal those sit 60° apart rather than 90°, which is not a grid but a
-/// triangular weave. Measured on `x⁴+y⁴+z⁴−2(x²+y²+z²)+8xyz+1`, two of the
-/// three families crossed at under 40° over 68% of the surface, shallowest 6°.
-/// Those shallow crossings are the long lens shapes and the X's.
+/// triangular weave. The family to lose is the one whose axis lies nearest the
+/// normal: `n × axis` is shortest there, so it contributes least, and the two
+/// left are the most nearly square to each other.
 ///
-/// The one to lose is the axis nearest the normal, because `n × axis` is
-/// shortest there: that family already contributes least, and dropping it
-/// leaves the two whose contours are most nearly square to each other. The
-/// same measurement then reads 82° at the median and nothing at all under 40°.
-///
-/// It costs continuity, which is the honest price. The choice is made triangle
-/// by triangle from a quantity that varies smoothly, so along the curve where
-/// two axes are equally aligned it flips, and a line can stop there. Ends that
-/// stop mid-surface go from 0.7% to 5.7% on that surface — 96.8% of segments
-/// still join at both ends — and a line that stops reads as far less wrong
-/// than a mesh that crosses itself at 6°.
-int _weakestAxis(
-  Float32List normals,
-  int at,
-  double scaleX,
-  double scaleY,
-  double scaleZ,
-) {
-  if (at + 8 >= normals.length) return -1;
-  // The average of the three corners, so that neighbouring triangles across a
-  // shared edge tend to agree and the flip stays on one curve instead of
-  // speckling. In view space, as the light is: the box is squashed onto the
-  // screen by a different factor on z, and the grid is seen after that.
-  double nx = 0, ny = 0, nz = 0;
-  for (int v = 0; v < 3; v++) {
-    nx += normals[at + v * 3];
-    ny += normals[at + v * 3 + 1];
-    nz += normals[at + v * 3 + 2];
-  }
-  nx /= scaleX;
-  ny /= scaleY;
-  nz /= scaleZ;
+/// That family used to be dropped outright, triangle by triangle, and along the
+/// curve where two axes tie for nearest the choice flipped from one to the
+/// other — so lines stopped dead in the middle of the surface, 5.7% of segment
+/// ends on x⁴+y⁴+z⁴−2(x²+y²+z²)+8xyz+1. Here the two candidates share the tie
+/// instead: both are drawn at half strength on the curve itself and recover
+/// over [_familyFade] either side of it, so a line that is giving way fades out
+/// rather than ending.
+double _familyWeight(double nx, double ny, double nz, int axis) {
+  final double len = sqrt(nx * nx + ny * ny + nz * nz);
+  if (len == 0 || !len.isFinite) return 1;
+  final double ax = nx.abs() / len;
+  final double ay = ny.abs() / len;
+  final double az = nz.abs() / len;
 
-  final double ax = nx.abs(), ay = ny.abs(), az = nz.abs();
-  if (!(ax + ay + az).isFinite) return -1;
-  if (ax >= ay && ax >= az) return 0;
-  return ay >= az ? 1 : 2;
+  // The two axes nearest the normal, nearest first.
+  int first = 0, second = 1;
+  double a1 = ax, a2 = ay;
+  if (ay > ax) {
+    first = 1;
+    second = 0;
+    a1 = ay;
+    a2 = ax;
+  }
+  if (az > a1) {
+    second = first;
+    a2 = a1;
+    first = 2;
+    a1 = az;
+  } else if (az > a2) {
+    second = 2;
+    a2 = az;
+  }
+  if (axis != first && axis != second) return 1;
+
+  // 0 on the tie, 1 once one axis is clearly the nearer.
+  final double x = ((a1 - a2) / _familyFade).clamp(0.0, 1.0);
+  final double t = x * x * (3 - 2 * x);
+  return axis == first ? 0.5 * (1 - t) : 0.5 * (1 + t);
+}
+
+/// Grid lines cut from a surface, with the ink each end is drawn in and the
+/// triangle each came from (see [LevelMesh.meshLineTriangle]).
+typedef _SlicedLines =
+    ({Float32List lines, Int32List colors, Int32List triangle});
+
+/// [a] to [b] by [t], channel by channel, on packed colours.
+int _lerpArgb(int a, int b, double t) {
+  int channel(int shift) {
+    final int ca = (a >> shift) & 0xFF;
+    final int cb = (b >> shift) & 0xFF;
+    return (ca + (cb - ca) * t).round().clamp(0, 255);
+  }
+
+  return (channel(24) << 24) |
+      (channel(16) << 16) |
+      (channel(8) << 8) |
+      channel(0);
 }
 
 /// Cut the surface with evenly spaced planes on each axis.
@@ -366,24 +481,35 @@ int _weakestAxis(
 /// on a curved shape means. The triangles' own edges were tried first and were
 /// the wrong idea: marching produces irregular triangles, so their edges read
 /// as scribble rather than as a grid.
-Float32List _sliceMeshLines(
+///
+/// Each end of each piece carries its own ink: the surface's lit colour at
+/// that point ([surfaceColors], interpolated along the edge the way the
+/// triangle's own colour is), darkened by how strongly its family is drawn
+/// there. A line therefore takes the light the surface takes, and fades where
+/// its family gives way.
+_SlicedLines _sliceMeshLines(
   Float32List world,
   int triangleCount,
   List<double> steps,
   Float32List normals,
+  Int32List surfaceColors,
   double scaleX,
   double scaleY,
   double scaleZ,
 ) {
   final List<double> out = <double>[];
-  final List<double> hits = <double>[];
+  final List<int> inks = <int>[];
+  final List<int> from = <int>[];
+
+  // Up to three crossings per cut: the position, normal and colour of each.
+  final Float64List pos = Float64List(9);
+  final Float64List nrm = Float64List(9);
+  final Int32List col = Int32List(3);
 
   for (int t = 0; t < triangleCount; t++) {
     final int w = t * 9;
-    final int skip = _weakestAxis(normals, w, scaleX, scaleY, scaleZ);
 
     for (int axis = 0; axis < 3; axis++) {
-      if (axis == skip) continue;
       final double step = steps[axis];
       if (step <= 0) continue;
 
@@ -399,34 +525,81 @@ Float32List _sliceMeshLines(
       for (int k = (lo / step).ceil(); k * step <= hi; k++) {
         final double cut = k * step;
         // Where each edge of the triangle meets the plane. A triangle crossing
-        // a plane meets it in exactly two points, which is the piece of the
-        // grid line lying on this triangle.
-        hits.clear();
+        // a plane meets it in two points, which is the piece of the grid line
+        // lying on this triangle.
+        int found = 0;
         for (int e = 0; e < 3; e++) {
-          final int p = w + e * 3;
-          final int q = w + ((e + 1) % 3) * 3;
+          final int vp = e;
+          final int vq = (e + 1) % 3;
+          final int p = w + vp * 3;
+          final int q = w + vq * 3;
           final double va = world[p + axis];
           final double vb = world[q + axis];
           if ((va < cut && vb < cut) || (va > cut && vb > cut)) continue;
           if (va == vb) continue;
           final double s = (cut - va) / (vb - va);
+          final int at = found * 3;
           for (int comp = 0; comp < 3; comp++) {
-            hits.add(world[p + comp] + (world[q + comp] - world[p + comp]) * s);
+            pos[at + comp] =
+                world[p + comp] + (world[q + comp] - world[p + comp]) * s;
+            nrm[at + comp] =
+                normals[p + comp] + (normals[q + comp] - normals[p + comp]) * s;
           }
+          col[found] = _lerpArgb(
+            surfaceColors[t * 3 + vp],
+            surfaceColors[t * 3 + vq],
+            s,
+          );
+          found++;
         }
-        if (hits.length < 6) continue;
-        // A plane clipping a corner meets the triangle twice in the same
-        // place. Between a tenth and a sixth of the cuts come out this way,
-        // and every one of them was kept: a segment with no length draws
-        // nothing, but it still took a slot in the vertex buffer, an entry in
-        // the depth sort and its share of the memory.
-        if (hits[0] == hits[3] && hits[1] == hits[4] && hits[2] == hits[5]) {
-          continue;
+        if (found < 2) continue;
+
+        // A plane through a corner meets the two edges sharing it at the same
+        // point. The piece wanted then runs from there to the third crossing;
+        // with none, the plane only grazes the corner and there is nothing to
+        // draw — and a piece with no length still takes a slot in the vertex
+        // buffer, an entry in the depth sort and its share of the memory.
+        int second = 1;
+        if (pos[0] == pos[3] && pos[1] == pos[4] && pos[2] == pos[5]) {
+          if (found < 3) continue;
+          second = 2;
         }
-        out.addAll(hits.getRange(0, 6));
+
+        final int b = second * 3;
+        final double w0 = _familyWeight(
+          nrm[0] / scaleX,
+          nrm[1] / scaleY,
+          nrm[2] / scaleZ,
+          axis,
+        );
+        final double w1 = _familyWeight(
+          nrm[b] / scaleX,
+          nrm[b + 1] / scaleY,
+          nrm[b + 2] / scaleZ,
+          axis,
+        );
+        // Wholly given way: left out rather than drawn in the surface's own
+        // colour, which would be work for nothing visible.
+        if (w0 < 0.02 && w1 < 0.02) continue;
+
+        out
+          ..add(pos[0])
+          ..add(pos[1])
+          ..add(pos[2])
+          ..add(pos[b])
+          ..add(pos[b + 1])
+          ..add(pos[b + 2]);
+        inks
+          ..add(meshInkArgb(col[0], w0))
+          ..add(meshInkArgb(col[second], w1));
+        from.add(t);
       }
     }
   }
 
-  return Float32List.fromList(out);
+  return (
+    lines: Float32List.fromList(out),
+    colors: Int32List.fromList(inks),
+    triangle: Int32List.fromList(from),
+  );
 }

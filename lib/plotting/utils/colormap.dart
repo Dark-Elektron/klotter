@@ -13,25 +13,82 @@ Color _rampLerp(List<Color> stops, double t) {
   return Color.lerp(stops[i], stops[i + 1], x - i)!;
 }
 
-/// Jet: the classic rainbow ramp, dark blue through cyan, yellow and red.
+/// Which ramp a value is coloured with — chosen in the settings.
+enum PlotPalette {
+  /// Google's Turbo: a rainbow that runs smoothly in lightness, without jet's
+  /// bright cyan and yellow bands, which read as ridges that are not in the
+  /// data. The default: it keeps the rainbow's spread of hues, which separate
+  /// levels well on a shaded surface.
+  turbo,
+
+  /// Perceptually uniform and safe under colour-vision deficiency; lightness
+  /// rises steadily from dark purple to yellow.
+  viridis,
+}
+
+/// The ramp in use. Set from the settings, which own the choice; every
+/// colouring by value reads it through [plotColormap] and
+/// [plotColormapStops], so a colorbar and the surface it labels cannot
+/// disagree about which ramp they mean.
+PlotPalette activePlotPalette = PlotPalette.turbo;
+
+/// Turbo at [t], from the polynomial fit published with it (Mikhailov, 2019).
 ///
-/// Chosen deliberately. Note the trade-off it carries: jet is not perceptually
-/// uniform — its lightness rises and falls across the range, so bright bands at
-/// cyan and yellow can read as ridges that are not in the data, and it loses
-/// separation under the common forms of colour-vision deficiency. On a shaded
-/// 3D surface it also competes with the lighting, which encodes form through
-/// lightness. [viridisColormap] remains available if that ever matters.
-const List<Color> _jet = <Color>[
-  Color(0xFF000080),
-  Color(0xFF0000FF),
-  Color(0xFF00FFFF),
-  Color(0xFFFFFF00),
-  Color(0xFFFF0000),
-  Color(0xFF800000),
-];
+/// A close fit rather than the reference table: through the body of the ramp
+/// the two are indistinguishable, and at the very ends the fit is a few
+/// per cent off — its darkest violet is a shade greyer. The table is 256 rows
+/// for a difference no one could point to on a surface.
+Color _turboAt(double t) {
+  double channel(
+    double c0,
+    double c1,
+    double c2,
+    double c3,
+    double c4,
+    double c5,
+  ) =>
+      (c0 + t * (c1 + t * (c2 + t * (c3 + t * (c4 + t * c5))))).clamp(0.0, 1.0);
+  final double r = channel(
+    0.13572138,
+    4.61539260,
+    -42.66032258,
+    132.13108234,
+    -152.94239396,
+    59.28637943,
+  );
+  final double g = channel(
+    0.09140261,
+    2.19418839,
+    4.84296658,
+    -14.18503333,
+    4.27729857,
+    2.82956604,
+  );
+  final double b = channel(
+    0.10667330,
+    12.64194608,
+    -60.58204836,
+    110.36276771,
+    -89.90310912,
+    27.34824973,
+  );
+  return Color.fromARGB(
+    255,
+    (r * 255).round(),
+    (g * 255).round(),
+    (b * 255).round(),
+  );
+}
+
+/// Turbo sampled into evenly spaced stops, so the colorbar — a gradient over
+/// stops — and [plotColormap] are the same ramp. Thirty-three is fine enough
+/// that interpolating between them is indistinguishable from the curve.
+final List<Color> _turbo = List<Color>.unmodifiable(<Color>[
+  for (int i = 0; i <= 32; i++) _turboAt(i / 32),
+]);
 
 /// Viridis: perceptually uniform and colour-vision-deficiency safe, monotonic
-/// in lightness. Kept as an alternative to [plotColormap].
+/// in lightness. One of the two choices of [PlotPalette].
 const List<Color> _viridis = <Color>[
   Color(0xFF440154),
   Color(0xFF472D7B),
@@ -55,7 +112,7 @@ const List<Color> _tealRamp = <Color>[
   Color(0xFF0B3D44),
 ];
 
-/// The perceptually uniform alternative, should it be wanted again.
+/// Viridis at [t], whichever ramp is in use.
 Color viridisColormap(double t) => _rampLerp(_viridis, t);
 
 /// How many discrete levels the banded ramp uses.
@@ -88,8 +145,9 @@ Color plotColormapBanded(double t, {int bands = plotColorBands}) {
   return (index: index, lower: index / bands, upper: (index + 1) / bands);
 }
 
-/// Default magnitude ramp for surfaces, contours and colorbars.
-Color plotColormap(double t) => _rampLerp(_jet, t);
+/// The magnitude ramp for surfaces, contours and colorbars — the one chosen
+/// in the settings (see [PlotPalette]).
+Color plotColormap(double t) => _rampLerp(plotColormapStops, t);
 
 /// The stops behind [plotColormap], in order from low to high.
 ///
@@ -98,7 +156,8 @@ Color plotColormap(double t) => _rampLerp(_jet, t);
 /// the ramp into one row of pixels per bar height instead quantises it to as
 /// many steps as the bar is tall, which on a high-density screen shows as
 /// bands with hard edges.
-const List<Color> plotColormapStops = _jet;
+List<Color> get plotColormapStops =>
+    activePlotPalette == PlotPalette.viridis ? _viridis : _turbo;
 
 // ============================================================
 // PER-SURFACE RAMPS
@@ -241,12 +300,131 @@ Color applyShading(Color base, double factor) {
   return Color.lerp(shadowTint, base, factor.clamp(0.0, 1.0))!;
 }
 
-/// Atmospheric depth cue: wash distant geometry toward the background so far
-/// parts of the surface recede. [depth01] is 0 at the nearest quad and 1 at
-/// the farthest.
-Color applyDepthCue(Color color, double depth01, Color background) {
-  const double maxWash = 0.28;
-  return Color.lerp(color, background, depth01.clamp(0.0, 1.0) * maxWash)!;
+// ============================================================
+// SURFACE LIGHT
+//
+// One light for every kind of surface. Level surfaces were lit by a fixed key
+// light; height, complex and parametric surfaces by how squarely they faced the
+// camera — so a sphere and a paraboloid on the same axes were lit as if in two
+// different rooms, and the camera-facing kind lost its shape exactly where it
+// faced you.
+// ============================================================
+
+/// Which way the key light comes from, in the box's own space before the
+/// camera turns it: from over the viewer's left shoulder at the default view.
+///
+/// Fixed to the box rather than to the camera, so a surface keeps its lighting
+/// as it is turned — which is how a held object behaves — and the lit colour
+/// can be worked out once with the geometry instead of on every frame.
+final ({double x, double y, double z}) keyLight = () {
+  const double x = -0.35, y = -0.62, z = 0.70;
+  final double len = math.sqrt(x * x + y * y + z * z);
+  return (x: x / len, y: y / len, z: z / len);
+}();
+
+/// How square a surface with normal (nx, ny, nz) stands to [keyLight], from
+/// 0 edge-on to 1 square on.
+///
+/// Two-sided: marching gives a normal pointing the way f increases, and which
+/// side that is depends on whether the equation was written `f = 0` or
+/// `-f = 0` — the same sphere either way.
+double keyLightOn(double nx, double ny, double nz) {
+  final double len = math.sqrt(nx * nx + ny * ny + nz * nz);
+  if (len == 0 || !len.isFinite) return 1;
+  return ((nx * keyLight.x + ny * keyLight.y + nz * keyLight.z) / len).abs();
+}
+
+/// How much of a surface's colour survives in its deepest shade.
+const double _shadowKeep = 0.40;
+
+/// The blue a shade picks up instead of falling to black, per channel.
+///
+/// Real shade is lit by the sky, so it turns cool; shade that only darkens
+/// greys every hue towards the same mud, which is what made a lit surface read
+/// as flat. Small enough that a dark surface does not visibly brighten.
+const double _shadowTintR = 0.04;
+const double _shadowTintG = 0.06;
+const double _shadowTintB = 0.13;
+
+/// [base] under the key light, with [lambert] from [keyLightOn].
+///
+/// Square to the light it is exactly [base] — the colour the colorbar and the
+/// row's swatch show — and it only ever darkens from there, never brightens,
+/// so no colour appears on a surface that is not in its legend. Turned away it
+/// falls toward a darker, cooler version of itself rather than towards black.
+///
+/// [strength] is how far into the shade it may go: 1 for a solid surface,
+/// whose colour carries nothing but form, and less for one coloured by value,
+/// whose colour has to stay close enough to the colorbar to be read off it.
+int litSurfaceArgb(int base, double lambert, {double strength = 1}) {
+  final double r = ((base >> 16) & 0xFF) / 255;
+  final double g = ((base >> 8) & 0xFF) / 255;
+  final double b = (base & 0xFF) / 255;
+  final double shade = (1 - lambert.clamp(0.0, 1.0)) * strength;
+  int channel(double c, double tint) {
+    // Held at or below the colour itself: on a channel that is already near
+    // black the tint would otherwise lift it, and the shade would come out
+    // brighter than the lit side.
+    final double dark = math.min(c, c * _shadowKeep + tint);
+    return ((c + (dark - c) * shade).clamp(0.0, 1.0) * 255).round();
+  }
+
+  return (base & 0xFF000000) |
+      (channel(r, _shadowTintR) << 16) |
+      (channel(g, _shadowTintG) << 8) |
+      channel(b, _shadowTintB);
+}
+
+/// How dark a mesh line is against the surface it lies on, at full weight.
+const double meshInkDepth = 0.58;
+
+/// The colour of a mesh line drawn over [surface], which is the surface's own
+/// colour where the line lies — already lit.
+///
+/// A darker shade of the surface rather than black. A black line keeps its
+/// value whatever the light does around it, so the grid reads as a wire cage
+/// hung in front of the shape; a line that is the surface's own colour, only
+/// deeper, takes the same light and the same hue as the surface and reads as
+/// drawn on it.
+///
+/// [weight] fades the line: 1 is full ink, 0 is no line at all.
+int meshInkArgb(int surface, double weight) {
+  final double k = 1 - meshInkDepth * weight.clamp(0.0, 1.0);
+  int channel(int shift) =>
+      ((((surface >> shift) & 0xFF) * k).round()).clamp(0, 255);
+  return (surface & 0xFF000000) |
+      (channel(16) << 16) |
+      (channel(8) << 8) |
+      channel(0);
+}
+
+/// How far the farthest part of a 3D surface is washed towards the ground
+/// behind it, the nearest part not at all.
+///
+/// Distance is what air does to colour, and it is the cue a rotating surface
+/// most lacks: without it the far side of a shape is as vivid as the near
+/// one, and the eye has nothing but the perspective to sort them by. A third
+/// of the way is enough to set the back behind the front without washing out
+/// the colours a colorbar has to be read against.
+const double depthFog = 0.32;
+
+/// [argb] washed [amount] of the way towards [fog], keeping its alpha.
+int fogArgb(int argb, double amount, int fog) {
+  if (!(amount > 0)) return argb;
+  return fogBlend(argb, amount >= 1 ? 256 : (amount * 256).toInt(), fog);
+}
+
+/// [argb] washed [k] / 256 of the way towards [fog], keeping its alpha.
+///
+/// Integers only, with the weight worked out by the caller: this runs for
+/// every vertex of every frame of a rotation, a hundred thousand times or more.
+int fogBlend(int argb, int k, int fog) {
+  if (k <= 0) return argb;
+  final int keep = 256 - k;
+  final int r = (((argb >> 16) & 0xFF) * keep + ((fog >> 16) & 0xFF) * k) >> 8;
+  final int g = (((argb >> 8) & 0xFF) * keep + ((fog >> 8) & 0xFF) * k) >> 8;
+  final int b = ((argb & 0xFF) * keep + (fog & 0xFF) * k) >> 8;
+  return (argb & 0xFF000000) | (r << 16) | (g << 8) | b;
 }
 
 /// The colour standing for a complex value in a domain-coloured plot.

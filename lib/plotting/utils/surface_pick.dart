@@ -8,6 +8,7 @@ import '../models/complex_view.dart';
 import '../models/enums.dart';
 import '../parsers/plot_expression.dart';
 import '../parsers/vector_field_parser.dart';
+import 'level_set.dart';
 import 'parametric.dart';
 
 /// A point on a surface, in data coordinates, with the line it came from.
@@ -138,15 +139,64 @@ class PlotCamera {
 
 /// One surface a touch can land on.
 ///
-/// Either an equation to solve for zero or a height to compare the ray's own z
-/// against — never both.
+/// An equation to solve for zero, a height to compare the ray's own z
+/// against, or a traced line whose drawn triangles the ray is tested against
+/// — exactly one of them.
 class _Pickable {
-  _Pickable({required this.index, this.levelSet, this.height});
+  _Pickable({required this.index, this.levelSet, this.height, this.traced});
 
   /// Which of the cell's lines this came from, or [vectorCurveIndex].
   final int index;
   final PlotExpression? levelSet;
   final double Function(double x, double y)? height;
+
+  /// A line traced by sweeping θ (see [PlotExpression.sweepsTheta]), or a
+  /// sampled polar equation drawn one address at a time (see
+  /// [PlotExpression.equationSheets]).
+  ///
+  /// Not solved for zero along the ray: its equation, sampled, only knows the
+  /// points with a radius of zero or more and θ in one turn, so a tap on a
+  /// petal drawn by a negative r found nothing there. What is drawn is a set
+  /// of triangles, so that is what the ray is tested against.
+  final PlotExpression? traced;
+}
+
+/// How far along the ray from [from] to [to] it first passes through one of
+/// [triangles], as a fraction of the way, or null when it misses them all.
+///
+/// Möller–Trumbore, in data coordinates: the box is stretched differently on
+/// each axis on screen, but that stretch is affine and leaves where a line
+/// meets a plane where it was.
+double? _firstTriangleHit(
+  List<LevelTriangle> triangles,
+  (double, double, double) from,
+  (double, double, double) to,
+) {
+  final (double ox, double oy, double oz) = from;
+  final double dx = to.$1 - ox, dy = to.$2 - oy, dz = to.$3 - oz;
+  double? first;
+  for (final LevelTriangle t in triangles) {
+    final double e1x = t.b.x - t.a.x, e1y = t.b.y - t.a.y, e1z = t.b.z - t.a.z;
+    final double e2x = t.c.x - t.a.x, e2y = t.c.y - t.a.y, e2z = t.c.z - t.a.z;
+    final double px = dy * e2z - dz * e2y;
+    final double py = dz * e2x - dx * e2z;
+    final double pz = dx * e2y - dy * e2x;
+    final double det = e1x * px + e1y * py + e1z * pz;
+    if (det == 0 || !det.isFinite) continue;
+    final double inv = 1 / det;
+    final double sx = ox - t.a.x, sy = oy - t.a.y, sz = oz - t.a.z;
+    final double u = (sx * px + sy * py + sz * pz) * inv;
+    if (u < 0 || u > 1) continue;
+    final double qx = sy * e1z - sz * e1y;
+    final double qy = sz * e1x - sx * e1z;
+    final double qz = sx * e1y - sy * e1x;
+    final double v = (dx * qx + dy * qy + dz * qz) * inv;
+    if (v < 0 || u + v > 1) continue;
+    final double along = (e2x * qx + e2y * qy + e2z * qz) * inv;
+    if (along < 0 || along > 1) continue;
+    if (first == null || along < first) first = along;
+  }
+  return first;
 }
 
 /// The complex components on show, in the order they are drawn.
@@ -219,7 +269,15 @@ SurfaceHit? pickSurface(
       continue;
     }
 
-    if (curve.isLevelSet) {
+    // A traced line, or a sampled polar equation drawn one address at a time:
+    // either way what is on screen is a set of triangles, and that is what a
+    // tap is tested against. Solving the equation along the ray instead would
+    // look for one value standing for every address, which leaps where
+    // branches meet.
+    if (curve.isLevelSet &&
+        (curve.sweepsTheta || curve.equationSheets.isNotEmpty)) {
+      targets.add(_Pickable(index: i, traced: curve));
+    } else if (curve.isLevelSet) {
       targets.add(_Pickable(index: i, levelSet: curve));
     } else if (curve.isSurface) {
       targets.add(
@@ -247,6 +305,36 @@ SurfaceHit? pickSurface(
   }
 
   for (final _Pickable target in targets) {
+    final PlotExpression? traced = target.traced;
+    if (traced != null) {
+      // The same triangles the painter drew, from the same cache when they
+      // are already made.
+      final List<LevelTriangle> drawn =
+          marchedSurface(
+            traced,
+            -camera.rangeX,
+            camera.rangeX,
+            -camera.rangeY,
+            camera.rangeY,
+            -camera.rangeZ,
+            camera.rangeZ,
+            resolution: Plot3DPainter.levelResolution,
+          ).triangles;
+      final double? along = _firstTriangleHit(
+        drawn,
+        camera.unproject(screen, near),
+        camera.unproject(screen, far),
+      );
+      if (along == null) continue;
+      final double hit = near + (far - near) * along;
+      if (hit < bestDepth) {
+        final (double x, double y, double z) = camera.unproject(screen, hit);
+        bestDepth = hit;
+        best = (x: x, y: y, z: z, curveIndex: target.index, u: null, v: null);
+      }
+      continue;
+    }
+
     // Signed distance to the surface along the ray, or NaN where there is
     // nothing to compare against.
     double at(double depth) {
@@ -275,6 +363,21 @@ SurfaceHit? pickSurface(
           value.isFinite &&
           previous != 0 &&
           previous.isNegative != value.isNegative;
+
+      // A change of sign the value leaps across rather than passes through —
+      // a pole, a step, θ coming round, or a sampled polar line switching
+      // from one address to another — has no surface in it, and the walk
+      // goes on past it (see [crossesZero]).
+      if (crossed &&
+          !crossesZero(
+            (double t) => at(previousDepth + (depth - previousDepth) * t),
+            previous,
+            value,
+          )) {
+        previousDepth = depth;
+        previous = value;
+        continue;
+      }
 
       if (value == 0 || crossed) {
         double hit = depth;

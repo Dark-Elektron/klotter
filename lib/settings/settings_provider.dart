@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../math_engine/math_engine.dart';
 import '../math_renderer/renderer.dart';
+import '../plotting/utils/colormap.dart';
 import '../utils/constants.dart';
-import '../utils/texture_generator.dart';
 
 enum NumberFormat {
   automatic, // Scientific only for very large/small numbers
@@ -80,11 +80,11 @@ class SettingsProvider extends ChangeNotifier {
   bool _useScientificNotationButton = false;
   double _borderRadius = 5.0;
   double _buttonSpacing = 1.0;
-  TextureType _textureType = TextureType.none;
   String _fontFamily = FONTFAMILY;
   KeypadColorMode _keypadColorMode = KeypadColorMode.themeBased;
   Handedness _handedness = Handedness.rightHanded;
   PlotColorMode _plotColorMode = PlotColorMode.themeBased;
+  PlotPalette _plotPalette = PlotPalette.turbo;
 
   // Getters
   double get precision => _precision;
@@ -111,13 +111,15 @@ class SettingsProvider extends ChangeNotifier {
   bool get useScientificNotationButton => _useScientificNotationButton;
   double get borderRadius => _borderRadius;
   double get buttonSpacing => _buttonSpacing;
-  TextureType get textureType => _textureType;
   String get fontFamily => _fontFamily;
   KeypadColorMode get keypadColorMode => _keypadColorMode;
 
   /// Applies to both the tablet block order and the phone's number pad.
   Handedness get handedness => _handedness;
   PlotColorMode get plotColorMode => _plotColorMode;
+
+  /// The ramp surfaces and colorbars are coloured with by value.
+  PlotPalette get plotPalette => _plotPalette;
 
   // Static method to create provider with preloaded settings
   static Future<SettingsProvider> create() async {
@@ -134,13 +136,11 @@ class SettingsProvider extends ChangeNotifier {
     String multiplicationSign = '×',
     NumberFormat numberFormat = NumberFormat.automatic,
     bool useScientificNotationButton = false,
-    TextureType textureType = TextureType.none,
     String? fontFamily,
   }) : _themeType = themeType,
        _multiplicationSign = multiplicationSign,
        _numberFormat = numberFormat,
        _useScientificNotationButton = useScientificNotationButton,
-       _textureType = textureType,
        _fontFamily = fontFamily ?? FONTFAMILY;
 
   // Factory constructor for tests
@@ -149,7 +149,6 @@ class SettingsProvider extends ChangeNotifier {
     String multiplicationSign = '×',
     NumberFormat numberFormat = NumberFormat.automatic,
     bool useScientificNotationButton = false,
-    TextureType textureType = TextureType.none,
     String? fontFamily,
   }) {
     return SettingsProvider._forTesting(
@@ -157,7 +156,6 @@ class SettingsProvider extends ChangeNotifier {
       multiplicationSign: multiplicationSign,
       numberFormat: numberFormat,
       useScientificNotationButton: useScientificNotationButton,
-      textureType: textureType,
       fontFamily: fontFamily,
     );
   }
@@ -208,17 +206,17 @@ class SettingsProvider extends ChangeNotifier {
       orElse: () => NumberFormat.automatic,
     );
 
-    // Load texture type
-    String textureStr = prefs.getString('textureType') ?? 'smoothNoise';
-    _textureType = TextureType.values.firstWhere(
-      (e) => e.name == textureStr,
-      orElse: () => TextureType.none,
-    );
-
     // Load font family
     _fontFamily = prefs.getString('fontFamily') ?? FONTFAMILY;
 
     // Load keypad color mode
+    final String paletteStr = prefs.getString('plotPalette') ?? 'turbo';
+    _plotPalette = PlotPalette.values.firstWhere(
+      (e) => e.name == paletteStr,
+      orElse: () => PlotPalette.turbo,
+    );
+    activePlotPalette = _plotPalette;
+
     String plotColorStr = prefs.getString('plotColorMode') ?? 'themeBased';
     _plotColorMode = PlotColorMode.values.firstWhere(
       (e) => e.name == plotColorStr,
@@ -344,13 +342,6 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setTextureType(TextureType value) async {
-    _textureType = value;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('textureType', value.name);
-    notifyListeners();
-  }
-
   Future<void> setFontFamily(String value) async {
     _fontFamily = value;
     final prefs = await SharedPreferences.getInstance();
@@ -358,6 +349,16 @@ class SettingsProvider extends ChangeNotifier {
 
     // Update MathTextStyle
     MathTextStyle.setFontFamily(value);
+    notifyListeners();
+  }
+
+  Future<void> setPlotPalette(PlotPalette value) async {
+    _plotPalette = value;
+    // The painters read it from the colormap module, which every colouring by
+    // value goes through.
+    activePlotPalette = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('plotPalette', value.name);
     notifyListeners();
   }
 

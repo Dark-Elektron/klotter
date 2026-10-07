@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../utils/render_box.dart';
+import 'buttons.dart';
 import '../settings/settings_provider.dart';
 
 /// Menu item data for the popup menu
@@ -49,6 +50,10 @@ class PopupMenuCalcButton extends StatefulWidget {
 }
 
 class _PopupMenuCalcButtonState extends State<PopupMenuCalcButton> {
+  /// Whether the haptics setting is on, read when a pulse is about to fire.
+  bool get _haptic =>
+      Provider.of<SettingsProvider>(context, listen: false).hapticFeedback;
+
   OverlayEntry? _overlayEntry;
   final ValueNotifier<int?> _highlightedIndex = ValueNotifier(null);
   bool _isPressed = false;
@@ -248,7 +253,7 @@ class _PopupMenuCalcButtonState extends State<PopupMenuCalcButton> {
     if (globalPosition.dy < menuTop - 20 || globalPosition.dy > menuBottom) {
       if (_highlightedIndex.value != null) {
         _highlightedIndex.value = null;
-        HapticFeedback.lightImpact();
+        if (_haptic) HapticFeedback.selectionClick();
       }
       return;
     }
@@ -266,18 +271,9 @@ class _PopupMenuCalcButtonState extends State<PopupMenuCalcButton> {
     }
 
     if (newIndex != _highlightedIndex.value) {
-      if (newIndex != null) HapticFeedback.selectionClick();
+      if (newIndex != null && _haptic) HapticFeedback.selectionClick();
       _highlightedIndex.value = newIndex;
     }
-  }
-
-  /// Scales the label down by its length, matching MyButton.
-  double get _fittedFontSize {
-    final int n = widget.buttonText.characters.length;
-    if (n <= 2) return widget.fontSize;
-    if (n == 3) return widget.fontSize * 0.66;
-    if (n == 4) return widget.fontSize * 0.50;
-    return widget.fontSize * 0.42;
   }
 
   @override
@@ -298,13 +294,15 @@ class _PopupMenuCalcButtonState extends State<PopupMenuCalcButton> {
         onTapUp: (_) {
           setState(() => _isPressed = false);
           widget.onTap?.call();
+          // The same tick as every other key.
           if (haptic) {
-            HapticFeedback.lightImpact();
+            HapticFeedback.selectionClick();
           }
         },
         onTapCancel: () => setState(() => _isPressed = false),
         onLongPressStart: (details) {
-          HapticFeedback.mediumImpact();
+          // Gated like the rest: this one buzzed even with haptics off.
+          if (haptic) HapticFeedback.lightImpact();
           setState(() => _isPressed = true);
           _showOverlay();
           _updateHighlight(details.globalPosition);
@@ -319,7 +317,7 @@ class _PopupMenuCalcButtonState extends State<PopupMenuCalcButton> {
           if (index != null) {
             widget.menuItems[index].onTap();
             if (haptic) {
-              HapticFeedback.heavyImpact();
+              HapticFeedback.lightImpact();
             }
           }
         },
@@ -347,24 +345,14 @@ class _PopupMenuCalcButtonState extends State<PopupMenuCalcButton> {
                 child: Stack(
                   children: [
                     Center(
-                      // Same length-based fitting as MyButton: these keys are
-                      // only ~36dp wide and carry the longest labels on the
-                      // keypad ("asin", "acos", "atan").
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 2),
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text(
-                            widget.buttonText,
-                            maxLines: 1,
-                            softWrap: false,
-                            style: TextStyle(
-                              color: widget.textColor,
-                              fontSize: _fittedFontSize,
-                              height: 1.0,
-                            ),
-                          ),
-                        ),
+                      // Drawn as MyButton draws its label (see [keyLabel]):
+                      // these keys carry the longest labels on the keypad
+                      // ("asin", "acos", "atan").
+                      child: keyLabel(
+                        context,
+                        widget.buttonText,
+                        color: widget.textColor,
+                        fontSize: widget.fontSize,
                       ),
                     ),
                     if (widget.hasIndicator)

@@ -16,10 +16,6 @@ class AppColors {
   final Color keypadButtonText;
   final Color keyboardPrimary; // NEW
   final Color keyboardSecondary; // NEW
-  final String backgroundImage; // Add this
-  final double textureIntensity;
-  final double textureScale;
-  final double textureSoftness;
 
   const AppColors({
     required this.displayBackground,
@@ -34,10 +30,6 @@ class AppColors {
     required this.keypadButtonText,
     required this.keyboardPrimary, // NEW
     required this.keyboardSecondary, // NEW
-    required this.backgroundImage, // Add this
-    this.textureIntensity = 0.15,
-    this.textureScale = 1.65,
-    this.textureSoftness = 1.0,
   });
 
   // classic theme colors
@@ -59,10 +51,6 @@ class AppColors {
     keypadButtonText: Color(0xFF1C1C1E),
     keyboardPrimary: Color(0xFFEFEFF3),
     keyboardSecondary: Color(0xFFFFFFFF),
-    backgroundImage: '',
-    textureIntensity: 0.06,
-    textureScale: 1.6,
-    textureSoftness: 1.0,
   );
 
   static const classic = AppColors(
@@ -78,10 +66,6 @@ class AppColors {
     keypadButtonText: Colors.black,
     keyboardPrimary: Color(0xFFE0E0E0), // Default keyboard background
     keyboardSecondary: Colors.white, // Default key color
-    backgroundImage: 'assets/imgs/background_classic.svg',
-    textureIntensity: 0.15,
-    textureScale: 1.65,
-    textureSoftness: 1.0,
   );
 
   // Dark theme colors
@@ -98,10 +82,6 @@ class AppColors {
     keypadButtonText: Colors.white,
     keyboardPrimary: Color(0xFF121212), // Dark keyboard background
     keyboardSecondary: Color(0xFF2C2C2C), // Dark key color
-    backgroundImage: 'assets/imgs/background_dark.svg',
-    textureIntensity: 0.6,
-    textureScale: 1,
-    textureSoftness: 0.8,
   );
 
   static const pink = AppColors(
@@ -117,10 +97,6 @@ class AppColors {
     keypadButtonText: Color(0xFFFFB3C1), // Soft pastel pink text
     keyboardPrimary: Color(0xFF1F1819),
     keyboardSecondary: Color(0xFF594548),
-    backgroundImage: 'assets/imgs/background_pink.svg',
-    textureIntensity: 0.6,
-    textureScale: 1,
-    textureSoftness: 0.5,
   );
 
   static const softPink = AppColors(
@@ -138,9 +114,6 @@ class AppColors {
     keypadButtonText: Color(0xFF5E2A2A), // Dark warm text
     keyboardPrimary: Color(0xFFFCF0F0),
     keyboardSecondary: Color(0xFFF2C4C4),
-    backgroundImage: 'assets/imgs/background_soft_pink.svg',
-    textureIntensity: 0.1,
-    textureSoftness: 0.2,
   );
 
   // Dark theme colors
@@ -157,9 +130,6 @@ class AppColors {
     keypadButtonText: Color(0xFFFFCC80),
     keyboardPrimary: Color(0xFF231515),
     keyboardSecondary: Color(0xFF4E342E),
-    backgroundImage: 'assets/imgs/background_sunset_ember.svg',
-    textureIntensity: 0.4,
-    textureSoftness: 0.9,
   );
 
   static const desertSand = AppColors(
@@ -175,9 +145,6 @@ class AppColors {
     keypadButtonText: Color(0xFF4A3325),
     keyboardPrimary: Color(0xFFFDF5E6),
     keyboardSecondary: Color(0xFFEEDBC3),
-    backgroundImage: 'assets/imgs/background_desert_sand.svg',
-    textureIntensity: 0.16,
-    textureScale: 1.8,
   );
 
   static const digitalAmber = AppColors(
@@ -193,9 +160,6 @@ class AppColors {
     keypadButtonText: Color(0xFFFFBF00),
     keyboardPrimary: Color(0xFF0C0C0C),
     keyboardSecondary: Color(0xFF232323),
-    backgroundImage: 'assets/imgs/background_digital_amber.svg',
-    textureIntensity: 0.8,
-    textureScale: 1.4,
   );
 
   static const roseChic = AppColors(
@@ -211,8 +175,6 @@ class AppColors {
     keypadButtonText: Color(0xFFF9C6B0),
     keyboardPrimary: Color(0xFF1A1A1A),
     keyboardSecondary: Color(0xFF4A3F3F),
-    backgroundImage: 'assets/imgs/background_rose_chic.svg',
-    textureIntensity: 0.13,
   );
 
   static const honeyMustard = AppColors(
@@ -228,9 +190,6 @@ class AppColors {
     keypadButtonText: Colors.white,
     keyboardPrimary: Color(0xFFF5E8D8),
     keyboardSecondary: Color(0xFFD69A3C),
-    backgroundImage: 'assets/imgs/background_honey_mustard.svg',
-    textureIntensity: 0.18,
-    textureScale: 1.0,
   );
 
   static const forestMoss = AppColors(
@@ -248,9 +207,6 @@ class AppColors {
     keypadButtonText: Color(0xFF2A3B24), // Dark moss text
     keyboardPrimary: Color(0xFFF1F4F0),
     keyboardSecondary: Color(0xFFBDCBB7),
-    backgroundImage: 'assets/imgs/background_forest_moss.svg',
-    textureIntensity: 0.2,
-    textureSoftness: 2,
   );
 
   // Helper to get colors based on context

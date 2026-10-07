@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'expression_selection.dart';
 import 'math_editor_controller.dart';
@@ -29,9 +31,33 @@ class MathEditorInline extends StatefulWidget {
   State<MathEditorInline> createState() => MathEditorInlineState();
 }
 
-class MathEditorInlineState extends State<MathEditorInline>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _cursorBlinkController;
+class MathEditorInlineState extends State<MathEditorInline> {
+  /// Whether the caret is in the shown half of its blink: 1 shown, 0 hidden.
+  ///
+  /// Toggled by a timer, not run by an animation. The caret is only ever on or
+  /// off, but an AnimationController on repeat ticks every vsync, and every
+  /// tick repainted — so with a caret on screen, which is always, the app drew
+  /// a full frame 120 times a second doing nothing, re-rasterising the plot
+  /// each time. Measured on a Galaxy A54: 526 frames in six idle seconds. The
+  /// timer repaints twice a second, when the caret actually changes.
+  final ValueNotifier<double> _cursorPhase = ValueNotifier<double>(1);
+  Timer? _blinkTimer;
+
+  static const Duration _blinkHalfPeriod = Duration(milliseconds: 530);
+
+  void _startBlink() {
+    _blinkTimer?.cancel();
+    _cursorPhase.value = 1;
+    _blinkTimer = Timer.periodic(_blinkHalfPeriod, (_) {
+      _cursorPhase.value = _cursorPhase.value >= 0.5 ? 0 : 1;
+    });
+  }
+
+  void _stopBlink() {
+    _blinkTimer?.cancel();
+    _blinkTimer = null;
+  }
+
   final GlobalKey _containerKey = GlobalKey();
   int _lastStructureVersion = -1;
 
@@ -41,13 +67,7 @@ class MathEditorInlineState extends State<MathEditorInline>
   @override
   void initState() {
     super.initState();
-    _cursorBlinkController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 530),
-    );
-    if (widget.showCursor) {
-      _cursorBlinkController.repeat(reverse: true);
-    }
+    if (widget.showCursor) _startBlink();
 
     widget.controller.setContainerKey(_containerKey);
     widget.controller.onSelectionCleared = _onSelectionCleared;
@@ -131,7 +151,8 @@ class MathEditorInlineState extends State<MathEditorInline>
   @override
   void dispose() {
     _removeSelectionOverlay();
-    _cursorBlinkController.dispose();
+    _stopBlink();
+    _cursorPhase.dispose();
     widget.controller.onSelectionCleared = null;
     super.dispose();
   }
@@ -146,11 +167,9 @@ class MathEditorInlineState extends State<MathEditorInline>
     }
     if (oldWidget.showCursor != widget.showCursor) {
       if (widget.showCursor) {
-        if (!_cursorBlinkController.isAnimating) {
-          _cursorBlinkController.repeat(reverse: true);
-        }
+        if (_blinkTimer == null) _startBlink();
       } else {
-        _cursorBlinkController.stop();
+        _stopBlink();
       }
     }
   }
@@ -445,7 +464,7 @@ class MathEditorInlineState extends State<MathEditorInline>
 
                     return CursorOverlay(
                       notifier: widget.controller.cursorPaintNotifier,
-                      blinkAnimation: _cursorBlinkController,
+                      blinkAnimation: _cursorPhase,
                       showCursor: widget.showCursor,
                       child: KeyedSubtree(
                         key: _containerKey,

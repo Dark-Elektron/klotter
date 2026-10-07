@@ -37,7 +37,7 @@ const List<WalkthroughStep> walkthroughSteps = [
     id: 'plot_area',
     title: 'Live Graph',
     description:
-        'Any expression using x, y or z is graphed here as you type. Drag to pan, pinch to zoom, and switch between 2D and 3D on the right. Long-press the plot to read a point off it.',
+        'Any expression using x, y or z is graphed here as you type. Drag to pan, pinch to zoom, and switch between 2D and 3D beside it. Long-press the plot to read a point off it.',
     position: TooltipPosition.below,
   ),
   WalkthroughStep(
@@ -60,7 +60,7 @@ const List<WalkthroughStep> walkthroughSteps = [
     id: 'number_keypad',
     title: 'Number Pad',
     description:
-        'Digits and operators stay here permanently — swiping the rows above never takes them away.',
+        'Digits and operators stay here permanently — swiping the function keys beside them never takes them away.',
     position: TooltipPosition.above,
     mobileOnly: true,
   ),
@@ -75,7 +75,7 @@ const List<WalkthroughStep> walkthroughSteps = [
   WalkthroughStep(
     id: 'swipe_left_extras',
     title: 'More Functions',
-    description: 'Swipe the top rows LEFT for additional functions.',
+    description: 'Swipe the function keys LEFT for additional functions.',
     position: TooltipPosition.above,
     requiresAction: true,
     requiredAction: WalkthroughAction.swipeLeft,
@@ -94,14 +94,15 @@ const List<WalkthroughStep> walkthroughSteps = [
     id: 'settings_button',
     title: 'Settings',
     description:
-        'Tap the gear icon \u2630 anytime to access settings. You can always restart this tutorial from there!',
+        'Tap \u2630 anytime to open settings. You can always restart this tutorial from there!',
     position: TooltipPosition.above,
     mobileOnly: true,
   ),
   WalkthroughStep(
     id: 'swipe_right_back',
     title: 'Navigate Back',
-    description: 'Swipe the top rows RIGHT to return to the scientific keys.',
+    description:
+        'Swipe the function keys RIGHT to return to the scientific keys.',
     position: TooltipPosition.above,
     requiresAction: true,
     requiredAction: WalkthroughAction.swipeRight,
@@ -149,7 +150,7 @@ const List<WalkthroughStep> walkthroughSteps = [
     id: 'tablet_settings_button',
     title: 'Settings',
     description:
-        'Tap the gear icon \u2630 anytime to access settings. You can always restart this tutorial from there!',
+        'Tap \u2630 anytime to open settings. You can always restart this tutorial from there!',
     position: TooltipPosition.above,
     tabletOnly: true,
   ),

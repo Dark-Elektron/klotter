@@ -1,6 +1,5 @@
 import '../math_engine/math_expression_serializer.dart';
 import '../math_renderer/renderer.dart';
-import 'package:flutter/material.dart';
 import '../math_renderer/expression_selection.dart';
 
 /// One row of one cell, as undo remembers it.
@@ -20,13 +19,11 @@ class AppState {
   /// Undoing then rebuilt each cell with a single row and the rest were gone,
   /// and redo brought back only the row the caret had been in.
   final List<List<RowState>> cells;
-  final List<String> answers;
   final int activeIndex;
   final int activeRow;
 
   AppState({
     required this.cells,
-    required this.answers,
     required this.activeIndex,
     required this.activeRow,
   });
@@ -37,14 +34,12 @@ class AppState {
   /// Capture every row of every cell.
   static AppState capture(
     Map<int, List<RowState>> rowsByCell,
-    Map<int, TextEditingController> textControllers,
     int activeIndex,
     int activeRow,
   ) {
     final List<int> sortedKeys = rowsByCell.keys.toList()..sort();
 
     final List<List<RowState>> cells = <List<RowState>>[];
-    final List<String> answers = <String>[];
 
     for (final int key in sortedKeys) {
       final List<RowState> rows = rowsByCell[key] ?? const <RowState>[];
@@ -57,12 +52,10 @@ class AppState {
             visible: r.visible,
           ),
       ]);
-      answers.add(textControllers[key]?.text ?? '');
     }
 
     return AppState(
       cells: cells,
-      answers: answers,
       activeIndex: activeIndex,
       activeRow: activeRow,
     );
@@ -70,10 +63,9 @@ class AppState {
 
   /// A value that changes exactly when the *expressions* do.
   ///
-  /// Answers are left out on purpose: they are derived, and recalculating them
-  /// must not look like an edit the user made. The active cell is left out too,
-  /// so moving the caret between cells does not fill the undo history with
-  /// entries that appear to do nothing when undone.
+  /// The active cell is left out, so moving the caret between cells does not
+  /// fill the undo history with entries that appear to do nothing when
+  /// undone.
   String get signature {
     final StringBuffer out = StringBuffer();
     for (final List<RowState> rows in cells) {

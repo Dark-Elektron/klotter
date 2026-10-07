@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'sumprod_symbol.dart';
@@ -3516,7 +3517,9 @@ class _LineInfo {
 /// Overlay widget for rendering the blinking cursor.
 class CursorOverlay extends SingleChildRenderObjectWidget {
   final CursorPaintNotifier notifier;
-  final Animation<double> blinkAnimation;
+
+  /// The caret is drawn while this is at least a half.
+  final ValueListenable<double> blinkAnimation;
   final bool showCursor;
 
   const CursorOverlay({
@@ -3552,7 +3555,7 @@ class CursorOverlay extends SingleChildRenderObjectWidget {
 class RenderCursorOverlay extends RenderProxyBox {
   RenderCursorOverlay({
     required CursorPaintNotifier notifier,
-    required Animation<double> blinkAnimation,
+    required ValueListenable<double> blinkAnimation,
     required bool showCursor,
   }) : _notifier = notifier,
        _blinkAnimation = blinkAnimation,
@@ -3570,8 +3573,8 @@ class RenderCursorOverlay extends RenderProxyBox {
     markNeedsPaint();
   }
 
-  Animation<double> _blinkAnimation;
-  set blinkAnimation(Animation<double> value) {
+  ValueListenable<double> _blinkAnimation;
+  set blinkAnimation(ValueListenable<double> value) {
     if (_blinkAnimation == value) return;
     _blinkAnimation.removeListener(markNeedsPaint);
     _blinkAnimation = value;
@@ -3600,6 +3603,10 @@ class RenderCursorOverlay extends RenderProxyBox {
     _blinkAnimation.removeListener(markNeedsPaint);
     super.detach();
   }
+
+  /// Whether the caret is in the shown half of its blink, for tests.
+  @visibleForTesting
+  bool get debugCaretShown => _blinkAnimation.value >= 0.5;
 
   @override
   void paint(PaintingContext context, Offset offset) {

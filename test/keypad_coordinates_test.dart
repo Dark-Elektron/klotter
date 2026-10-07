@@ -14,9 +14,9 @@ import 'package:klotter/utils/coordinate_system.dart';
 
 /// The scientific page: where the keys sit, and switching what they mean.
 ///
-/// The row is ten keys wide on purpose — a typing keyboard's row — so this
-/// pins positions rather than counting keys, and every key is checked against
-/// the one above or below it.
+/// Five keys across and four down, beside the number pad. This pins positions
+/// rather than counting keys, and every key is checked against the one above
+/// or below it.
 void main() {
   Future<void> pump(WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({'walkthrough_completed_v2': true});
@@ -36,6 +36,14 @@ void main() {
 
   /// Top-left of the key carrying [label] on the scientific page.
   Offset at(WidgetTester tester, String label) {
+    // By the key's own label first: a phone draws asin as "arc" over "sin",
+    // so the text on its face is not the label.
+    final Finder key = find.byWidgetPredicate(
+      (Widget w) =>
+          (w is PopupMenuCalcButton && w.buttonText == label) ||
+          (w is MyButton && w.buttonText == label),
+    );
+    if (key.evaluate().isNotEmpty) return tester.getTopLeft(key.first);
     final Finder text = find.text(label);
     expect(text, findsWidgets, reason: 'no key labelled "$label"');
     // Both kinds: a key with a long-press menu is a PopupMenuCalcButton, a
@@ -105,55 +113,29 @@ void main() {
   }
 
   group('the scientific page is laid out as specified', () {
-    testWidgets('row one runs x y z sin cos tan = x² π log', (tester) async {
+    testWidgets('four rows of five, building the expression above and '
+        'applying functions below', (tester) async {
       await pump(tester);
-      const List<String> row = <String>[
-        'x',
-        'y',
-        'z',
-        'sin',
-        'cos',
-        'tan',
-        '=',
-        'x²',
-        'π',
-        'log',
+      final List<String> hats = CoordinateSystem.cartesian.unitVectorLabels;
+      final List<List<String>> rows = <List<String>>[
+        <String>['x', 'y', 'z', '=', 'x²'],
+        <String>[...hats, '≥', '√'],
+        <String>['sin', 'cos', 'tan', 'π', 'log'],
+        <String>['asin', 'acos', 'atan', 'e', '°'],
       ];
-      final double y = at(tester, 'x').dy;
-      double previous = double.negativeInfinity;
-      for (final String key in row) {
-        final Offset p = at(tester, key);
-        expect(p.dy, closeTo(y, 1.0), reason: '$key is not on the first row');
-        expect(p.dx, greaterThan(previous), reason: '$key is out of order');
-        previous = p.dx;
+      double above = double.negativeInfinity;
+      for (final List<String> row in rows) {
+        final double y = at(tester, row.first).dy;
+        expect(y, greaterThan(above), reason: '${row.first} is out of order');
+        above = y;
+        double previous = double.negativeInfinity;
+        for (final String key in row) {
+          final Offset p = at(tester, key);
+          expect(p.dy, closeTo(y, 1.0), reason: '$key is not on its row');
+          expect(p.dx, greaterThan(previous), reason: '$key is out of order');
+          previous = p.dx;
+        }
       }
-    });
-
-    testWidgets('row two runs x̂ ŷ ẑ asin acos atan ≥ √ e °', (tester) async {
-      await pump(tester);
-      final List<String> row = <String>[
-        ...CoordinateSystem.cartesian.unitVectorLabels,
-        'asin',
-        'acos',
-        'atan',
-        '≥',
-        '√',
-        'e',
-        '°',
-      ];
-      final double y = at(tester, row.first).dy;
-      double previous = double.negativeInfinity;
-      for (final String key in row) {
-        final Offset p = at(tester, key);
-        expect(p.dy, closeTo(y, 1.0), reason: '$key is not on the second row');
-        expect(p.dx, greaterThan(previous), reason: '$key is out of order');
-        previous = p.dx;
-      }
-      expect(
-        y,
-        greaterThan(at(tester, 'x').dy),
-        reason: 'the second row is below the first',
-      );
     });
 
     testWidgets('each key sits under its relative', (tester) async {
@@ -214,7 +196,13 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 700));
 
-      final Finder item = find.textContaining(entry);
+      // The entry itself where it can be named exactly: "r" is also in the
+      // "arc" a phone stacks over an inverse function, so the first text that
+      // merely contains it can be a key rather than the menu.
+      final Finder exact =
+          entry is String ? find.text(entry) : find.textContaining(entry);
+      final Finder item =
+          exact.evaluate().isNotEmpty ? exact : find.textContaining(entry);
       expect(item, findsWidgets, reason: 'no menu entry matching $entry');
       await gesture.moveTo(tester.getCenter(item.first));
       await tester.pump(const Duration(milliseconds: 100));

@@ -219,4 +219,16 @@ void main() {
     expect(state.xRange, greaterThanOrEqualTo(1));
     expect(state.zRange, greaterThanOrEqualTo(1));
   });
+
+  testWidgets('home frames the touching paraboloids at their tips', (
+    tester,
+  ) async {
+    // Unbounded every way: the probe found them reaching its edge, and home
+    // framed them about sixty units across — two cups too small to read.
+    final state = await pump(tester, <String>[
+      'x^4+z^4+2x^2z^2-3y(x^2+z^2)+2y^2=0',
+    ]);
+    expect(state.xRange, lessThan(6), reason: 'x ${state.xRange}');
+    expect(state.yRange, lessThan(6), reason: 'y ${state.yRange}');
+  });
 }

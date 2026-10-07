@@ -8,13 +8,51 @@ import 'package:klotter/plotting/utils/colormap.dart';
 double _luminance(Color c) => c.computeLuminance();
 
 void main() {
-  group('plotColormap is jet', () {
-    // Jet is the chosen ramp. It is deliberately NOT monotonic in lightness —
-    // that is the trade-off of a rainbow — so these tests pin its shape rather
-    // than a uniformity property it does not have.
-    test('runs blue through cyan and yellow to red', () {
-      expect(plotColormap(0.0).b, greaterThan(plotColormap(0.0).r));
-      expect(plotColormap(1.0).r, greaterThan(plotColormap(1.0).b));
+  group('plotColormap is turbo unless viridis is chosen', () {
+    // Turbo is a rainbow, so it is deliberately NOT monotonic in lightness;
+    // these tests pin its shape rather than a uniformity it does not have.
+    test('runs from dark violet through blue, green and orange to red', () {
+      expect(_luminance(plotColormap(0)), lessThan(0.05), reason: 'dark end');
+      expect(plotColormap(0.15).b, greaterThan(plotColormap(0.15).r));
+      expect(plotColormap(0.5).g, greaterThan(plotColormap(0.5).b));
+      expect(plotColormap(0.8).r, greaterThan(plotColormap(0.8).b));
+      expect(plotColormap(1.0).r, greaterThan(plotColormap(1.0).g));
+    });
+
+    test(
+      'its lightness rises to one broad peak and falls, without ripples',
+      () {
+        // A ripple in lightness reads as a ridge on a shaded surface. A turn is
+        // counted once the lightness has moved back by more than 0.01 from its
+        // furthest point, so the few thousandths of ripple at the top of the
+        // peak — interpolation between the stops — are not ridges.
+        int turns = 0;
+        bool rising = true;
+        double extreme = _luminance(plotColormap(0));
+        for (int i = 1; i <= 128; i++) {
+          final double now = _luminance(plotColormap(i / 128));
+          if (rising ? now > extreme : now < extreme) {
+            extreme = now;
+          } else if ((now - extreme).abs() > 0.01) {
+            turns++;
+            rising = !rising;
+            extreme = now;
+          }
+        }
+        expect(turns, 1, reason: '$turns turns in lightness');
+      },
+    );
+
+    test('viridis can be chosen instead, colorbar and all', () {
+      addTearDown(() => activePlotPalette = PlotPalette.turbo);
+      final Color turboMiddle = plotColormap(0.5);
+      activePlotPalette = PlotPalette.viridis;
+      expect(plotColormap(0.5), viridisColormap(0.5));
+      expect(plotColormap(0.5), isNot(turboMiddle));
+      // The bar labelling a surface is drawn from the stops, so they follow
+      // the same choice, or the bar would name a ramp that is not on screen.
+      expect(plotColormapStops.first, viridisColormap(0));
+      expect(plotColormapStops.last, viridisColormap(1));
     });
 
     test('is clamped outside 0..1', () {
@@ -155,6 +193,61 @@ void main() {
         const Point3D(0, 0, 0),
       );
       expect(f.isFinite, isTrue);
+    });
+
+    test('a lit surface keeps its own colour square to the light', () {
+      const int blue = 0xFF6BA8FF;
+      expect(litSurfaceArgb(blue, 1), blue);
+    });
+
+    test('and shades toward a cooler, darker version, never black', () {
+      const Color amber = Color(0xFFF0A030);
+      final Color shade = Color(litSurfaceArgb(amber.toARGB32(), 0));
+      expect(_luminance(shade), lessThan(_luminance(amber)));
+      expect(_luminance(shade), greaterThan(0.02), reason: 'shade is not ink');
+      // Cooler: blue keeps more of itself than red does.
+      expect(shade.b / amber.b, greaterThan(shade.r / amber.r));
+    });
+
+    test('shading never brightens any channel, even near black', () {
+      for (final int base in <int>[0xFF000000, 0xFF050505, 0xFF102040]) {
+        final int shade = litSurfaceArgb(base, 0);
+        for (final int shift in <int>[16, 8, 0]) {
+          expect(
+            (shade >> shift) & 0xFF,
+            lessThanOrEqualTo((base >> shift) & 0xFF),
+            reason: 'channel at $shift of ${base.toRadixString(16)}',
+          );
+        }
+      }
+    });
+
+    test('a surface coloured by value is shaded more gently', () {
+      const int teal = 0xFF21918C;
+      final double full = _luminance(Color(litSurfaceArgb(teal, 0)));
+      final double gentle = _luminance(
+        Color(litSurfaceArgb(teal, 0, strength: 0.5)),
+      );
+      expect(gentle, greaterThan(full));
+    });
+
+    test('mesh ink is a deeper shade of the surface, not black', () {
+      const int surface = 0xFF6BA8FF;
+      final Color ink = Color(meshInkArgb(surface, 1));
+      expect(_luminance(ink), lessThan(_luminance(const Color(surface)) * 0.6));
+      // Same hue: the channels keep their order and roughly their ratios.
+      expect(ink.b, greaterThan(ink.g));
+      expect(ink.g, greaterThan(ink.r));
+      expect(ink.b, greaterThan(0.2), reason: 'ink collapsed to black');
+    });
+
+    test('mesh ink fades out with its weight', () {
+      const int surface = 0xFF6BA8FF;
+      expect(meshInkArgb(surface, 0), surface);
+      final double half = _luminance(Color(meshInkArgb(surface, 0.5)));
+      final double full = _luminance(Color(meshInkArgb(surface, 1)));
+      expect(half, greaterThan(full));
+      expect(half, lessThan(_luminance(const Color(surface))));
     });
 
     test('applyShading darkens toward a cool shadow, not black', () {

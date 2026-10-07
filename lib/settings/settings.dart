@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../utils/app_colors.dart';
 import '../utils/crash_log.dart';
-import '../utils/texture_generator.dart';
+import '../plotting/utils/colormap.dart';
 import 'settings_provider.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -142,16 +142,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   colors: colors,
                   title: 'APPEARANCE',
                   children: [
-                    // Texture first: it is the one most people turn off, and
-                    // it defaults to off, so it reads oddly buried under the
-                    // theme it does not belong to.
-                    _buildTextureTypeControl(
-                      settings: settings,
-                      colors: colors,
-                    ),
-                    const SizedBox(height: 10),
-                    Divider(color: colors.divider.withValues(alpha: 0.5)),
-                    const SizedBox(height: 10),
                     _buildThemeControl(settings: settings, colors: colors),
                     const SizedBox(height: 10),
                     Divider(color: colors.divider.withValues(alpha: 0.5)),
@@ -168,6 +158,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     Divider(color: colors.divider.withValues(alpha: 0.5)),
                     const SizedBox(height: 10),
                     _buildPlotColorControl(settings: settings, colors: colors),
+                    const SizedBox(height: 10),
+                    Divider(color: colors.divider.withValues(alpha: 0.5)),
+                    const SizedBox(height: 10),
+                    _buildPaletteControl(settings: settings, colors: colors),
                     const SizedBox(height: 10),
                     Divider(color: colors.divider.withValues(alpha: 0.5)),
                     const SizedBox(height: 10),
@@ -477,32 +471,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildTextureTypeControl({
-    required SettingsProvider settings,
-    required AppColors colors,
-  }) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Expanded(
-          child: Text(
-            'Background Texture',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: colors.textPrimary, fontSize: 16),
-          ),
-        ),
-        _buildModernDropdown<TextureType>(
-          colors: colors,
-          value: settings.textureType,
-          items: TextureType.values,
-          labelBuilder: _getTextureTypeLabel,
-          onChanged: (value) => settings.setTextureType(value),
-        ),
-      ],
-    );
-  }
-
   Widget _buildKeypadColorControl({
     required SettingsProvider settings,
     required AppColors colors,
@@ -586,6 +554,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
           items: PlotColorMode.values,
           labelBuilder: _getPlotColorModeLabel,
           onChanged: (value) => settings.setPlotColorMode(value),
+        ),
+      ],
+    );
+  }
+
+  /// Which ramp a surface coloured by value uses — and its colorbar.
+  Widget _buildPaletteControl({
+    required SettingsProvider settings,
+    required AppColors colors,
+  }) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            'Colormap',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: colors.textPrimary, fontSize: 16),
+          ),
+        ),
+        _buildModernDropdown<PlotPalette>(
+          colors: colors,
+          value: settings.plotPalette,
+          items: PlotPalette.values,
+          labelBuilder:
+              (PlotPalette p) => switch (p) {
+                PlotPalette.turbo => 'Turbo',
+                PlotPalette.viridis => 'Viridis',
+              },
+          onChanged: (value) => settings.setPlotPalette(value),
         ),
       ],
     );
@@ -1089,17 +1087,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return 'Honey Mustard';
       case ThemeType.forestMoss:
         return 'Forest Moss';
-    }
-  }
-
-  String _getTextureTypeLabel(TextureType type) {
-    switch (type) {
-      case TextureType.smoothNoise:
-        return 'Smooth Noise';
-      case TextureType.paperFiber:
-        return 'Paper Grain';
-      case TextureType.none:
-        return 'None (Solid)';
     }
   }
 

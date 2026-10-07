@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'dart:ui' show Vertices, VertexMode;
 import 'dart:math';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import '../../utils/app_colors.dart';
 import '../../math_engine/math_engine.dart';
@@ -30,6 +31,11 @@ class Quad {
   /// across the cell instead.
   final double v1, v2, v3, v4;
 
+  /// How square each corner stands to the key light, 0 to 1 — see
+  /// [keyLightOn]. Per corner for the same reason as the values: lit as one
+  /// flat block, every cell of a surface shows as a facet.
+  final double l1, l2, l3, l4;
+
   Quad(
     this.p1,
     this.p2,
@@ -41,11 +47,21 @@ class Quad {
     double? v2,
     double? v3,
     double? v4,
+    this.l1 = 1,
+    this.l2 = 1,
+    this.l3 = 1,
+    this.l4 = 1,
   }) : v1 = v1 ?? avgValue,
        v2 = v2 ?? avgValue,
        v3 = v3 ?? avgValue,
        v4 = v4 ?? avgValue;
 }
+
+/// One end-to-end piece of a sampled surface's grid line, with the value and
+/// the light at each end so whoever draws it can colour it as the surface is
+/// coloured there.
+typedef _GridPiece =
+    ({Point3D a, Point3D b, double va, double vb, double la, double lb});
 
 class FieldPoint3D {
   final Point3D point;
@@ -118,6 +134,14 @@ class _VertexBatch {
 
 /// Stand-in for a surface drawn with its grid switched off.
 final Float32List _noLines = Float32List(0);
+final Int32List _noInks = Int32List(0);
+
+/// How far into the shade a surface coloured by value may go, against 1 for a
+/// solid one.
+///
+/// Its colour is a reading, so it has to stay close enough to the colorbar to
+/// be read off it; half the shade still shows the form.
+const double _valueShadeStrength = 0.5;
 
 /// Indices into [depth] ordered far to near, for the painter's algorithm.
 ///
@@ -184,34 +208,75 @@ List<int> _farToNear(Float64List depth, int count) {
 /// buffers and merges the lines against those instead.
 abstract class _LineSink {
   void addLine(Offset a, Offset b, Paint paint, double depth);
+
+  /// An annotation — an axis number, its tick, an arrowhead — placed in depth
+  /// with everything else, so a surface nearer the camera covers it.
+  ///
+  /// They were painted over the finished scene, which put every number on top
+  /// of the shape: a label on the far side of a surface showed through it as
+  /// if the surface were glass.
+  void addMark(void Function(Canvas canvas) paint, double depth);
 }
 
-/// Just keeps the lines, for a caller that does its own merging.
+/// Paints everything the moment it arrives, for a plot with no surface to
+/// sort against.
+class _ImmediateSink implements _LineSink {
+  _ImmediateSink(this.canvas);
+
+  final Canvas canvas;
+
+  @override
+  void addLine(Offset a, Offset b, Paint paint, double depth) =>
+      canvas.drawLine(a, b, paint);
+
+  @override
+  void addMark(void Function(Canvas canvas) paint, double depth) =>
+      paint(canvas);
+}
+
+/// Just keeps the lines and marks, for a caller that does its own merging.
 class _LineCollector implements _LineSink {
-  final List<Offset> a = <Offset>[];
-  final List<Offset> b = <Offset>[];
-  final List<Paint> paints = <Paint>[];
+  final List<void Function(Canvas canvas)> painters =
+      <void Function(Canvas canvas)>[];
   final List<double> depths = <double>[];
+
+  /// Which entries are marks rather than lines. A mark is never batched with
+  /// its neighbours: it is placed at exactly its own depth.
+  final List<bool> isMark = <bool>[];
 
   @override
   void addLine(Offset from, Offset to, Paint paint, double depth) {
-    a.add(from);
-    b.add(to);
-    paints.add(paint);
+    painters.add((Canvas canvas) => canvas.drawLine(from, to, paint));
     depths.add(depth);
+    isMark.add(false);
+  }
+
+  @override
+  void addMark(void Function(Canvas canvas) paint, double depth) {
+    painters.add(paint);
+    depths.add(depth);
+    isMark.add(true);
   }
 
   int get length => depths.length;
 
-  /// Indices ordered far to near, matching how triangles are sorted.
-  List<int> get farToNear =>
-      List<int>.generate(length, (i) => i)
-        ..sort((x, y) => depths[y].compareTo(depths[x]));
+  /// Indices ordered far to near, matching how triangles are sorted — and in
+  /// the order they were added where two are at one depth. See
+  /// [_DepthScene.paint].
+  List<int> get farToNear => List<int>.generate(length, (i) => i)..sort((x, y) {
+    final int byDepth = depths[y].compareTo(depths[x]);
+    return byDepth != 0 ? byDepth : x.compareTo(y);
+  });
 }
+
+/// What a [_DepthScene] entry is.
+const int _sceneTriangle = 0;
+const int _sceneLine = 1;
+const int _sceneMark = 2;
 
 class _DepthScene implements _LineSink {
   final List<double> _depths = <double>[];
-  final List<bool> _isLine = <bool>[];
+  final List<int> _kind = <int>[];
 
   // Triangles: six screen floats and three packed colours each.
   final List<double> _triXY = <double>[];
@@ -220,6 +285,10 @@ class _DepthScene implements _LineSink {
   // Lines: four screen floats each, plus a paint.
   final List<double> _lineXY = <double>[];
   final List<Paint> _linePaint = <Paint>[];
+
+  // Marks: whatever paints them.
+  final List<void Function(Canvas canvas)> _marks =
+      <void Function(Canvas canvas)>[];
 
   void addTriangle(
     Offset a,
@@ -231,7 +300,7 @@ class _DepthScene implements _LineSink {
     double depth,
   ) {
     _depths.add(depth);
-    _isLine.add(false);
+    _kind.add(_sceneTriangle);
     _triXY.addAll(<double>[a.dx, a.dy, b.dx, b.dy, c.dx, c.dy]);
     _triColor.addAll(<int>[ca, cb, cc]);
   }
@@ -239,30 +308,53 @@ class _DepthScene implements _LineSink {
   @override
   void addLine(Offset a, Offset b, Paint paint, double depth) {
     _depths.add(depth);
-    _isLine.add(true);
+    _kind.add(_sceneLine);
     _lineXY.addAll(<double>[a.dx, a.dy, b.dx, b.dy]);
     _linePaint.add(paint);
   }
 
-  void paint(Canvas canvas) {
+  @override
+  void addMark(void Function(Canvas canvas) paint, double depth) {
+    _depths.add(depth);
+    _kind.add(_sceneMark);
+    _marks.add(paint);
+  }
+
+  /// Draw everything far to near, the triangles washed towards [fog] with
+  /// their distance (see [depthFog]).
+  void paint(Canvas canvas, {int? fog}) {
     final int n = _depths.length;
     if (n == 0) return;
 
+    // The triangles' own depth range: the fog runs from the nearest of them
+    // to the farthest, whatever else is in the scene.
+    double near = double.infinity, far = double.negativeInfinity;
+    for (int i = 0; i < n; i++) {
+      if (_kind[i] != _sceneTriangle) continue;
+      final double d = _depths[i];
+      if (d < near) near = d;
+      if (d > far) far = d;
+    }
+    final double fogPerDepth =
+        fog != null && far > near ? depthFog / (far - near) : 0;
+
+    // Far to near, and in the order added where two are at one depth. The
+    // sort is not stable on its own, and an axis name shares its arrowhead's
+    // depth: which of the two came out on top depended on everything else in
+    // the scene, so adding a curve somewhere else could put the arrowhead
+    // over the name.
     final List<int> order = List<int>.generate(n, (i) => i);
-    order.sort((a, b) => _depths[b].compareTo(_depths[a]));
+    order.sort((a, b) {
+      final int byDepth = _depths[b].compareTo(_depths[a]);
+      return byDepth != 0 ? byDepth : a.compareTo(b);
+    });
 
     // Running indices into the per-kind buffers, so a primitive's data can be
     // found from its position among its own kind.
-    final List<int> triIndex = List<int>.filled(n, -1);
-    final List<int> lineIndex = List<int>.filled(n, -1);
-    int t = 0;
-    int l = 0;
+    final List<int> kindIndex = List<int>.filled(n, -1);
+    final List<int> counts = <int>[0, 0, 0];
     for (int i = 0; i < n; i++) {
-      if (_isLine[i]) {
-        lineIndex[i] = l++;
-      } else {
-        triIndex[i] = t++;
-      }
+      kindIndex[i] = counts[_kind[i]]++;
     }
 
     final List<double> batchXY = <double>[];
@@ -282,19 +374,30 @@ class _DepthScene implements _LineSink {
     }
 
     for (final int i in order) {
-      if (_isLine[i]) {
-        flush();
-        final int o = lineIndex[i] * 4;
-        canvas.drawLine(
-          Offset(_lineXY[o], _lineXY[o + 1]),
-          Offset(_lineXY[o + 2], _lineXY[o + 3]),
-          _linePaint[lineIndex[i]],
-        );
-      } else {
-        final int o = triIndex[i] * 6;
-        final int c = triIndex[i] * 3;
-        batchXY.addAll(_triXY.getRange(o, o + 6));
-        batchColor.addAll(_triColor.getRange(c, c + 3));
+      switch (_kind[i]) {
+        case _sceneLine:
+          flush();
+          final int o = kindIndex[i] * 4;
+          canvas.drawLine(
+            Offset(_lineXY[o], _lineXY[o + 1]),
+            Offset(_lineXY[o + 2], _lineXY[o + 3]),
+            _linePaint[kindIndex[i]],
+          );
+        case _sceneMark:
+          flush();
+          _marks[kindIndex[i]](canvas);
+        default:
+          final int o = kindIndex[i] * 6;
+          final int c = kindIndex[i] * 3;
+          batchXY.addAll(_triXY.getRange(o, o + 6));
+          if (fogPerDepth == 0) {
+            batchColor.addAll(_triColor.getRange(c, c + 3));
+          } else {
+            final double amount = (_depths[i] - near) * fogPerDepth;
+            for (int v = 0; v < 3; v++) {
+              batchColor.add(fogArgb(_triColor[c + v], amount, fog!));
+            }
+          }
       }
     }
     flush();
@@ -350,27 +453,60 @@ class Plot3DPainter extends CustomPainter {
   /// Put a surface's grid lines into [scene].
   ///
   /// Shared by every surface built from a sampling grid — heights, complex
-  /// components — so they all mesh the same way rather than each growing its
-  /// own copy.
+  /// components, sweeps — so they all mesh the same way rather than each
+  /// growing its own copy.
+  ///
+  /// [inkAt] gives the colour each end is drawn in: the surface's own colour
+  /// there, darkened — see [meshInkArgb].
   void _addMeshTo(
     _DepthScene scene,
-    List<(Point3D, Point3D)> mesh,
+    List<_GridPiece> mesh,
     Size size,
     double focalLength,
+    int Function(double value, double light) inkAt,
   ) {
     if (!showMesh || mesh.isEmpty) return;
-    final Paint wire = _meshPaint;
     // Nudged towards the camera before it is sorted: a mesh line lies exactly
     // on the surface, so its depth ties with the cell it belongs to, and the
     // sort would decide between them segment by segment — which drew the mesh
     // as a row of dashes rather than a line.
     final double bias = _viewExtentXY * _meshDepthBias;
-    for (final (Point3D a, Point3D b) in mesh) {
-      scene.addLine(
-        a.project(focalLength, size, _panX, _panY),
-        b.project(focalLength, size, _panX, _panY),
-        wire,
-        (a.y + b.y) / 2 - bias,
+    final double half = _meshStrokeWidth / 2;
+    for (final _GridPiece piece in mesh) {
+      final Offset a = piece.a.project(focalLength, size, _panX, _panY);
+      final Offset b = piece.b.project(focalLength, size, _panX, _panY);
+      final Offset along = b - a;
+      final double len = along.distance;
+      if (len < 1e-6) continue;
+      // A thin quad rather than a stroke, as a level surface's grid is drawn:
+      // two triangles that go into the batch with the cells, so a line no
+      // longer breaks the batch, and that can be shaded from one end to the
+      // other. Run on by half a width at each end so the pieces of one line
+      // overlap at their joins instead of leaving a notch on every bend.
+      final Offset unit = along / len;
+      final Offset side = Offset(-unit.dy, unit.dx) * half;
+      final Offset start = a - unit * half;
+      final Offset end = b + unit * half;
+      final int ca = inkAt(piece.va, piece.la);
+      final int cb = inkAt(piece.vb, piece.lb);
+      final double depth = (piece.a.y + piece.b.y) / 2 - bias;
+      scene.addTriangle(
+        start + side,
+        start - side,
+        end - side,
+        ca,
+        ca,
+        cb,
+        depth,
+      );
+      scene.addTriangle(
+        start + side,
+        end - side,
+        end + side,
+        ca,
+        cb,
+        cb,
+        depth,
       );
     }
   }
@@ -398,6 +534,8 @@ class Plot3DPainter extends CustomPainter {
   /// another piece of geometry lying on the surface.
   void _projectMeshLines(
     Float32List lines,
+    Int32List from,
+    Float32List reach,
     int segments,
     int firstTriangle,
     Float32List screen,
@@ -442,7 +580,9 @@ class Plot3DPainter extends CustomPainter {
       }
 
       final int t = firstTriangle + s * 2;
-      depth[t] = (dA + dB) / 2 - bias;
+      // Lifted by the usual amount, a lattice cell, but never by more than
+      // the triangle it was cut from. See [LevelMesh.meshLineTriangle].
+      depth[t] = (dA + dB) / 2 - min(bias, reach[from[s]]);
       depth[t + 1] = depth[t];
 
       // Widened across the segment on screen rather than in world space: the
@@ -496,20 +636,6 @@ class Plot3DPainter extends CustomPainter {
     }
   }
 
-  /// The pen every mesh is drawn with.
-  ///
-  /// Dark on every theme, because it is drawn on the surface rather than on
-  /// the page: the colormap is bright wherever the surface is interesting, so
-  /// a line taking the theme's ink went white on a dark theme and vanished
-  /// into the yellows and greens.
-  ///
-  /// Butt caps: a grid line is a run of segments sharing endpoints, and a
-  /// round cap on each puts a bulge at every join.
-  static Paint get _meshPaint =>
-      Paint()
-        ..color = const Color(_meshInk)
-        ..strokeWidth = _meshStrokeWidth;
-
   /// How far towards the camera a mesh line is moved before depth sorting,
   /// as a fraction of the plan's on-screen size.
   ///
@@ -538,11 +664,11 @@ class Plot3DPainter extends CustomPainter {
   static const double _levelMeshDepthBias = 0.05;
 
   /// How wide a mesh line is drawn, in logical pixels.
-  static const double _meshStrokeWidth = 1.8;
-
-  /// The grid's colour, packed, matching [_meshPaint] for the surfaces that
-  /// still draw their grid with a pen.
-  static const int _meshInk = 0xFF000000;
+  ///
+  /// Finer than when the line was black: a line that takes the surface's own
+  /// colour needs less width to be read, and a thinner one reads as drawn on
+  /// the shape rather than laid over it.
+  static const double _meshStrokeWidth = 1.5;
 
   /// How many planes a level surface is sliced by on each axis.
   ///
@@ -559,7 +685,12 @@ class Plot3DPainter extends CustomPainter {
   /// line that thin starts to break up over a bright colormap. Slicing less
   /// also costs less — there is less to cut, keep, project and sort — where a
   /// thinner line costs exactly the same.
-  static const int _levelMeshLinesAcross = 10;
+  ///
+  /// Twelve since the lines took the surface's colour. Ten was set against
+  /// black ink, where every line was loud; a line in the surface's own deeper
+  /// shade is quiet enough to carry two more per axis, and on a thin tube that
+  /// is the difference between two rings and three.
+  static const int _levelMeshLinesAcross = 12;
 
   /// How many cells apart the mesh lines are drawn.
   ///
@@ -607,6 +738,23 @@ class Plot3DPainter extends CustomPainter {
   /// most of a 60 Hz frame.
   final bool interacting;
 
+  /// The panel size to fit the box to, when that is not the canvas.
+  ///
+  /// Set while the panel is still resizing — the keypad sliding away grows
+  /// the plot on every frame — so the box keeps the size it had and only
+  /// slides to stay on its floor line. Null fits to the canvas, as always.
+  final Size? fitSize;
+
+  /// Whether the axes are drawn: their lines, arrowheads, names, ticks and
+  /// numbers. The floor and its outline stay either way — they are the
+  /// ground the shape stands on, not a scale.
+  final bool showAxes;
+
+  /// Where no axis number may be drawn, in canvas coordinates: the controls
+  /// floating over the plot. A number under a control cannot be read, so it
+  /// is left out rather than drawn there.
+  final List<Rect> labelKeepOut;
+
   Plot3DPainter({
     required this.function,
     this.functions = const <PlotExpression>[],
@@ -634,7 +782,12 @@ class Plot3DPainter extends CustomPainter {
     this.complexView = ComplexView.initial,
     this.tracePoint,
     this.interacting = false,
-  });
+    this.fitSize,
+    this.showAxes = true,
+    this.labelKeepOut = const <Rect>[],
+    // A refined level surface made off the UI thread is drawn as soon as it
+    // lands, however still the plot is.
+  }) : super(repaint: backgroundMarches);
 
   // Remove the getter since rangeZ is now a parameter
   // double get rangeZ => (rangeX + rangeY) / 2;
@@ -658,6 +811,10 @@ class Plot3DPainter extends CustomPainter {
 
   double get _panX => panX + _fitOffsetX;
   double get _panY => panY + _fitOffsetY;
+
+  /// The focal length this paint projects with, which is the fitted size's
+  /// rather than the canvas's while a resize is settling.
+  double _focalLength = 0;
 
   /// Distance from the eye to the projection plane.
   ///
@@ -1008,8 +1165,10 @@ class Plot3DPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final double focalLength = focalLengthFor(size);
-    final ViewFit fit = viewExtentsFor(size);
+    final Size frame = fitSize ?? size;
+    final double focalLength = focalLengthFor(frame);
+    _focalLength = focalLength;
+    final ViewFit fit = viewExtentsFor(frame);
     _viewExtentXY = fit.planar;
     _viewExtentZ = fit.vertical;
     _fitOffsetX = fit.offsetX;
@@ -1018,7 +1177,14 @@ class Plot3DPainter extends CustomPainter {
     // the visible area and a box centred in the whole of it sits too low —
     // badly so in 3D, where the floor plane ends up behind the rows. Half the
     // covered height is exactly the shift that re-centres it.
-    _fitOffsetY = fit.offsetY - bottomInset / 2;
+    //
+    // Fitted to another size than the canvas, the floor is then moved to where
+    // the canvas's own floor line is, so a box held at its old size during a
+    // resize still rides with the panel rather than hanging where it was.
+    _fitOffsetY =
+        fit.offsetY -
+        bottomInset / 2 +
+        (size.height - frame.height) * (_floorLineFor(frame) - 0.5);
 
     final bool showSurface = surfaceMode != SurfaceMode.none;
     canvas.save();
@@ -1182,19 +1348,22 @@ class Plot3DPainter extends CustomPainter {
 
     final Float32List world;
     final Int32List meshColors;
+    final Float32List reach;
     if (meshes.length == 1) {
       world = meshes.first.world;
       meshColors = meshes.first.colors;
+      reach = meshes.first.reach;
     } else {
       world = Float32List(count * 9);
       meshColors = Int32List(count * 3);
-      int wAt = 0;
-      int cAt = 0;
+      reach = Float32List(count);
+      int at = 0;
       for (final LevelMesh m in meshes) {
-        world.setRange(wAt, wAt + m.triangleCount * 9, m.world);
-        meshColors.setRange(cAt, cAt + m.triangleCount * 3, m.colors);
-        wAt += m.triangleCount * 9;
-        cAt += m.triangleCount * 3;
+        final int n = m.triangleCount;
+        world.setRange(at * 9, (at + n) * 9, m.world);
+        meshColors.setRange(at * 3, (at + n) * 3, m.colors);
+        reach.setRange(at, at + n, m.reach);
+        at += n;
       }
     }
 
@@ -1218,16 +1387,31 @@ class Plot3DPainter extends CustomPainter {
             )
             : 0;
     final Float32List meshLines;
+    final Int32List meshInks;
+    final Int32List meshFrom;
     if (segments == 0) {
       meshLines = _noLines;
+      meshInks = _noInks;
+      meshFrom = _noInks;
     } else if (meshes.length == 1) {
       meshLines = meshes.first.meshLines;
+      meshInks = meshes.first.meshLineColors;
+      meshFrom = meshes.first.meshLineTriangle;
     } else {
       meshLines = Float32List(segments * 6);
+      meshInks = Int32List(segments * 2);
+      meshFrom = Int32List(segments);
       int at = 0;
+      int firstTriangle = 0;
       for (final LevelMesh m in meshes) {
-        meshLines.setRange(at, at + m.meshLineCount * 6, m.meshLines);
-        at += m.meshLineCount * 6;
+        final int n = m.meshLineCount;
+        meshLines.setRange(at * 6, (at + n) * 6, m.meshLines);
+        meshInks.setRange(at * 2, (at + n) * 2, m.meshLineColors);
+        for (int s = 0; s < n; s++) {
+          meshFrom[at + s] = firstTriangle + m.meshLineTriangle[s];
+        }
+        at += n;
+        firstTriangle += m.triangleCount;
       }
     }
 
@@ -1284,6 +1468,8 @@ class Plot3DPainter extends CustomPainter {
 
     _projectMeshLines(
       meshLines,
+      meshFrom,
+      reach,
       segments,
       count,
       screen,
@@ -1301,18 +1487,53 @@ class Plot3DPainter extends CustomPainter {
     // floats, and the vertex buffers stay put.
     final List<int> order = _farToNear(depth, total);
 
+    // Washed towards the ground with distance (see [depthFog]), from the
+    // nearest triangle to the farthest. Worked out here, per frame, because it
+    // turns with the camera; the colours it starts from are cached.
+    double near = double.infinity, far = double.negativeInfinity;
+    for (int t = 0; t < count; t++) {
+      final double d = depth[t];
+      if (d < near) near = d;
+      if (d > far) far = d;
+    }
+    // In 256ths, so the blend below is integers only.
+    final double fogScale = !(far > near) ? 0 : depthFog * 256 / (far - near);
+    final int fog = plotTheme.fog.toARGB32();
+
     final Float32List positions = Float32List(total * 6);
     final Int32List colors = Int32List(total * 3);
     for (int i = 0; i < total; i++) {
       final int src = order[i];
-      positions.setRange(i * 6, i * 6 + 6, screen, src * 6);
+      // Six floats copied by hand: setRange's checks cost more than the copy.
+      final int to = i * 6, from = src * 6;
+      positions[to] = screen[from];
+      positions[to + 1] = screen[from + 1];
+      positions[to + 2] = screen[from + 2];
+      positions[to + 3] = screen[from + 3];
+      positions[to + 4] = screen[from + 4];
+      positions[to + 5] = screen[from + 5];
+      final int k =
+          fogScale == 0
+              ? 0
+              : min(256, ((depth[src] - near) * fogScale).toInt());
       if (src < count) {
-        colors.setRange(i * 3, i * 3 + 3, meshColors, src * 3);
-      } else {
         final int c = i * 3;
-        colors[c] = _meshInk;
-        colors[c + 1] = _meshInk;
-        colors[c + 2] = _meshInk;
+        final int m = src * 3;
+        colors[c] = fogBlend(meshColors[m], k, fog);
+        colors[c + 1] = fogBlend(meshColors[m + 1], k, fog);
+        colors[c + 2] = fogBlend(meshColors[m + 2], k, fog);
+      } else {
+        // A grid line's two triangles, laid out by [_projectMeshLines] as
+        // (start, start, end) and (start, end, end): each corner takes the ink
+        // of the end it belongs to, so the line shades along its length.
+        final int line = (src - count) >> 1;
+        final int start = meshInks[line * 2];
+        final int end = meshInks[line * 2 + 1];
+        final bool first = (src - count).isEven;
+        final int c = i * 3;
+        colors[c] = fogBlend(start, k, fog);
+        colors[c + 1] = fogBlend(first ? start : end, k, fog);
+        colors[c + 2] = fogBlend(end, k, fog);
       }
     }
 
@@ -1329,14 +1550,21 @@ class Plot3DPainter extends CustomPainter {
     if (withFloor) {
       _addFloorGridTo(chrome, size, focalLength);
       _addAxisChromeTo(chrome, size, focalLength);
+      _addAxisMarksTo(chrome, size, focalLength);
     }
 
     void drawRun(int startTriangle, int endTriangle) {
       if (endTriangle <= startTriangle) return;
       final Vertices vertices = Vertices.raw(
         VertexMode.triangles,
-        positions.sublist(startTriangle * 6, endTriangle * 6),
-        colors: colors.sublist(startTriangle * 3, endTriangle * 3),
+        // Views, not copies: the engine takes its own copy of what it is
+        // given, and every mark splits the surface into another run.
+        Float32List.sublistView(positions, startTriangle * 6, endTriangle * 6),
+        colors: Int32List.sublistView(
+          colors,
+          startTriangle * 3,
+          endTriangle * 3,
+        ),
       );
       canvas.drawVertices(vertices, BlendMode.dst, Paint());
       vertices.dispose();
@@ -1357,27 +1585,35 @@ class Plot3DPainter extends CustomPainter {
     final int batch =
         lineOrder.isEmpty ? 1 : (lineOrder.length / maxRuns).ceil();
 
+    //
+    // A mark — an axis number, a tick, an arrowhead — is never batched. It
+    // starts a batch of its own, so it is placed at exactly its own depth: a
+    // number drawn at the depth of a farther line would be covered by the
+    // triangles between the two, which are behind it.
     int runStart = 0;
     int drawn = 0;
-    for (int b = 0; b < lineOrder.length; b += batch) {
-      final double cut = chrome.depths[lineOrder[b]];
-      // Everything further away than this batch is already behind it.
-      while (drawn < total && depth[order[drawn]] > cut) {
-        drawn++;
+    int inBatch = 0;
+    for (final int item in lineOrder) {
+      final bool mark = chrome.isMark[item];
+      if (mark || inBatch == 0) {
+        final double cut = chrome.depths[item];
+        // Everything further away than this is already behind it.
+        while (drawn < total && depth[order[drawn]] > cut) {
+          drawn++;
+        }
+        drawRun(runStart, drawn);
+        runStart = drawn;
       }
-      drawRun(runStart, drawn);
-      runStart = drawn;
-
-      final int end = min(b + batch, lineOrder.length);
-      for (int k = b; k < end; k++) {
-        final int l = lineOrder[k];
-        canvas.drawLine(chrome.a[l], chrome.b[l], chrome.paints[l]);
-      }
+      chrome.painters[item](canvas);
+      inBatch = mark ? 0 : (inBatch + 1) % batch;
     }
     drawRun(runStart, total);
 
-    _drawAxes(canvas, size, focalLength, skipLines: true);
-
+    // A solid surface has no ramp, so a bar of numbers beside it labels
+    // nothing — and the swatches name ramps that are not on screen. Height
+    // surfaces have always held this back; level surfaces drew the bar
+    // regardless, which put a rainbow scale over a plain blue shape.
+    if (surfaceMode == SurfaceMode.none) return;
     if (equations.length == 1) {
       _drawColorbar3D(canvas, size, -rangeZ, rangeZ);
     } else {
@@ -1396,6 +1632,84 @@ class Plot3DPainter extends CustomPainter {
     // has to tell them apart. The solid colour is the row's, so it matches the
     // swatch beside the expression and the same plot in 2D.
     final Color plain = _theme.seriesColor(equation.seriesIndex);
+    final List<double> bounds = <double>[
+      -rangeX,
+      rangeX,
+      -rangeY,
+      rangeY,
+      -rangeZ,
+      rangeZ,
+    ];
+    // Where the grid falls depends on the surface and the window, not the
+    // camera, so it is cut once here with the triangles rather than being
+    // rebuilt on every frame of a rotation.
+    final List<double>? meshSteps =
+        showMesh
+            ? <double>[_meshPlaneStep(0), _meshPlaneStep(1), _meshPlaneStep(2)]
+            : null;
+    // The colours are baked into the cached mesh, so what they were made
+    // from — the mode and the ramp — is part of what identifies it.
+    final int colouring = surfaceMode.index * 2 + activePlotPalette.index;
+    bool hasMesh(int resolution, {required bool refined}) => hasCachedLevelMesh(
+      equation,
+      bounds,
+      resolution,
+      scaleX,
+      scaleY,
+      scaleZ,
+      colouring,
+      meshSteps: meshSteps,
+      refined: refined,
+    );
+    // The full lattice with its thin parts looked into, whenever that is to
+    // hand — already made into a mesh, or marched and waiting to be.
+    final bool refinedToHand =
+        hasMesh(_levelResolution, refined: true) ||
+        hasMarchedSurface(
+          equation,
+          -rangeX,
+          rangeX,
+          -rangeY,
+          rangeY,
+          -rangeZ,
+          rangeZ,
+          resolution: _levelResolution,
+        );
+    int resolution = _levelResolution;
+    final bool refined;
+    if (refinedToHand) {
+      refined = true;
+    } else if (!marchInBackground) {
+      // Refined here and now, unless the box is changing under a pinch:
+      // then every frame is a march of its own, and the plain one is used.
+      refined = !interacting;
+    } else {
+      // A coarse march now, and the refined one asked for in the background.
+      // The coarse one is an eighth of the work, so arriving at a plot or
+      // pinching one no longer waits on the full lattice: arriving at the
+      // touching paraboloids froze a Galaxy A54 for over a second, and a
+      // pinch marched the whole lattice afresh on every frame.
+      //
+      // Asked for only for a box that is holding still, which a rotation is
+      // and a pinch is not: a pinch would start a march for every frame of
+      // itself, each out of date before it began. Once the coarse mesh for a
+      // box has been made, the box has outlasted a frame.
+      if (!interacting ||
+          hasMesh(_levelPlaceholderResolution, refined: false)) {
+        marchSurfaceInBackground(
+          equation,
+          -rangeX,
+          rangeX,
+          -rangeY,
+          rangeY,
+          -rangeZ,
+          rangeZ,
+          resolution: _levelResolution,
+        );
+      }
+      resolution = _levelPlaceholderResolution;
+      refined = false;
+    }
     // Marched at most once, and only if the mesh below has to be rebuilt.
     // Both the triangles and the normals are wanted, and both come from the
     // one march.
@@ -1409,11 +1723,15 @@ class Plot3DPainter extends CustomPainter {
           rangeY,
           -rangeZ,
           rangeZ,
+          resolution: resolution,
+          refine: refined,
+          // A stand-in is up for a moment; its crossings are interpolated.
+          exact: resolution == _levelResolution,
         );
     return cachedLevelMesh(
       equation,
-      <double>[-rangeX, rangeX, -rangeY, rangeY, -rangeZ, rangeZ],
-      40,
+      bounds,
+      resolution,
       () => <
         ({
           double ax,
@@ -1465,41 +1783,45 @@ class Plot3DPainter extends CustomPainter {
       // not depend on the camera, so the lit colour is baked in here with the
       // geometry and the frame does no lighting at all.
       (double z, double light) {
+        final bool solid = surfaceMode == SurfaceMode.none;
         final Color base =
-            surfaceMode == SurfaceMode.none
-                ? plain
-                : ramp(((z + rangeZ) / (2 * rangeZ)).clamp(0.0, 1.0));
+            solid ? plain : ramp(((z + rangeZ) / (2 * rangeZ)).clamp(0.0, 1.0));
         // Darkening only, never brightening: whatever faces the light keeps
         // the colour the colorbar and the row's swatch show, and the rest is
         // shaded down from it. Brightening instead would have put colours on
-        // the surface that appear nowhere in the legend.
-        final Color lit = base.withValues(
-          red: base.r * light,
-          green: base.g * light,
-          blue: base.b * light,
+        // the surface that appear nowhere in the legend. A surface coloured by
+        // height is shaded more gently, so its colours stay near enough to the
+        // colorbar to be read off it.
+        final int lit = litSurfaceArgb(
+          base.toARGB32(),
+          light,
+          strength: solid ? 1 : _valueShadeStrength,
         );
-        if (!equation.relation.isRegion) return lit.toARGB32();
-        return lit
-            .withValues(alpha: equation.relation.includesBoundary ? 0.55 : 0.34)
-            .toARGB32();
+        if (!equation.relation.isRegion) return lit;
+        final int alpha =
+            ((equation.relation.includesBoundary ? 0.55 : 0.34) * 255).round();
+        return (alpha << 24) | (lit & 0x00FFFFFF);
       },
       // The mesh is cached, and its colours are baked into it, so the mode
       // has to be part of what identifies it. Without this, switching the
       // colouring redrew the same triangles in the colours they already had.
-      surfaceMode.index,
-      // Where the grid falls depends on the surface and the window, not the
-      // camera, so it is cut once here with the triangles rather than being
-      // rebuilt on every frame of a rotation.
-      meshSteps:
-          showMesh
-              ? <double>[
-                _meshPlaneStep(0),
-                _meshPlaneStep(1),
-                _meshPlaneStep(2),
-              ]
-              : null,
+      colouring,
+      meshSteps: meshSteps,
+      refined: refined,
     );
   }
+
+  /// Lattice cells across the box for a level surface.
+  static const int _levelResolution = levelResolution;
+
+  /// The same, for anything outside the painter that has to find the surface
+  /// that was drawn — a tap on a traced surface is tested against its
+  /// triangles (see `pickSurface`).
+  static const int levelResolution = 40;
+
+  /// Lattice cells across the box for the stand-in drawn while the full march
+  /// is made in the background (see [marchInBackground]).
+  static const int _levelPlaceholderResolution = 20;
 
   /// Sample one z = f(x, y) over the floor grid and build its gridSize.
   ///
@@ -1520,7 +1842,7 @@ class Plot3DPainter extends CustomPainter {
   static const int _surfaceGridStill = 76;
   static const int _surfaceGridMoving = 42;
 
-  ({List<Quad> quads, double minV, double maxV, List<(Point3D, Point3D)> mesh})
+  ({List<Quad> quads, double minV, double maxV, List<_GridPiece> mesh})
   _surfaceQuads(
     PlotExpression parser, {
     int? gridSize,
@@ -1560,17 +1882,50 @@ class Plot3DPainter extends CustomPainter {
                 ],
             ];
 
+    // How square each sample stands to the key light, from the slope of the
+    // surface there. Read off the lattice already sampled, so the light costs
+    // no further evaluations: central where both neighbours exist, one-sided
+    // at the rim and beside a hole.
+    final double stepX = 2 * rangeX / cells;
+    final double stepY = 2 * rangeY / cells;
+    double lightAt(int i, int j) {
+      final double here = sampled[i][j];
+      double slope(double before, double after, double step) {
+        final bool hasBefore = before.isFinite;
+        final bool hasAfter = after.isFinite;
+        if (hasBefore && hasAfter) return (after - before) / (2 * step);
+        if (hasAfter) return (after - here) / step;
+        if (hasBefore) return (here - before) / step;
+        return 0;
+      }
+
+      final double fx = slope(
+        i > 0 ? sampled[i - 1][j] : double.nan,
+        i < cells ? sampled[i + 1][j] : double.nan,
+        stepX,
+      );
+      final double fy = slope(
+        j > 0 ? sampled[i][j - 1] : double.nan,
+        j < cells ? sampled[i][j + 1] : double.nan,
+        stepY,
+      );
+      // The normal of the surface as drawn, not as written: the box stretches
+      // z by a different factor from x and y, so the slopes are taken in its
+      // units — the same space the level surfaces are lit in.
+      return keyLightOn(-fx * scaleZ / scaleX, -fy * scaleZ / scaleY, 1);
+    }
+
     // Held in data coordinates until the cell is cut, because the cut is
     // against a plane in z and rotating first would hide where that is.
-    final List<List<({double x, double y, double z, double v})?>> points =
-        <List<({double x, double y, double z, double v})?>>[];
+    final List<List<({double x, double y, double z, double v, double l})?>>
+    points = <List<({double x, double y, double z, double v, double l})?>>[];
     final List<List<double>> zValues = <List<double>>[];
     double minZ = double.infinity;
     double maxZ = double.negativeInfinity;
 
     for (int i = 0; i <= cells; i++) {
-      final List<({double x, double y, double z, double v})?> row =
-          <({double x, double y, double z, double v})?>[];
+      final List<({double x, double y, double z, double v, double l})?> row =
+          <({double x, double y, double z, double v, double l})?>[];
       final List<double> zRow = <double>[];
       for (int j = 0; j <= cells; j++) {
         final x = -rangeX + (2 * rangeX * i / cells);
@@ -1606,7 +1961,7 @@ class Plot3DPainter extends CustomPainter {
           maxZ = max(maxZ, v);
         }
 
-        row.add((x: x, y: y, z: z, v: v));
+        row.add((x: x, y: y, z: z, v: v, l: lightAt(i, j)));
         zRow.add(v);
       }
       points.add(row);
@@ -1622,28 +1977,29 @@ class Plot3DPainter extends CustomPainter {
     final List<Quad> quads = <Quad>[];
 
     /// One corner, ready to be cut against the walls.
-    Point3D world(({double x, double y, double z, double v}) c) => Point3D(
-      c.x * scaleX,
-      c.y * scaleY,
-      c.z * scaleZ,
-    ).rotateZ(rotationZ).rotateX(rotationX);
+    Point3D world(({double x, double y, double z, double v, double l}) c) =>
+        Point3D(
+          c.x * scaleX,
+          c.y * scaleY,
+          c.z * scaleZ,
+        ).rotateZ(rotationZ).rotateX(rotationX);
 
     /// Sutherland–Hodgman against one wall, in data space.
     ///
     /// A corner outside is replaced by the point where its edge crosses, so
     /// the surface ends exactly where it leaves the box: no teeth, and no lid
     /// either. A convex cell stays convex, so the result fans safely.
-    List<({double x, double y, double z, double v})> clip(
-      List<({double x, double y, double z, double v})> poly,
+    List<({double x, double y, double z, double v, double l})> clip(
+      List<({double x, double y, double z, double v, double l})> poly,
       bool keepBelow,
       double limit,
     ) {
       if (poly.isEmpty) return poly;
-      bool inside(({double x, double y, double z, double v}) c) =>
+      bool inside(({double x, double y, double z, double v, double l}) c) =>
           keepBelow ? c.z <= limit : c.z >= limit;
 
-      final List<({double x, double y, double z, double v})> out =
-          <({double x, double y, double z, double v})>[];
+      final List<({double x, double y, double z, double v, double l})> out =
+          <({double x, double y, double z, double v, double l})>[];
       for (int k = 0; k < poly.length; k++) {
         final a = poly[k];
         final b = poly[(k + 1) % poly.length];
@@ -1657,6 +2013,7 @@ class Plot3DPainter extends CustomPainter {
             y: a.y + (b.y - a.y) * t,
             z: limit,
             v: a.v + (b.v - a.v) * t,
+            l: a.l + (b.l - a.l) * t,
           ));
         }
       }
@@ -1670,7 +2027,7 @@ class Plot3DPainter extends CustomPainter {
     // triangles, so a triangle's edges are chords across the cell rather than
     // its sides. Drawing those gave a mesh of little zigzags instead of a
     // grid. These are the grid lines themselves.
-    final List<(Point3D, Point3D)> mesh = <(Point3D, Point3D)>[];
+    final List<_GridPiece> mesh = <_GridPiece>[];
     final int meshStride = _meshStrideFor(cells);
 
     for (int i = 0; i < cells; i++) {
@@ -1684,8 +2041,13 @@ class Plot3DPainter extends CustomPainter {
         // is dropped rather than cut — there is nothing to cut it against.
         if (c1 == null || c2 == null || c3 == null || c4 == null) continue;
 
-        List<({double x, double y, double z, double v})> poly =
-            <({double x, double y, double z, double v})>[c1, c2, c3, c4];
+        List<({double x, double y, double z, double v, double l})> poly =
+            <({double x, double y, double z, double v, double l})>[
+              c1,
+              c2,
+              c3,
+              c4,
+            ];
 
         // Only cut cells that actually straddle a wall; the vast majority do
         // not, and this keeps them on the cheap path.
@@ -1714,15 +2076,29 @@ class Plot3DPainter extends CustomPainter {
           // box, so a line belonging to a cut cell stops where the surface
           // does instead of carrying on to where the corner would have been.
           double heldIn(double z) => z.clamp(-rangeZ, rangeZ);
-          ({double x, double y, double z, double v}) inBox(
-            ({double x, double y, double z, double v}) c,
-          ) => (x: c.x, y: c.y, z: heldIn(c.z), v: c.v);
+          ({double x, double y, double z, double v, double l}) inBox(
+            ({double x, double y, double z, double v, double l}) c,
+          ) => (x: c.x, y: c.y, z: heldIn(c.z), v: c.v, l: c.l);
 
           if (j % meshStride == 0) {
-            mesh.add((world(inBox(c1)), world(inBox(c2))));
+            mesh.add((
+              a: world(inBox(c1)),
+              b: world(inBox(c2)),
+              va: c1.v,
+              vb: c2.v,
+              la: c1.l,
+              lb: c2.l,
+            ));
           }
           if (i % meshStride == 0) {
-            mesh.add((world(inBox(c1)), world(inBox(c4))));
+            mesh.add((
+              a: world(inBox(c1)),
+              b: world(inBox(c4)),
+              va: c1.v,
+              vb: c4.v,
+              la: c1.l,
+              lb: c4.l,
+            ));
           }
         }
 
@@ -1747,6 +2123,10 @@ class Plot3DPainter extends CustomPainter {
               v2: b.v,
               v3: d.v,
               v4: d.v,
+              l1: a.l,
+              l2: b.l,
+              l3: d.l,
+              l4: d.l,
             ),
           );
         }
@@ -1797,8 +2177,6 @@ class Plot3DPainter extends CustomPainter {
       // whenever a steeper one is on the same axes.
       final Color Function(double) ramp = surfaceColormap(c, of: curves.length);
       final double span = built.maxV - built.minV;
-      int shade(double v) =>
-          ramp(((v - built.minV) / span).clamp(0.0, 1.0)).toARGB32();
 
       // Off means one colour, not one ramp. The menu had offered this all
       // along and the painter ignored it, so a surface was always coloured by
@@ -1809,6 +2187,21 @@ class Plot3DPainter extends CustomPainter {
       // on its own and blue the moment a second was added, so adding a plot
       // recoloured the one already there.
       final Color plain = _theme.seriesColor(curves[c].seriesIndex);
+      final int plainArgb = plain.toARGB32();
+
+      // A corner's colour under the key light, the same light a level surface
+      // is lit by. Solid used to be shaded by how squarely each cell faced the
+      // camera, which lights whatever you look at straight on and so hides
+      // the shape exactly where you are looking at it; coloured by value it
+      // was not lit at all.
+      int shade(double v, double light) =>
+          solid
+              ? litSurfaceArgb(plainArgb, light)
+              : litSurfaceArgb(
+                ramp(((v - built.minV) / span).clamp(0.0, 1.0)).toARGB32(),
+                light,
+                strength: _valueShadeStrength,
+              );
 
       if (curves.length == 1) {
         soleMin = built.minV;
@@ -1828,15 +2221,13 @@ class Plot3DPainter extends CustomPainter {
 
         // Colour per corner, interpolated across the cell. A single colour
         // from the cell average makes each cell a flat block, which reads as
-        // banding however fine the grid.
-        // Shaded by facing when solid, so the form still reads. Flat across
-        // the cell rather than averaged at its corners: a height grid hands
-        // its quads over one at a time, with no neighbours to average.
-        final int flat = solid ? _quadShade(plain, quad) : 0;
-        final int c1 = solid ? flat : shade(quad.v1);
-        final int c2 = solid ? flat : shade(quad.v2);
-        final int c3 = solid ? flat : shade(quad.v3);
-        final int c4 = solid ? flat : shade(quad.v4);
+        // banding however fine the grid — for the light as for the value, so
+        // the light is taken at each corner too, from the slope of the
+        // sampled surface there.
+        final int c1 = shade(quad.v1, quad.l1);
+        final int c2 = shade(quad.v2, quad.l2);
+        final int c3 = shade(quad.v3, quad.l3);
+        final int c4 = shade(quad.v4, quad.l4);
 
         // Two triangles sharing the p1-p3 diagonal, each carrying its own
         // depth so a cell can be sorted against a grid segment passing under
@@ -1847,7 +2238,13 @@ class Plot3DPainter extends CustomPainter {
         scene.addTriangle(o1, o3, o4, c1, c3, c4, d2);
       }
 
-      _addMeshTo(scene, built.mesh, size, focalLength);
+      _addMeshTo(
+        scene,
+        built.mesh,
+        size,
+        focalLength,
+        (double v, double light) => meshInkArgb(shade(v, light), 1),
+      );
     }
 
     // Single-variable curves join the same list, so one passing behind a
@@ -1859,17 +2256,18 @@ class Plot3DPainter extends CustomPainter {
     _addParametricSurfaceTo(scene, size, focalLength);
     _addParametricTo(scene, size, focalLength);
 
-    scene.paint(canvas);
-
-    // Tick labels and arrowheads go on last, unoccluded — the lines are
-    // already in the scene, hence skipLines.
+    // Tick labels and arrowheads join the same order as the surfaces, so a
+    // surface nearer the camera covers the numbers behind it. They were drawn
+    // over the finished scene, which showed every number through the shape.
     //
-    // Drawn over a surface as well as beside one. They were suppressed
+    // Drawn over a surface as well as beside one. They were once suppressed
     // whenever a sheet was present, on the grounds that numerals scattered
     // over a bright surface read as dirt — but that left every surface plot
     // with unlabelled axes and no way to tell what the box spans, which is
     // the worse of the two.
-    _drawAxes(canvas, size, focalLength, skipLines: true);
+    _addAxisMarksTo(scene, size, focalLength);
+
+    scene.paint(canvas, fog: plotTheme.fog.toARGB32());
 
     // A colorbar keys one ramp to one set of values, so it can only speak for
     // a lone surface. With several, each has its own ramp and its own range,
@@ -2697,20 +3095,61 @@ class Plot3DPainter extends CustomPainter {
     }
   }
 
-  double _calculateGridSpacing(double range) {
-    // floor() throws on Infinity and NaN instead of returning a garbage
-    // double, so an unusable range took the whole frame down — every frame,
-    // since the range persists in the widget's state.
-    final span = range * 2;
-    if (!span.isFinite || span <= 0) return 1;
-    final exponent = log(span) / ln10;
+  /// How many labelled ticks each half of an axis may carry.
+  ///
+  /// Two: at most four numbers on an axis and twelve on the whole box. Every
+  /// unit labelled put eighteen to thirty numbers over the plot, and they
+  /// landed on the surface and under the controls.
+  static const int _maxTicksPerSide = 2;
+
+  /// The smallest round step — 1, 2 or 5 times a power of ten — that fits
+  /// [extent] in at most [maxSteps] whole steps.
+  static double _niceStep(double extent, int maxSteps) {
+    // log() and floor() throw on Infinity and NaN rather than returning a
+    // garbage double, and a range persists in the widget's state, so an
+    // unusable one would take every frame down with it.
+    if (!extent.isFinite || extent <= 0 || maxSteps <= 0) return 1;
+    final double exponent = (log(extent / maxSteps) / ln10).floorToDouble();
     if (!exponent.isFinite) return 1;
-    final magnitude = pow(10, exponent.floor()).toDouble();
+    final double magnitude = pow(10, exponent).toDouble();
     if (!magnitude.isFinite || magnitude <= 0) return 1;
-    final normalized = span / magnitude;
-    if (normalized < 2) return magnitude / 5;
-    if (normalized < 5) return magnitude / 2;
-    return magnitude;
+    for (final double m in const <double>[1, 2, 5, 10]) {
+      final double step = m * magnitude;
+      if ((extent / step + 1e-9).floor() <= maxSteps) return step;
+    }
+    return 10 * magnitude;
+  }
+
+  /// The step between labelled ticks on an axis running over ±[range].
+  ///
+  /// The ticks sit on its multiples, so they read 0.5, 1, 2 rather than
+  /// wherever the edge of the box happened to fall. They used to be counted
+  /// from the edge: a ±3.06 box was labelled −2.06, −1.06, 0.94, 1.94, 2.94.
+  static double _tickStep(double range) => _niceStep(range, _maxTicksPerSide);
+
+  /// The values an axis over ±[range] is labelled at, for tests.
+  @visibleForTesting
+  static List<double> axisTicksFor(double range) =>
+      _ticksWithin(range, _tickStep(range)).toList();
+
+  /// The multiples of [step] within ±[range], zero left out.
+  static Iterable<double> _ticksWithin(double range, double step) sync* {
+    if (!range.isFinite || !step.isFinite || step <= 0) return;
+    final int last = (range / step + 1e-9).floor();
+    for (int k = -last; k <= last; k++) {
+      if (k != 0) yield k * step;
+    }
+  }
+
+  /// Floor grid lines across ±[range]: every fifth one major, the majors on
+  /// the labelled ticks, so a number on an axis always sits on a line.
+  static Iterable<(double, bool)> _gridLinesWithin(double range) sync* {
+    final double minor = _tickStep(range) / 5;
+    if (!range.isFinite || !minor.isFinite || minor <= 0) return;
+    final int last = (range / minor + 1e-9).floor();
+    for (int k = -last; k <= last; k++) {
+      yield (k * minor, k % 5 == 0);
+    }
   }
 
   /// Add a world-space line to [scene], cut into depth-varying pieces.
@@ -2755,6 +3194,11 @@ class Plot3DPainter extends CustomPainter {
   /// in front of a surface they pass through. Labels and arrowheads are not
   /// included — they are annotations and belong on top.
   void _addAxisChromeTo(_LineSink scene, Size size, double focalLength) {
+    // Off means the whole frame of reference — the axes, and the plane they
+    // stand on with its outline — so the shape is left on its own. The plane
+    // went on being drawn once, cutting through the middle of a surface the
+    // user had asked to see bare.
+    if (!showAxes) return;
     final theme = plotTheme;
 
     final List<(Color, Point3D, double, double)> axes =
@@ -2815,6 +3259,8 @@ class Plot3DPainter extends CustomPainter {
   /// floor: its near end and far end have very different depths, so one depth
   /// per line cannot say whether the surface crosses in front of it.
   void _addFloorGridTo(_LineSink scene, Size size, double focalLength) {
+    // The plane goes with the axes (see [_addAxisChromeTo]).
+    if (!showAxes) return;
     final theme = plotTheme;
 
     // The plane has to read as a plane even where it passes in front of a
@@ -2831,35 +3277,33 @@ class Plot3DPainter extends CustomPainter {
           ..color = theme.subGrid.withValues(alpha: 0.28)
           ..strokeWidth = 0.9;
 
-    final double gridSpacingX = _calculateGridSpacing(rangeX);
-    final double gridSpacingY = _calculateGridSpacing(rangeY);
-
-    bool isMajor(double v, double spacing) =>
-        (v / spacing - (v / spacing).roundToDouble()).abs() < 1e-6;
-
-    for (double i = -rangeX; i <= rangeX + 1e-9; i += gridSpacingX / 5) {
+    // On the multiples of the step, like the ticks. Counted from the edge of
+    // the box, as they were, the majors almost never landed on a multiple —
+    // so the floor drew nothing but minor lines.
+    for (final (double x, bool major) in _gridLinesWithin(rangeX)) {
       _addWorldLineTo(
         scene,
         size,
         focalLength,
-        Point3D(i * scaleX, -rangeY * scaleY, 0),
-        Point3D(i * scaleX, rangeY * scaleY, 0),
-        isMajor(i, gridSpacingX) ? majorPaint : minorPaint,
+        Point3D(x * scaleX, -rangeY * scaleY, 0),
+        Point3D(x * scaleX, rangeY * scaleY, 0),
+        major ? majorPaint : minorPaint,
       );
     }
-    for (double i = -rangeY; i <= rangeY + 1e-9; i += gridSpacingY / 5) {
+    for (final (double y, bool major) in _gridLinesWithin(rangeY)) {
       _addWorldLineTo(
         scene,
         size,
         focalLength,
-        Point3D(-rangeX * scaleX, i * scaleY, 0),
-        Point3D(rangeX * scaleX, i * scaleY, 0),
-        isMajor(i, gridSpacingY) ? majorPaint : minorPaint,
+        Point3D(-rangeX * scaleX, y * scaleY, 0),
+        Point3D(rangeX * scaleX, y * scaleY, 0),
+        major ? majorPaint : minorPaint,
       );
     }
   }
 
   void _drawFloorGrid(Canvas canvas, Size size, double focalLength) {
+    if (!showAxes) return;
     final theme = plotTheme;
     final gridPaint =
         Paint()
@@ -2870,64 +3314,50 @@ class Plot3DPainter extends CustomPainter {
           ..color = theme.subGrid
           ..strokeWidth = 0.8;
 
-    final gridSpacingX = _calculateGridSpacing(rangeX);
-    final gridSpacingY = _calculateGridSpacing(rangeY);
-
-    for (double i = -rangeX; i <= rangeX; i += gridSpacingX / 5) {
-      var start = Point3D(
-        i * scaleX,
+    for (final (double x, bool major) in _gridLinesWithin(rangeX)) {
+      final Point3D start = Point3D(
+        x * scaleX,
         -rangeY * scaleY,
         0,
       ).rotateZ(rotationZ).rotateX(rotationX);
-      var end = Point3D(
-        i * scaleX,
+      final Point3D end = Point3D(
+        x * scaleX,
         rangeY * scaleY,
         0,
       ).rotateZ(rotationZ).rotateX(rotationX);
-      _drawClippedLine(canvas, size, focalLength, start, end, subGridPaint);
+      _drawClippedLine(
+        canvas,
+        size,
+        focalLength,
+        start,
+        end,
+        major ? gridPaint : subGridPaint,
+      );
     }
-    for (double i = -rangeY; i <= rangeY; i += gridSpacingY / 5) {
-      var start = Point3D(
+    for (final (double y, bool major) in _gridLinesWithin(rangeY)) {
+      final Point3D start = Point3D(
         -rangeX * scaleX,
-        i * scaleY,
+        y * scaleY,
         0,
       ).rotateZ(rotationZ).rotateX(rotationX);
-      var end = Point3D(
+      final Point3D end = Point3D(
         rangeX * scaleX,
-        i * scaleY,
+        y * scaleY,
         0,
       ).rotateZ(rotationZ).rotateX(rotationX);
-      _drawClippedLine(canvas, size, focalLength, start, end, subGridPaint);
-    }
-    for (double i = -rangeX; i <= rangeX; i += gridSpacingX) {
-      var start = Point3D(
-        i * scaleX,
-        -rangeY * scaleY,
-        0,
-      ).rotateZ(rotationZ).rotateX(rotationX);
-      var end = Point3D(
-        i * scaleX,
-        rangeY * scaleY,
-        0,
-      ).rotateZ(rotationZ).rotateX(rotationX);
-      _drawClippedLine(canvas, size, focalLength, start, end, gridPaint);
-    }
-    for (double i = -rangeY; i <= rangeY; i += gridSpacingY) {
-      var start = Point3D(
-        -rangeX * scaleX,
-        i * scaleY,
-        0,
-      ).rotateZ(rotationZ).rotateX(rotationX);
-      var end = Point3D(
-        rangeX * scaleX,
-        i * scaleY,
-        0,
-      ).rotateZ(rotationZ).rotateX(rotationX);
-      _drawClippedLine(canvas, size, focalLength, start, end, gridPaint);
+      _drawClippedLine(
+        canvas,
+        size,
+        focalLength,
+        start,
+        end,
+        major ? gridPaint : subGridPaint,
+      );
     }
   }
 
   void _drawFloorBoundary(Canvas canvas, Size size, double focalLength) {
+    if (!showAxes) return;
     final theme = plotTheme;
     final boundaryPaint =
         Paint()
@@ -2966,74 +3396,189 @@ class Plot3DPainter extends CustomPainter {
     if (clipped != null) canvas.drawLine(clipped.$1, clipped.$2, paint);
   }
 
-  void _drawAxes(
+  /// Where no axis annotation may go: the controls floating over the plot,
+  /// and the colorbar when there is one.
+  ///
+  /// A label under a control cannot be read, and one over the colorbar makes
+  /// the bar unreadable instead, so either way the label goes.
+  List<Rect> _annotationKeepOut(Size size) => <Rect>[
+    ...labelKeepOut,
+    if (surfaceMode != SurfaceMode.none || fieldType == FieldType.vector)
+      _colorbarZone(size),
+  ];
+
+  /// Paint [text] centred on [at], over a halo of the plot's own ground.
+  ///
+  /// The halo is what lets a number sit over a surface and still be read:
+  /// without it a label crossing a bright colormap, or a line of the mesh,
+  /// broke up into the picture behind it.
+  /// Laid-out axis text, kept between frames.
+  ///
+  /// Every number on the axes was laid out afresh on every frame, twice over
+  /// for its halo — a third of what a rotating frame cost. A plot shows a few
+  /// dozen distinct labels in a handful of shades, so a small store holds all
+  /// of them.
+  static final Map<String, TextPainter> _labels = <String, TextPainter>{};
+  static const int _labelsKept = 160;
+
+  /// [text] in [style], or its outline in [halo] when that is given.
+  static TextPainter _laidOut(String text, TextStyle style, {Color? halo}) {
+    final String key =
+        '$text|${style.fontSize}|${style.fontWeight?.value}|'
+        '${style.color?.toARGB32()}|${halo?.toARGB32()}';
+    final TextPainter? kept = _labels.remove(key);
+    if (kept != null) {
+      _labels[key] = kept;
+      return kept;
+    }
+    final TextPainter made = TextPainter(
+      text: TextSpan(
+        text: text,
+        style:
+            halo == null
+                ? style
+                : TextStyle(
+                  fontSize: style.fontSize,
+                  fontWeight: style.fontWeight,
+                  foreground:
+                      Paint()
+                        ..style = PaintingStyle.stroke
+                        ..strokeWidth = 3
+                        ..strokeJoin = StrokeJoin.round
+                        ..color = halo,
+                ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    _labels[key] = made;
+    if (_labels.length > _labelsKept) {
+      _labels.remove(_labels.keys.first)?.dispose();
+    }
+    return made;
+  }
+
+  void _paintHaloed(
     Canvas canvas,
-    Size size,
-    double focalLength, {
-    bool skipLines = false,
-  }) {
+    TextPainter fill,
+    String text,
+    TextStyle style,
+    Offset at,
+    Color halo,
+  ) {
+    final TextPainter outline = _laidOut(text, style, halo: halo);
+    final Offset topLeft = at - Offset(fill.width / 2, fill.height / 2);
+    outline.paint(canvas, topLeft);
+    fill.paint(canvas, topLeft);
+  }
+
+  /// The axes for a plot with no surface to sort them against: the lines and
+  /// their marks painted straight onto the canvas.
+  void _drawAxes(Canvas canvas, Size size, double focalLength) {
+    if (!showAxes) return;
     final theme = plotTheme;
-    final gridSpacingX = _calculateGridSpacing(rangeX);
-    final gridSpacingY = _calculateGridSpacing(rangeY);
-    final gridSpacingZ = _calculateGridSpacing(rangeZ);
+    for (final (Color color, Point3D dir, double range, double scale)
+        in <(Color, Point3D, double, double)>[
+          (theme.axisX, const Point3D(1, 0, 0), rangeX, scaleX),
+          (theme.axisY, const Point3D(0, 1, 0), rangeY, scaleY),
+          (theme.axisZ, const Point3D(0, 0, 1), rangeZ, scaleZ),
+        ]) {
+      final Point3D negPoint = Point3D(
+        -dir.x * range * 2 * scale,
+        -dir.y * range * 2 * scale,
+        -dir.z * range * 2 * scale,
+      ).rotateZ(rotationZ).rotateX(rotationX);
+      final Point3D posPoint = Point3D(
+        dir.x * range * 2 * scale,
+        dir.y * range * 2 * scale,
+        dir.z * range * 2 * scale,
+      ).rotateZ(rotationZ).rotateX(rotationX);
+      _drawClippedLine(
+        canvas,
+        size,
+        focalLength,
+        negPoint,
+        posPoint,
+        Paint()
+          ..color = color.withValues(alpha: 0.35)
+          ..strokeWidth = 6
+          ..strokeCap = StrokeCap.round
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
+      );
+      _drawClippedLine(
+        canvas,
+        size,
+        focalLength,
+        negPoint,
+        posPoint,
+        Paint()
+          ..color = color.withValues(alpha: 0.8)
+          ..strokeWidth = 2
+          ..strokeCap = StrokeCap.round,
+      );
+    }
+    _addAxisMarksTo(_ImmediateSink(canvas), size, focalLength);
+  }
+
+  /// Put every axis annotation into [sink] at its own depth: the numbers,
+  /// their ticks, the arrowheads and the axis names.
+  ///
+  /// Into the same order as the surfaces wherever there is one, so a surface
+  /// nearer the camera covers the numbers behind it — the same way it already
+  /// covers the axis lines.
+  void _addAxisMarksTo(_LineSink sink, Size size, double focalLength) {
+    if (!showAxes) return;
+    final theme = plotTheme;
+
+    // The ground the labels are haloed in: dark under light ink, light under
+    // dark ink, so the halo always parts a label from what is behind it.
+    final bool lightInk = theme.label.computeLuminance() > 0.5;
+    final Color ground = lightInk ? Colors.black : Colors.white;
+
+    // How far back the box reaches, so a label can fade with its depth. A
+    // number on the far side of the box is the least connected to what you
+    // are looking at, and at full strength it competes with the near ones.
+    double nearest = double.infinity;
+    double farthest = double.negativeInfinity;
+    for (final double sx in const <double>[-1, 1]) {
+      for (final double sy in const <double>[-1, 1]) {
+        for (final double sz in const <double>[-1, 1]) {
+          final double d =
+              Point3D(
+                sx * rangeX * scaleX,
+                sy * rangeY * scaleY,
+                sz * rangeZ * scaleZ,
+              ).rotateZ(rotationZ).rotateX(rotationX).y;
+          nearest = min(nearest, d);
+          farthest = max(farthest, d);
+        }
+      }
+    }
+    double fadeAt(double depth) {
+      final double span = farthest - nearest;
+      if (!(span > 0)) return 1;
+      // Full strength at the front, two fifths at the back — in eighths, so
+      // a label keeps the same few colours as the plot turns and its laid-out
+      // text can be reused (see [_laidOut]).
+      final double fade = 1 - 0.6 * ((depth - nearest) / span).clamp(0.0, 1.0);
+      return (fade * 8).round() / 8;
+    }
+
+    final List<Rect> keepOut = _annotationKeepOut(size);
+    bool blocked(Rect r) => keepOut.any((Rect k) => k.overlaps(r));
+    final Rect canvasRect = Offset.zero & size;
 
     final axes = [
-      (theme.axisX, 'X', Point3D(1, 0, 0), gridSpacingX, rangeX, scaleX),
-      (theme.axisY, 'Y', Point3D(0, 1, 0), gridSpacingY, rangeY, scaleY),
-      (theme.axisZ, 'Z', Point3D(0, 0, 1), gridSpacingZ, rangeZ, scaleZ),
+      (theme.axisX, 'X', Point3D(1, 0, 0), rangeX, scaleX),
+      (theme.axisY, 'Y', Point3D(0, 1, 0), rangeY, scaleY),
+      (theme.axisZ, 'Z', Point3D(0, 0, 1), rangeZ, scaleZ),
     ];
 
     for (final axis in axes) {
       final color = axis.$1;
       final label = axis.$2;
       final dir = axis.$3;
-      final gridSpacing = axis.$4;
-      final range = axis.$5;
-      final scale = axis.$6;
-
-      final axisPaint =
-          Paint()
-            ..color = color.withValues(alpha: 0.8)
-            ..strokeWidth = 2
-            ..strokeCap = StrokeCap.round;
-      final axisGlowPaint =
-          Paint()
-            ..color = color.withValues(alpha: 0.35)
-            ..strokeWidth = 6
-            ..strokeCap = StrokeCap.round
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
-
-      final negPoint = Point3D(
-        -dir.x * range * 2 * scale,
-        -dir.y * range * 2 * scale,
-        -dir.z * range * 2 * scale,
-      ).rotateZ(rotationZ).rotateX(rotationX);
-      final posPoint = Point3D(
-        dir.x * range * 2 * scale,
-        dir.y * range * 2 * scale,
-        dir.z * range * 2 * scale,
-      ).rotateZ(rotationZ).rotateX(rotationX);
-
-      // The scene draws the axis line when it is interleaving with a surface,
-      // so it can be occluded where the surface is nearer.
-      if (!skipLines) {
-        _drawClippedLine(
-          canvas,
-          size,
-          focalLength,
-          negPoint,
-          posPoint,
-          axisGlowPaint,
-        );
-        _drawClippedLine(
-          canvas,
-          size,
-          focalLength,
-          negPoint,
-          posPoint,
-          axisPaint,
-        );
-      }
+      final range = axis.$4;
+      final scale = axis.$5;
 
       // Just beyond the plotted box, which is where the axis stops meaning
       // anything. Not at 0.9 of the range, which put the head inside the box
@@ -3072,127 +3617,127 @@ class Plot3DPainter extends CustomPainter {
           const double arrowLength = 16.0;
           const double arrowHalfWidth = 5.5;
           final Offset base = arrowProj - normalized * arrowLength;
-          canvas.drawPath(
-            Path()
-              ..moveTo(arrowProj.dx, arrowProj.dy)
-              ..lineTo(
-                base.dx + perpendicular.dx * arrowHalfWidth,
-                base.dy + perpendicular.dy * arrowHalfWidth,
-              )
-              ..lineTo(
-                base.dx - perpendicular.dx * arrowHalfWidth,
-                base.dy - perpendicular.dy * arrowHalfWidth,
-              )
-              ..close(),
-            Paint()
-              ..color = color
-              ..style = PaintingStyle.fill,
+          final Path head =
+              Path()
+                ..moveTo(arrowProj.dx, arrowProj.dy)
+                ..lineTo(
+                  base.dx + perpendicular.dx * arrowHalfWidth,
+                  base.dy + perpendicular.dy * arrowHalfWidth,
+                )
+                ..lineTo(
+                  base.dx - perpendicular.dx * arrowHalfWidth,
+                  base.dy - perpendicular.dy * arrowHalfWidth,
+                )
+                ..close();
+          final Paint headPaint =
+              Paint()
+                ..color = color
+                ..style = PaintingStyle.fill;
+          sink.addMark(
+            (Canvas canvas) => canvas.drawPath(head, headPaint),
+            arrowPos.y,
           );
         }
 
-        final tp = TextPainter(
-          text: TextSpan(
-            text: label,
-            style: TextStyle(
-              color: color,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
+        final TextStyle nameStyle = TextStyle(
+          color: color,
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+        );
+        final TextPainter name = _laidOut(label, nameStyle);
+        final Offset nameAt = Offset(
+          arrowProj.dx + 8 + name.width / 2,
+          arrowProj.dy - 8 + name.height / 2,
+        );
+        if (!blocked(
+          Rect.fromCenter(
+            center: nameAt,
+            width: name.width,
+            height: name.height,
           ),
-          textDirection: TextDirection.ltr,
-        )..layout();
-        tp.paint(canvas, Offset(arrowProj.dx + 8, arrowProj.dy - 8));
+        )) {
+          final Color halo = ground.withValues(alpha: 0.55);
+          sink.addMark(
+            (Canvas canvas) =>
+                _paintHaloed(canvas, name, label, nameStyle, nameAt, halo),
+            arrowPos.y,
+          );
+        }
       }
 
-      final tickPaint =
-          Paint()
-            ..color = theme.tick
-            ..strokeWidth = 1;
-
-      for (double t = -range; t <= range; t += gridSpacing) {
-        if (t.abs() < gridSpacing * 0.1) continue;
-
-        final tickPos = Point3D(
+      final double step = _tickStep(range);
+      for (final double t in _ticksWithin(range, step)) {
+        final Point3D tickPos = Point3D(
           dir.x * t * scale,
           dir.y * t * scale,
           dir.z * t * scale,
         ).rotateZ(rotationZ).rotateX(rotationX);
-        final tickProj = tickPos.project(focalLength, size, _panX, _panY);
-
-        if (!_isPointInRect(
-          tickProj,
-          Rect.fromLTWH(0, 0, size.width, size.height),
-        )) {
-          continue;
-        }
+        final Offset tickProj = tickPos.project(
+          focalLength,
+          size,
+          _panX,
+          _panY,
+        );
+        if (!_isPointInRect(tickProj, canvasRect)) continue;
 
         const tickLen = 5.0;
-        Point3D tick1End;
+        final Point3D tick1End = switch (label) {
+          'X' => Point3D(t * scale, tickLen, 0),
+          'Y' => Point3D(tickLen, t * scale, 0),
+          _ => Point3D(tickLen, 0, t * scale),
+        }.rotateZ(rotationZ).rotateX(rotationX);
 
-        if (label == 'X') {
-          tick1End = Point3D(
-            t * scale,
-            tickLen,
-            0,
-          ).rotateZ(rotationZ).rotateX(rotationX);
-        } else if (label == 'Y') {
-          tick1End = Point3D(
-            tickLen,
-            t * scale,
-            0,
-          ).rotateZ(rotationZ).rotateX(rotationX);
-        } else {
-          tick1End = Point3D(
-            tickLen,
-            0,
-            t * scale,
-          ).rotateZ(rotationZ).rotateX(rotationX);
+        final Point3D labelPos = switch (label) {
+          'X' => Point3D(t * scale, -15, -10),
+          'Y' => Point3D(-15, t * scale, -10),
+          _ => Point3D(-15, -15, t * scale),
+        }.rotateZ(rotationZ).rotateX(rotationX);
+        final Offset labelProj = labelPos.project(
+          focalLength,
+          size,
+          _panX,
+          _panY,
+        );
+
+        final double fade = fadeAt(labelPos.y);
+        final String text = _formatNumber(t);
+        final TextStyle style = TextStyle(
+          color: theme.label.withValues(alpha: theme.label.a * fade),
+          fontSize: 10,
+        );
+        final TextPainter fill = _laidOut(text, style);
+        final Rect labelRect = Rect.fromCenter(
+          center: labelProj,
+          width: fill.width + 6,
+          height: fill.height + 4,
+        );
+        // Under a control, or over the colorbar, the tick goes with its
+        // number: a mark with no value beside it says nothing.
+        if (blocked(labelRect) || blocked(tickProj & const Size(1, 1))) {
+          continue;
         }
 
         // One mark straight through the axis. Two marks at right angles read
         // as a small corner sitting beside the line rather than a division
         // of it.
         final Offset tick1 = tick1End.project(focalLength, size, _panX, _panY);
-        canvas.drawLine(tickProj + (tickProj - tick1), tick1, tickPaint);
+        final Paint tickPaint =
+            Paint()
+              ..color = theme.tick.withValues(alpha: theme.tick.a * fade)
+              ..strokeWidth = 1;
+        sink.addMark(
+          (Canvas canvas) =>
+              canvas.drawLine(tickProj + (tickProj - tick1), tick1, tickPaint),
+          tickPos.y,
+        );
 
-        Point3D labelPos;
-        if (label == 'X') {
-          labelPos = Point3D(
-            t * scale,
-            -15,
-            -10,
-          ).rotateZ(rotationZ).rotateX(rotationX);
-        } else if (label == 'Y') {
-          labelPos = Point3D(
-            -15,
-            t * scale,
-            -10,
-          ).rotateZ(rotationZ).rotateX(rotationX);
-        } else {
-          labelPos = Point3D(
-            -15,
-            -15,
-            t * scale,
-          ).rotateZ(rotationZ).rotateX(rotationX);
-        }
-
-        final labelProj = labelPos.project(focalLength, size, _panX, _panY);
-        if (_isPointInRect(
-          labelProj,
-          Rect.fromLTWH(0, 0, size.width, size.height),
-        )) {
-          final ltp = TextPainter(
-            text: TextSpan(
-              text: _formatNumber(t),
-              style: TextStyle(color: theme.label, fontSize: 10),
-            ),
-            textDirection: TextDirection.ltr,
-          )..layout();
-          ltp.paint(
-            canvas,
-            Offset(labelProj.dx - ltp.width / 2, labelProj.dy - ltp.height / 2),
-          );
-        }
+        if (!canvasRect.contains(labelProj)) continue;
+        final Color halo = ground.withValues(alpha: 0.55 * fade);
+        sink.addMark(
+          (Canvas canvas) =>
+              _paintHaloed(canvas, fill, text, style, labelProj, halo),
+          labelPos.y,
+        );
       }
     }
   }
@@ -3278,31 +3823,6 @@ class Plot3DPainter extends CustomPainter {
   /// is shaded by its own geometry instead. Read by the colorbar.
   static (double, double)? _parametricValueRange;
 
-  /// [base], lightened or darkened by how squarely a quad faces the viewer.
-  int _quadShade(Color base, Quad quad) {
-    final double ux = quad.p2.x - quad.p1.x;
-    final double uy = quad.p2.y - quad.p1.y;
-    final double uz = quad.p2.z - quad.p1.z;
-    final double vx = quad.p3.x - quad.p1.x;
-    final double vy = quad.p3.y - quad.p1.y;
-    final double vz = quad.p3.z - quad.p1.z;
-    final double nx = uy * vz - uz * vy;
-    final double ny = uz * vx - ux * vz;
-    final double nz = ux * vy - uy * vx;
-    final double len = sqrt(nx * nx + ny * ny + nz * nz);
-    // A degenerate cell has no facing; the mid tone is the honest answer.
-    final double facing = len == 0 ? 0.5 : ny.abs() / len;
-    // Never fully dark: a cell seen edge-on is still surface, and dropping it
-    // to nothing punches a hole along every silhouette.
-    final double t = 0.45 + 0.55 * facing;
-    return Color.from(
-      alpha: 0.95,
-      red: base.r * t,
-      green: base.g * t,
-      blue: base.b * t,
-    ).toARGB32();
-  }
-
   /// Which components of a complex line are drawn, and in which order.
   ///
   /// Ordered so the palette is stable: turning the real part off must not
@@ -3372,27 +3892,35 @@ class Plot3DPainter extends CustomPainter {
       const Color Function(double) ramp = plotColormap;
       final double span =
           built.maxV > built.minV ? built.maxV - built.minV : 1.0;
+      final int plainArgb = plain.toARGB32();
+
+      int shade(double value, double light) {
+        if (!byValue || !value.isFinite) {
+          return litSurfaceArgb(plainArgb, light);
+        }
+        // Argument goes on the hue wheel, not a ramp. Phase wraps, and a
+        // ramp with different colours at its ends would draw a seam across
+        // the surface everywhere it passes pi — the same reason the 2D
+        // colouring uses the wheel, and it keeps the two views agreeing. Not
+        // lit: the wheel's lightness already says something, the modulus.
+        if (byArgument) return domainColor(value, 1).toARGB32();
+        return litSurfaceArgb(
+          ramp(((value - built.minV) / span).clamp(0.0, 1.0)).toARGB32(),
+          light,
+          strength: _valueShadeStrength,
+        );
+      }
 
       for (final Quad quad in built.quads) {
-        int shade(double value) {
-          if (!byValue || !value.isFinite) return _quadShade(plain, quad);
-          // Argument goes on the hue wheel, not a ramp. Phase wraps, and a
-          // ramp with different colours at its ends would draw a seam across
-          // the surface everywhere it passes pi — the same reason the 2D
-          // colouring uses the wheel, and it keeps the two views agreeing.
-          if (byArgument) return domainColor(value, 1).toARGB32();
-          return ramp(((value - built.minV) / span).clamp(0.0, 1.0)).toARGB32();
-        }
-
         final o1 = quad.p1.project(focalLength, size, _panX, _panY);
         final o2 = quad.p2.project(focalLength, size, _panX, _panY);
         final o3 = quad.p3.project(focalLength, size, _panX, _panY);
         final o4 = quad.p4.project(focalLength, size, _panX, _panY);
 
-        final int c1 = shade(quad.v1);
-        final int c2 = shade(quad.v2);
-        final int c3 = shade(quad.v3);
-        final int c4 = shade(quad.v4);
+        final int c1 = shade(quad.v1, quad.l1);
+        final int c2 = shade(quad.v2, quad.l2);
+        final int c3 = shade(quad.v3, quad.l3);
+        final int c4 = shade(quad.v4, quad.l4);
 
         scene.addTriangle(
           o1,
@@ -3414,7 +3942,13 @@ class Plot3DPainter extends CustomPainter {
         );
       }
 
-      _addMeshTo(scene, built.mesh, size, focalLength);
+      _addMeshTo(
+        scene,
+        built.mesh,
+        size,
+        focalLength,
+        (double v, double light) => meshInkArgb(shade(v, light), 1),
+      );
     }
 
     // The span the colour ramp was built over is not the height span, so the
@@ -3507,62 +4041,55 @@ class Plot3DPainter extends CustomPainter {
     }
     final double span = maxV > minV ? maxV - minV : 1.0;
 
-    final Color base = _theme.seriesColor(vectorSeriesBase);
+    final int baseArgb = _theme.seriesColor(vectorSeriesBase).toARGB32();
 
-    /// The averaged normal's facing at a corner, 0 edge-on to 1 square on.
+    /// How square a corner stands to the key light, 0 edge-on to 1 square on.
+    ///
+    /// Taken in the box's own space, before the camera turns it, so a sweep
+    /// is lit by the same light as every other surface and keeps its lighting
+    /// as it is turned. It was lit by how squarely it faced the camera, which
+    /// lights whatever you look at straight on and hides the shape there.
     ///
     /// Central differences where both neighbours exist, one-sided at the rim,
     /// so the edge of the sheet is shaded like the rest of it.
-    double facingAt(int i, int j) {
-      final Point3D? here = pts[i][j];
-      if (here == null) return 0.5;
-      final Point3D ua = (i > 0 ? pts[i - 1][j] : null) ?? here;
-      final Point3D ub = (i < rows - 1 ? pts[i + 1][j] : null) ?? here;
-      final Point3D va = (j > 0 ? pts[i][j - 1] : null) ?? here;
-      final Point3D vb = (j < cols - 1 ? pts[i][j + 1] : null) ?? here;
+    double lightAt(int i, int j) {
+      final ParametricPoint? here = pts[i][j] == null ? null : grid[i][j];
+      if (here == null) return 1;
+      ParametricPoint at(int a, int b) =>
+          (a >= 0 && a < rows && b >= 0 && b < cols && pts[a][b] != null)
+              ? grid[a][b]!
+              : here;
+      final ParametricPoint ua = at(i - 1, j);
+      final ParametricPoint ub = at(i + 1, j);
+      final ParametricPoint va = at(i, j - 1);
+      final ParametricPoint vb = at(i, j + 1);
 
-      final double ux = ub.x - ua.x;
-      final double uy = ub.y - ua.y;
-      final double uz = ub.z - ua.z;
-      final double vx = vb.x - va.x;
-      final double vy = vb.y - va.y;
-      final double vz = vb.z - va.z;
-      final double nx = uy * vz - uz * vy;
-      final double ny = uz * vx - ux * vz;
-      final double nz = ux * vy - uy * vx;
-      final double len = sqrt(nx * nx + ny * ny + nz * nz);
-      // A degenerate corner has no facing; the mid tone is the honest answer.
-      return len == 0 ? 0.5 : ny.abs() / len;
+      final double ux = (ub.x - ua.x) * scaleX;
+      final double uy = (ub.y - ua.y) * scaleY;
+      final double uz = (ub.z - ua.z) * scaleZ;
+      final double vx = (vb.x - va.x) * scaleX;
+      final double vy = (vb.y - va.y) * scaleY;
+      final double vz = (vb.z - va.z) * scaleZ;
+      return keyLightOn(
+        uy * vz - uz * vy,
+        uz * vx - ux * vz,
+        ux * vy - uy * vx,
+      );
     }
 
-    /// The colour at one corner.
-    int shadeAt(int i, int j) {
-      final double facing = facingAt(i, j);
-      if (!byValue) {
-        // Never fully dark: a corner seen edge-on is still surface, and
-        // dropping it to nothing punches a hole along every silhouette.
-        final double t = 0.45 + 0.55 * facing;
-        return Color.from(
-          alpha: 0.92,
-          red: base.r * t,
-          green: base.g * t,
-          blue: base.b * t,
-        ).toARGB32();
-      }
-      // The ramp carries the value; the shading on top is kept light so the
-      // form still reads without the colour drifting far from the number it
-      // stands for. Without any, a sphere coloured by magnitude is one flat
-      // colour and reads as a disc.
-      final Color ramp = plotColormap(
-        ((valueAt(grid[i][j]!) - minV) / span).clamp(0.0, 1.0),
+    /// The colour of the sheet where it reads [value] and is lit by [light].
+    ///
+    /// Solid, the light carries all of the form. Coloured by value it is kept
+    /// gentler, so the colour stays near enough the number it stands for to be
+    /// read off the colorbar — without any, a sphere coloured by magnitude is
+    /// one flat colour and reads as a disc.
+    int shadeFor(double value, double light) {
+      if (!byValue) return litSurfaceArgb(baseArgb, light);
+      return litSurfaceArgb(
+        plotColormap(((value - minV) / span).clamp(0.0, 1.0)).toARGB32(),
+        light,
+        strength: _valueShadeStrength,
       );
-      final double t = 0.82 + 0.18 * facing;
-      return Color.from(
-        alpha: 0.95,
-        red: ramp.r * t,
-        green: ramp.g * t,
-        blue: ramp.b * t,
-      ).toARGB32();
     }
 
     // Each vertex is shaded and projected once, not once per cell that
@@ -3578,17 +4105,29 @@ class Plot3DPainter extends CustomPainter {
             pts[i][j]?.project(focalLength, size, _panX, _panY),
         ],
     ];
+    final List<List<double>> values = <List<double>>[
+      for (int i = 0; i < rows; i++)
+        <double>[
+          for (int j = 0; j < cols; j++)
+            pts[i][j] == null || !byValue ? 0 : valueAt(grid[i][j]!),
+        ],
+    ];
+    final List<List<double>> lights = <List<double>>[
+      for (int i = 0; i < rows; i++)
+        <double>[for (int j = 0; j < cols; j++) lightAt(i, j)],
+    ];
     final List<List<int>> shades = <List<int>>[
       for (int i = 0; i < rows; i++)
         <int>[
-          for (int j = 0; j < cols; j++) pts[i][j] == null ? 0 : shadeAt(i, j),
+          for (int j = 0; j < cols; j++)
+            pts[i][j] == null ? 0 : shadeFor(values[i][j], lights[i][j]),
         ],
     ];
 
     // A sweep is a grid in u and v, so its mesh is those parameter lines —
     // the same idea as a height surface's grid, drawn on the same stride so
     // every kind of surface meshes at one density.
-    final List<(Point3D, Point3D)> mesh = <(Point3D, Point3D)>[];
+    final List<_GridPiece> mesh = <_GridPiece>[];
     final int meshStride = _meshStrideFor(max(rows, cols));
 
     for (int i = 1; i < rows; i++) {
@@ -3625,13 +4164,37 @@ class Plot3DPainter extends CustomPainter {
         if (showMesh) {
           // One segment per line rather than per side, so the cell next door
           // does not draw the same one again.
-          if ((i - 1) % meshStride == 0) mesh.add((a, b));
-          if ((j - 1) % meshStride == 0) mesh.add((a, d));
+          if ((i - 1) % meshStride == 0) {
+            mesh.add((
+              a: a,
+              b: b,
+              va: values[i - 1][j - 1],
+              vb: values[i - 1][j],
+              la: lights[i - 1][j - 1],
+              lb: lights[i - 1][j],
+            ));
+          }
+          if ((j - 1) % meshStride == 0) {
+            mesh.add((
+              a: a,
+              b: d,
+              va: values[i - 1][j - 1],
+              vb: values[i][j - 1],
+              la: lights[i - 1][j - 1],
+              lb: lights[i][j - 1],
+            ));
+          }
         }
       }
     }
 
-    _addMeshTo(scene, mesh, size, focalLength);
+    _addMeshTo(
+      scene,
+      mesh,
+      size,
+      focalLength,
+      (double v, double light) => meshInkArgb(shadeFor(v, light), 1),
+    );
   }
 
   /// Add the path traced by sweeping u, in the same depth order as everything
@@ -4257,7 +4820,7 @@ class Plot3DPainter extends CustomPainter {
     final Offset at = Point3D(hit.x * scaleX, hit.y * scaleY, hit.z * scaleZ)
         .rotateZ(rotationZ)
         .rotateX(rotationX)
-        .project(focalLengthFor(size), size, _panX, _panY);
+        .project(_focalLength, size, _panX, _panY);
     if (!at.dx.isFinite || !at.dy.isFinite) return;
 
     // One neutral marker rather than one tinted to the surface's own ramp.
@@ -4292,13 +4855,41 @@ class Plot3DPainter extends CustomPainter {
     ], anchorX: at.dx);
   }
 
+  /// The colorbar's geometry, shared by the bar and by the axis labels that
+  /// have to stay off it.
+  ///
+  /// Inset well clear of the corner: a phone's display is rounded there, and
+  /// at ten pixels from the edge the last number of the scale was cut by the
+  /// curve of the glass rather than by anything in the app.
+  static const double _colorbarHeight = 12.0;
+  static const double _colorbarMarginRight = 18.0;
+  static const double _colorbarMarginTop = 12.0;
+
+  /// From one bar to the next when several are stacked: the bar, the gap to
+  /// its numbers, the numbers, and air. Rows used to step by the bar's height
+  /// alone, so each bar was drawn over the numbers of the one above it.
+  static const double _colorbarPitch = 36.0;
+
+  static double _colorbarWidth(Size size) =>
+      (size.width * 0.45).clamp(80.0, 220.0);
+
+  /// Where the colorbar, with its numbers, can be: kept clear by the axes.
+  static Rect _colorbarZone(Size size) {
+    final double width = _colorbarWidth(size);
+    return Rect.fromLTWH(
+      size.width - width - _colorbarMarginRight - 4,
+      0,
+      width + _colorbarMarginRight + 4,
+      _colorbarMarginTop + _colorbarPitch,
+    );
+  }
+
   /// The value scale, laid along the top of the plot.
   ///
   /// Horizontal and in the top right corner to match 2D, leaving the left
   /// edge to the parameter panels and the top left to the mode label. Ticks
   /// hang below the bar rather than beside it, which is the only arrangement
-  /// that keeps five labels from colliding.
-  /// A scale for what the arrows mean.
+  /// that keeps the numbers from colliding.
   ///
   /// [stops] is the ramp being labelled and [row] which bar this is, counting
   /// down from the top — several fields on one set of axes each need their own,
@@ -4308,19 +4899,18 @@ class Plot3DPainter extends CustomPainter {
     Size size,
     double minVal,
     double maxVal, {
-    List<Color> stops = plotColormapStops,
+    List<Color>? stops,
     int row = 0,
   }) {
-    const double barHeight = 12.0;
-    const double margin = 10.0;
-    const int ticks = 4;
-    final double barWidth = (size.width * 0.45).clamp(80.0, 220.0);
-
+    // The ramp in use unless told otherwise; it is a setting, so it cannot be
+    // the parameter's default.
+    final List<Color> ramp = stops ?? plotColormapStops;
+    final double barWidth = _colorbarWidth(size);
     final Rect barRect = Rect.fromLTWH(
-      size.width - barWidth - margin,
-      margin + row * (barHeight + 6),
+      size.width - barWidth - _colorbarMarginRight,
+      _colorbarMarginTop + row * _colorbarPitch,
       barWidth,
-      barHeight,
+      _colorbarHeight,
     );
 
     // Left end is the minimum, so it reads like the axis underneath it. Drawn
@@ -4332,7 +4922,7 @@ class Plot3DPainter extends CustomPainter {
         ..shader = LinearGradient(
           begin: Alignment.centerLeft,
           end: Alignment.centerRight,
-          colors: stops,
+          colors: ramp,
         ).createShader(barRect),
     );
 
@@ -4344,32 +4934,48 @@ class Plot3DPainter extends CustomPainter {
         ..strokeWidth = 1,
     );
 
+    final double span = maxVal - minVal;
+    if (!span.isFinite || span <= 0) return;
+
+    // Round values, where they fall, rather than the bar's ends and quarters:
+    // those are wherever the data happened to stop, and read as −1.53 and
+    // 0.77 instead of −1 and 1.
+    final double step = _niceStep(span, 4);
     final TextStyle textStyle = TextStyle(
       color: _theme.colorbarText,
       fontSize: 9,
     );
-    for (int i = 0; i <= ticks; i++) {
-      final double t = i / ticks;
-      final double x = barRect.left + barWidth * t;
-      final double value = minVal + (maxVal - minVal) * t;
-
-      canvas.drawLine(
-        Offset(x, barRect.bottom),
-        Offset(x, barRect.bottom + 3),
+    final Paint tickPaint =
         Paint()
           ..color = _theme.colorbarBorder
-          ..strokeWidth = 1,
-      );
+          ..strokeWidth = 1;
+    double lastRight = double.negativeInfinity;
+    for (
+      int k = (minVal / step - 1e-9).ceil();
+      k * step <= maxVal + span * 1e-9;
+      k++
+    ) {
+      final double value = k * step;
+      final double x = barRect.left + (value - minVal) / span * barWidth;
 
       final TextPainter tp = TextPainter(
         text: TextSpan(text: _formatNumber(value), style: textStyle),
         textDirection: TextDirection.ltr,
       )..layout();
-      // Centred under its tick, and pulled inside the canvas at the ends so
-      // the first and last labels are not half cut off.
+      // Centred under its tick, but held inside the bar's own width, so the
+      // first and last numbers are never past its ends — or the screen's.
       final double left = (x - tp.width / 2).clamp(
-        2.0,
-        size.width - tp.width - 2,
+        barRect.left,
+        max(barRect.left, barRect.right - tp.width),
+      );
+      // A number that would touch its neighbour is left out with its tick.
+      if (left < lastRight + 4) continue;
+      lastRight = left + tp.width;
+
+      canvas.drawLine(
+        Offset(x, barRect.bottom),
+        Offset(x, barRect.bottom + 3),
+        tickPaint,
       );
       tp.paint(canvas, Offset(left, barRect.bottom + 5));
     }
@@ -4385,13 +4991,32 @@ class Plot3DPainter extends CustomPainter {
       old.panX != panX ||
       old.panY != panY ||
       old.function != function ||
+      // Every input below changes the picture on its own, and a field left
+      // out of this list is one the plot ignores until something else moves:
+      // the trace marker did not appear on a long press, Re/Im/|f| did not
+      // redraw, a new row's inset left the box where it was, and a surface
+      // stayed at its coarse dragging grid after the finger lifted.
+      !listEquals(old.functions, functions) ||
       old.is3DFunction != is3DFunction ||
       old.plotMode != plotMode ||
       old.fieldType != fieldType ||
+      old.vectorParser != vectorParser ||
+      !listEquals(old.vectorFields, vectorFields) ||
+      old.vectorSeriesBase != vectorSeriesBase ||
+      old.bottomInset != bottomInset ||
       old.showContour != showContour ||
       old.showMesh != showMesh ||
       old.surfaceMode != surfaceMode ||
-      old.colors != colors;
+      old.colors != colors ||
+      old.plotTheme != plotTheme ||
+      old.complexView != complexView ||
+      old.uRange != uRange ||
+      old.vRange != vRange ||
+      old.tracePoint != tracePoint ||
+      old.interacting != interacting ||
+      old.fitSize != fitSize ||
+      old.showAxes != showAxes ||
+      !listEquals(old.labelKeepOut, labelKeepOut);
 }
 
 /// The shapes of screen the framing knobs are split across.

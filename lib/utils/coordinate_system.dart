@@ -2,10 +2,16 @@ import 'dart:math' as math;
 
 /// The coordinate systems an expression can be written in.
 ///
-/// Symbols follow ISO 80000-2, which keeps the systems apart on purpose:
-/// cylindrical uses `r` for the distance from the axis while spherical uses
-/// `ρ` for the distance from the origin. They are different quantities, and
-/// giving them the same letter is a reliable way to write a wrong formula.
+/// Symbols follow the convention of most calculus texts: θ is the angle
+/// around the z axis in both cylindrical and spherical, and φ is measured
+/// down from the z axis. That keeps the systems apart where it matters —
+/// cylindrical `r` is the distance from the axis while spherical `ρ` is the
+/// distance from the origin, different quantities that a shared letter would
+/// make easy to confuse — and lets θ mean the same thing in both.
+///
+/// It is not ISO 80000-2, nor most physics texts, which write spherical as
+/// (r, ϑ, φ) with the two angles the other way round: ϑ down from the axis and
+/// φ around it.
 enum CoordinateSystem {
   cartesian,
 
@@ -28,7 +34,8 @@ extension CoordinateSystemInfo on CoordinateSystem {
 
   /// The three variables, in axis order.
   ///
-  /// φ is the ISO spelling of the spherical angle. The engine used to read it
+  /// φ is the textbook name for the angle down from the z axis. The engine
+  /// used to read it
   /// as the golden ratio, but nothing could produce that constant — no key
   /// inserts it and there is no way to type the character — so the symbol was
   /// dead and is now the coordinate.
@@ -66,8 +73,15 @@ final Set<String> allCoordinateSymbols = <String>{
 /// another system is evaluated by converting the sample point rather than by
 /// rewriting the expression. That makes both forms work through the renderers
 /// already in place: `ρ = 1` becomes the unit sphere because at every sampled
-/// (x, y, z) the value of ρ is known, and `r = 1 + cos(θ)` traces a cardioid
-/// through the same marching-squares code that draws any other implicit curve.
+/// (x, y, z) the value of ρ is known, and `r < 1 + cos(θ)` shades a cardioid
+/// through the same code that shades any other region.
+///
+/// A point has more than one polar address — (r, θ + 2π) and (−r, θ + π) are
+/// the same point as (r, θ) — and this returns the first: r ≥ 0, θ in its
+/// first turn. A line that needs the others reads them from there (see
+/// `PlotExpression.evaluate`), and the explicit forms `r = f(θ)` and
+/// `ρ = f(θ, φ)` are traced by sweeping their angles instead
+/// (see `PlotExpression.sweepsTheta`).
 ///
 /// Returns the three values in the same order as [CoordinateSystemInfo.variables].
 (double, double, double) toCoordinates(
@@ -81,13 +95,33 @@ final Set<String> allCoordinateSymbols = <String>{
       return (x, y, z);
     case CoordinateSystem.cylindrical:
       // r is the distance from the z axis; θ is measured from the x axis.
-      return (math.sqrt(x * x + y * y), math.atan2(y, x), z);
+      return (math.sqrt(x * x + y * y), _azimuth(x, y), z);
     case CoordinateSystem.spherical:
-      final double rho = math.sqrt(x * x + y * y + z * z);
+      final double r = math.sqrt(x * x + y * y);
+      final double rho = math.sqrt(r * r + z * z);
       // θ from the x axis in the xy-plane, ϕ down from the z axis. At the
-      // origin ϕ is undefined; zero is as good as anything and keeps the
-      // sample finite rather than seeding NaN through a whole surface.
-      final double phi = rho == 0 ? 0.0 : math.acos((z / rho).clamp(-1.0, 1.0));
-      return (rho, math.atan2(y, x), phi);
+      // origin ϕ is undefined, and atan2(0, 0) answers zero, which is as good
+      // as anything and keeps the sample finite rather than seeding NaN
+      // through a whole surface.
+      //
+      // atan2 rather than acos(z / ρ): acos is flat at ±1, so near the z axis
+      // it lost every digit — a point 1e-8 off the axis came back as ϕ = 0.
+      final double phi = math.atan2(r, z);
+      return (rho, _azimuth(x, y), phi);
   }
+}
+
+/// The angle around the z axis, from the positive x axis, in [0, 2π).
+///
+/// One turn has to start somewhere, and wherever it does θ jumps by 2π. It
+/// starts on the positive x axis, as it does in most texts, so `0 < θ < 3π/2`
+/// is three quadrants and r = θ traces its first whole turn. atan2 alone
+/// starts it on the negative x axis, at −π: the same region came out as the
+/// upper half-plane, and r = θ stopped half a turn in.
+///
+/// A sample a hair below the axis can round up to exactly 2π, so the interval
+/// is closed at that end in practice. Both ends name the same direction.
+double _azimuth(double x, double y) {
+  final double theta = math.atan2(y, x);
+  return theta < 0 ? theta + 2 * math.pi : theta;
 }
