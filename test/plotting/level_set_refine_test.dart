@@ -208,8 +208,7 @@ void main() {
     // Under `flutter test` it is made in place, so every other test sees the
     // finished surface on the first paint. The app draws the plain march at
     // once instead and swaps the refined one in when it lands.
-    marchInBackground = true;
-    addTearDown(() => marchInBackground = false);
+    final BackgroundMarches marches = BackgroundMarches(enabled: true);
 
     final AppColors colors = AppColors.fromType(ThemeType.dark);
     final PlotThemeData theme = PlotThemeData.fromColors(colors);
@@ -231,6 +230,7 @@ void main() {
       surfaceMode: SurfaceMode.none,
       colors: colors,
       plotTheme: theme,
+      marches: marches,
     );
     void paint() {
       final ui.PictureRecorder recorder = ui.PictureRecorder();
@@ -242,24 +242,23 @@ void main() {
         hasMarchedSurface(pair, -3, 3, -3, 3, -3.45, 3.45, refine: true);
 
     await tester.runAsync(() async {
-      final int before = backgroundMarches.value;
+      final int before = marches.landed.value;
       paint();
       // Not yet: the first paint drew the plain march.
       expect(refinedMarched(), isFalse);
 
       final Stopwatch waited = Stopwatch()..start();
-      while (backgroundMarches.value == before &&
+      while (marches.landed.value == before &&
           waited.elapsed < const Duration(seconds: 30)) {
         await Future<void>.delayed(const Duration(milliseconds: 20));
       }
-      expect(marchInBackground, isTrue, reason: 'the isolate could not run');
+      expect(marches.enabled, isTrue, reason: 'the isolate could not run');
       expect(refinedMarched(), isTrue, reason: 'nothing landed');
     });
 
     // What landed is what marching in place makes.
     final LevelSurface landed = marchedSurface(pair, -3, 3, -3, 3, -3.45, 3.45);
     releasePlotGeometry();
-    marchInBackground = false;
     final LevelSurface inPlace = marchedSurface(
       pair,
       -3,

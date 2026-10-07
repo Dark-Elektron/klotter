@@ -553,7 +553,8 @@ bool hasMarchedSurface(
   _marchKey(f, xMin, xMax, yMin, yMax, zMin, zMax, resolution, refine),
 );
 
-/// Whether refined marches are made off the UI thread.
+/// Where refined marches are made off the UI thread, and the signal that one
+/// has landed.
 ///
 /// They are where the time goes. On a Galaxy A54 arriving at the touching
 /// paraboloids froze the screen for over a second while the cells round the
@@ -561,44 +562,44 @@ bool hasMarchedSurface(
 /// hanging. Made in the background, a coarse stand-in is drawn at once and
 /// the refined surface replaces it a moment later.
 ///
-/// Off under `flutter test`, where every paint is checked as soon as it is
-/// made, and switched off for good if an isolate ever cannot be started.
-bool marchInBackground = !Platform.environment.containsKey('FLUTTER_TEST');
+/// An object handed to whatever draws (the 3D painter's `marches`) rather
+/// than a flag and a notifier at the top level, which tests had to switch on
+/// and remember to switch off again; a test makes its own instead.
+class BackgroundMarches {
+  BackgroundMarches({bool? enabled})
+    : _enabled = enabled ?? !Platform.environment.containsKey('FLUTTER_TEST');
 
-/// Ticks each time a march made by [marchSurfaceInBackground] lands, so
-/// whatever draws level surfaces can draw again with it.
-final ValueNotifier<int> backgroundMarches = ValueNotifier<int>(0);
+  /// The app's. Off under `flutter test`, where every paint is checked as soon
+  /// as it is made.
+  static final BackgroundMarches shared = BackgroundMarches();
 
-/// Marches being made in the background, so each is asked for only once.
-final Set<Object> _marching = <Object>{};
+  bool _enabled;
 
-/// Make [marchedSurface]'s march in a background isolate and keep it, unless
-/// it is already kept or on its way. [backgroundMarches] ticks when it lands.
-void marchSurfaceInBackground(
-  PlotExpression f,
-  double xMin,
-  double xMax,
-  double yMin,
-  double yMax,
-  double zMin,
-  double zMax, {
-  int resolution = 40,
-  bool refine = true,
-}) {
-  final Object key = _marchKey(
-    f,
-    xMin,
-    xMax,
-    yMin,
-    yMax,
-    zMin,
-    zMax,
-    resolution,
-    refine,
-  );
-  if (_tetsCache.contains(key) || !_marching.add(key)) return;
-  Isolate.run(
-    () => _marchingTetrahedra(
+  /// Whether refined marches are made in the background. Off for good once an
+  /// isolate cannot be started, after which they are made in place.
+  bool get enabled => _enabled;
+
+  /// Ticks each time a march lands, so whatever draws level surfaces can draw
+  /// again with it.
+  final ValueNotifier<int> landed = ValueNotifier<int>(0);
+
+  /// Marches on their way, so each is asked for only once.
+  final Set<Object> _marching = <Object>{};
+
+  /// Make [marchedSurface]'s march in a background isolate and keep it, unless
+  /// it is already kept or on its way. [landed] ticks when it arrives.
+  void march(
+    PlotExpression f,
+    double xMin,
+    double xMax,
+    double yMin,
+    double yMax,
+    double zMin,
+    double zMax, {
+    int resolution = 40,
+    bool refine = true,
+  }) {
+    final Object key = _marchKey(
       f,
       xMin,
       xMax,
@@ -607,23 +608,65 @@ void marchSurfaceInBackground(
       zMin,
       zMax,
       resolution,
-      refine: refine,
-    ),
-  ).then(
-    (LevelSurface surface) {
-      _marching.remove(key);
-      _tetsCache.put(key, surface);
-      backgroundMarches.value++;
-    },
-    onError: (Object error) {
-      // Nothing to be done from here but stop trying: the next paint marches
-      // it the ordinary way.
-      _marching.remove(key);
-      marchInBackground = false;
-      backgroundMarches.value++;
-    },
-  );
+      refine,
+    );
+    if (_tetsCache.contains(key) || !_marching.add(key)) return;
+    _marchInIsolate(
+      f,
+      xMin,
+      xMax,
+      yMin,
+      yMax,
+      zMin,
+      zMax,
+      resolution,
+      refine,
+    ).then(
+      (LevelSurface surface) {
+        _marching.remove(key);
+        _tetsCache.put(key, surface);
+        landed.value++;
+      },
+      onError: (Object error) {
+        // Nothing to be done from here but stop trying: the next paint marches
+        // it the ordinary way.
+        _marching.remove(key);
+        _enabled = false;
+        landed.value++;
+      },
+    );
+  }
 }
+
+/// The march itself, in an isolate of its own.
+///
+/// Top-level so the closure sent to the isolate holds only what it is given.
+/// Made inside [BackgroundMarches.march] it could capture the instance, and
+/// with it everything listening to [BackgroundMarches.landed], which is not
+/// for sending.
+Future<LevelSurface> _marchInIsolate(
+  PlotExpression f,
+  double xMin,
+  double xMax,
+  double yMin,
+  double yMax,
+  double zMin,
+  double zMax,
+  int resolution,
+  bool refine,
+) => Isolate.run(
+  () => _marchingTetrahedra(
+    f,
+    xMin,
+    xMax,
+    yMin,
+    yMax,
+    zMin,
+    zMax,
+    resolution,
+    refine: refine,
+  ),
+);
 
 /// One component of the gradient, from a sample and its neighbours on that
 /// axis.

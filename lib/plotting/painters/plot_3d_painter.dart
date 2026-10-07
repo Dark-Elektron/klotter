@@ -788,9 +788,15 @@ class Plot3DPainter extends CustomPainter {
     this.fitSize,
     this.showAxes = true,
     this.labelKeepOut = const <Rect>[],
-    // A refined level surface made off the UI thread is drawn as soon as it
-    // lands, however still the plot is.
-  }) : super(repaint: backgroundMarches);
+    BackgroundMarches? marches,
+  }) : marches = marches ?? BackgroundMarches.shared,
+       // A refined level surface made off the UI thread is drawn as soon as it
+       // lands, however still the plot is.
+       super(repaint: (marches ?? BackgroundMarches.shared).landed);
+
+  /// Where refined level surfaces are made off the UI thread: the app's, or a
+  /// test's own.
+  final BackgroundMarches marches;
 
   // Remove the getter since rangeZ is now a parameter
   // double get rangeZ => (rangeX + rangeY) / 2;
@@ -1686,7 +1692,7 @@ class Plot3DPainter extends CustomPainter {
     final bool refined;
     if (refinedToHand) {
       refined = true;
-    } else if (!marchInBackground) {
+    } else if (!marches.enabled) {
       // Refined here and now, unless the box is changing under a pinch:
       // then every frame is a march of its own, and the plain one is used.
       refined = !interacting;
@@ -1703,7 +1709,7 @@ class Plot3DPainter extends CustomPainter {
       // box has been made, the box has outlasted a frame.
       if (!interacting ||
           hasMesh(_levelPlaceholderResolution, refined: false)) {
-        marchSurfaceInBackground(
+        marches.march(
           equation,
           -rangeX,
           rangeX,
@@ -1827,7 +1833,7 @@ class Plot3DPainter extends CustomPainter {
   static const int levelResolution = 40;
 
   /// Lattice cells across the box for the stand-in drawn while the full march
-  /// is made in the background (see [marchInBackground]).
+  /// is made in the background (see [marches]).
   static const int _levelPlaceholderResolution = 20;
 
   /// Sample one z = f(x, y) over the floor grid and build its gridSize.
