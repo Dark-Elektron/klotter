@@ -401,16 +401,21 @@ Complex _evalComplexTrig(TrigExpr expr, Map<String, Complex> b) {
     case TrigFunc.sgn:
       final double m = z.magnitude;
       return m == 0 ? _zero : Complex(z.real / m, z.imag / m);
-    // The inverse functions have branch cuts that want more care than a
-    // formula each; until they are done properly they say so rather than
-    // returning something plausible and wrong.
+    // Principal values, with the usual cuts: asin, acos and atanh along the
+    // real axis beyond ±1, atan and asinh along the imaginary axis beyond
+    // ±i, and acosh along the real axis left of 1.
     case TrigFunc.asin:
+      return complexAsin(z);
     case TrigFunc.acos:
+      return complexAcos(z);
     case TrigFunc.atan:
+      return complexAtan(z);
     case TrigFunc.asinh:
+      return complexAsinh(z);
     case TrigFunc.acosh:
+      return complexAcosh(z);
     case TrigFunc.atanh:
-      return const Complex(double.nan, double.nan);
+      return complexAtanh(z);
   }
 }
 
@@ -478,3 +483,83 @@ Complex complexPow(Complex base, Complex exponent) {
   }
   return complexExp(exponent * complexLog(base));
 }
+
+// ============================================================
+// COMPLEX INVERSE FUNCTIONS
+//
+// Each is the principal value: the branch every textbook and library means
+// when it writes the function without qualification. Exactly on a cut the
+// value is the one approached from one side; anywhere else it is continuous.
+// asin and atan are written through asinh and atanh, whose forms are the
+// better behaved, so there are two formulas to get right rather than four.
+// ============================================================
+
+/// Below this |z| the first two terms of a series are exact to double
+/// precision, where the log forms lose digits to cancellation.
+const double _complexTiny = 1e-4;
+
+/// Beyond this |z|, z² + 1 is z² to double precision, and squaring would soon
+/// overflow while the answer is barely past 20.
+const double _complexHuge = 1e8;
+
+/// The principal inverse hyperbolic sine, `log(z + √(z² + 1))`, cut along the
+/// imaginary axis beyond ±i.
+///
+/// Odd, and worked out in the right half-plane: in the left, z and √(z² + 1)
+/// nearly cancel, which is how the real asinh of −1e8 came out as log 0.
+Complex complexAsinh(Complex z) {
+  if (z.real < 0) {
+    final Complex w = complexAsinh(Complex(-z.real, -z.imag));
+    return Complex(-w.real, -w.imag);
+  }
+  final double size = z.magnitude;
+  if (size < _complexTiny) {
+    final Complex cube = z * z * z;
+    return Complex(z.real - cube.real / 6, z.imag - cube.imag / 6);
+  }
+  if (size > _complexHuge) {
+    // log 2z: the square root has become z.
+    final Complex l = complexLog(z);
+    return Complex(l.real + math.ln2, l.imag);
+  }
+  return complexLog(z + complexSqrt(z * z + _one));
+}
+
+/// The principal inverse sine, `−i·asinh(iz)`, cut along the real axis
+/// beyond ±1.
+Complex complexAsin(Complex z) {
+  final Complex w = complexAsinh(Complex(-z.imag, z.real));
+  return Complex(w.imag, -w.real);
+}
+
+/// The principal inverse cosine, `π/2 − asin z`, cut where asin is.
+Complex complexAcos(Complex z) {
+  final Complex a = complexAsin(z);
+  return Complex(math.pi / 2 - a.real, -a.imag);
+}
+
+/// The principal inverse hyperbolic tangent, `½·[log(1 + z) − log(1 − z)]`,
+/// cut along the real axis beyond ±1.
+Complex complexAtanh(Complex z) {
+  if (z.magnitude < _complexTiny) {
+    final Complex cube = z * z * z;
+    return Complex(z.real + cube.real / 3, z.imag + cube.imag / 3);
+  }
+  final Complex d = complexLog(_one + z) - complexLog(_one - z);
+  return Complex(d.real / 2, d.imag / 2);
+}
+
+/// The principal inverse tangent, `−i·atanh(iz)`, cut along the imaginary
+/// axis beyond ±i.
+Complex complexAtan(Complex z) {
+  final Complex w = complexAtanh(Complex(-z.imag, z.real));
+  return Complex(w.imag, -w.real);
+}
+
+/// The principal inverse hyperbolic cosine, cut along the real axis left
+/// of 1.
+///
+/// Kahan's `log(z + √(z + 1)·√(z − 1))` rather than `log(z + √(z² − 1))`,
+/// which puts the cut through the left half-plane and squares z on the way.
+Complex complexAcosh(Complex z) =>
+    complexLog(z + complexSqrt(z + _one) * complexSqrt(z - _one));
