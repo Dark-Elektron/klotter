@@ -85,6 +85,8 @@ void _collectFreeVars(Expr expr, Set<String> out) {
     _collectFreeVars(expr.argument, out);
   } else if (expr is AbsExpr) {
     _collectFreeVars(expr.operand, out);
+  } else if (expr is FactorialExpr) {
+    _collectFreeVars(expr.operand, out);
   } else if (expr is DivExpr) {
     _collectFreeVars(expr.numerator, out);
     _collectFreeVars(expr.denominator, out);
@@ -173,6 +175,8 @@ double _evalWith(Expr expr, Map<String, double> b) {
   }
 
   if (expr is TrigExpr) return _evalTrig(expr, b);
+
+  if (expr is FactorialExpr) return factorial(_evalWith(expr.operand, b));
 
   if (expr is PermExpr) {
     final int nVal = _evalWith(expr.n, b).toInt();
@@ -274,6 +278,7 @@ bool _usesImaginary(Expr expr) {
         (!expr.isNaturalLog && _usesImaginary(expr.base));
   }
   if (expr is AbsExpr) return _usesImaginary(expr.operand);
+  if (expr is FactorialExpr) return _usesImaginary(expr.operand);
   if (expr is TrigExpr) return _usesImaginary(expr.argument);
   return false;
 }
@@ -344,6 +349,10 @@ Complex _evalComplexWith(Expr expr, Map<String, Complex> b) {
 
   if (expr is TrigExpr) return _evalComplexTrig(expr, b);
 
+  if (expr is FactorialExpr) {
+    return complexGamma(_evalComplexWith(expr.operand, b) + _one);
+  }
+
   // Anything else — permutations, sums over an index, a derivative — has no
   // complex meaning here. NaN rather than a wrong number.
   return const Complex(double.nan, double.nan);
@@ -401,6 +410,29 @@ Complex _complexIm(Complex z) => Complex(z.imag, 0);
 Complex _complexSign(Complex z) {
   final double m = z.magnitude;
   return m == 0 ? _zero : Complex(z.real / m, z.imag / m);
+}
+
+/// Γ(z) over the complex numbers: the Lanczos approximation the real [gamma]
+/// uses, right of Re z = ½, and the reflection formula
+/// Γ(z)·Γ(1 − z) = π / sin(πz) left of it. Poles at zero and the negative
+/// whole numbers, where it is not finite.
+Complex complexGamma(Complex z) {
+  if (z.imag == 0) return Complex(gamma(z.real), 0);
+  if (z.real < 0.5) {
+    final Complex s = _complexSin(Complex(math.pi * z.real, math.pi * z.imag));
+    return const Complex(math.pi, 0) / (s * complexGamma(_one - z));
+  }
+  final Complex w = z - _one;
+  Complex a = Complex(lanczosCoefficients[0], 0);
+  for (int i = 1; i < lanczosCoefficients.length; i++) {
+    a = a + Complex(lanczosCoefficients[i], 0) / (w + Complex(i.toDouble(), 0));
+  }
+  final Complex t = w + const Complex(lanczosG + 0.5, 0);
+  // √(2π) · t^(w + ½) · e^(−t) · a, the power and the exponential taken
+  // together as one exponential.
+  return const Complex(sqrtTwoPi, 0) *
+      complexExp((w + const Complex(0.5, 0)) * complexLog(t) - t) *
+      a;
 }
 
 /// The principal logarithm: `ln|z| + i·arg z`, with `arg` in (-π, π].

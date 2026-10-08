@@ -1376,7 +1376,14 @@ class PlotExpression {
   }
 
   static bool _hasUnresolvedCalculus(Expr expr) {
-    if (expr is DerivativeExpr || expr is IntegralExpr) {
+    // Still a function of the variable it is taken by: d/dx f(x) depends on
+    // x, though x is bound inside it, and so does ∫ f(x) dx. Asked for its
+    // free variables, either leaves x out and looked like a constant, so
+    // d/dx of something the engine cannot differentiate — x!, say — sampled
+    // as NaN everywhere and drew nothing, with nothing to say why.
+    if (expr is DerivativeExpr) return true;
+    if (expr is IntegralExpr) {
+      if (expr.lower == null || expr.upper == null) return true;
       return expr.freeVariables.isNotEmpty;
     }
     if (expr is SumExpr) return expr.terms.any(_hasUnresolvedCalculus);
@@ -1395,6 +1402,7 @@ class PlotExpression {
     }
     if (expr is TrigExpr) return _hasUnresolvedCalculus(expr.argument);
     if (expr is AbsExpr) return _hasUnresolvedCalculus(expr.operand);
+    if (expr is FactorialExpr) return _hasUnresolvedCalculus(expr.operand);
     if (expr is DivExpr) {
       return _hasUnresolvedCalculus(expr.numerator) ||
           _hasUnresolvedCalculus(expr.denominator);

@@ -849,6 +849,9 @@ class SumExpr extends Expr {
     if (expr is AbsExpr) {
       return _containsIntegrationConstant(expr.operand);
     }
+    if (expr is FactorialExpr) {
+      return _containsIntegrationConstant(expr.operand);
+    }
     return false;
   }
 
@@ -3188,6 +3191,11 @@ Complex? _tryEvalComplexValue(Expr expr) {
     if (val == null) return null;
     return Complex(val.magnitude, 0);
   }
+  if (expr is FactorialExpr) {
+    final Complex? val = _tryEvalComplexValue(expr.operand);
+    if (val == null) return null;
+    return complexGamma(val + const Complex(1, 0));
+  }
 
   return null;
 }
@@ -3295,6 +3303,105 @@ class AbsExpr extends Expr {
 
   @override
   String toString() => '|$operand|';
+}
+
+// ============================================================
+// SECTION 11b: FACTORIAL EXPRESSION
+// ============================================================
+
+/// `x!` for anything but a whole number from 0 up: Γ(x + 1).
+///
+/// The factorial of a whole number is worked out exactly where it is parsed.
+/// Everything else used to be rejected there, so `x!` could not be plotted
+/// at all and a fraction's factorial had no value. Γ(x + 1) is the factorial
+/// carried to every number, and the one every calculator means: (½)! is
+/// √π/2, and the negative whole numbers are poles.
+class FactorialExpr extends Expr {
+  final Expr operand;
+
+  FactorialExpr(this.operand);
+
+  /// The largest whole number whose factorial [simplify] works out exactly.
+  /// Past it the value is past a double too, and the digits only cost time.
+  static final BigInt _exactLimit = BigInt.from(1000);
+
+  @override
+  bool get hasImaginary => operand.hasImaginary;
+
+  @override
+  Expr simplify() {
+    final Expr op = operand.simplify();
+    if (op is IntExpr &&
+        op.value >= BigInt.zero &&
+        op.value <= _exactLimit) {
+      BigInt r = BigInt.one;
+      for (BigInt k = BigInt.two; k <= op.value; k += BigInt.one) {
+        r *= k;
+      }
+      return IntExpr(r);
+    }
+    return FactorialExpr(op);
+  }
+
+  @override
+  double toDouble() => factorial(operand.toDouble());
+
+  @override
+  bool structurallyEquals(Expr other) {
+    return other is FactorialExpr &&
+        operand.structurallyEquals(other.operand);
+  }
+
+  @override
+  String get termSignature => 'fact:${operand.simplify()}';
+
+  @override
+  Expr get coefficient => IntExpr.one;
+
+  @override
+  Expr get baseExpr => this;
+
+  @override
+  bool get isZero => false;
+
+  @override
+  bool get isOne {
+    final Expr simplified = simplify();
+    return simplified is IntExpr && simplified.isOne;
+  }
+
+  @override
+  bool get isRational {
+    final Expr simplified = simplify();
+    return simplified is IntExpr || simplified is FracExpr;
+  }
+
+  @override
+  bool get isInteger => simplify() is IntExpr;
+
+  @override
+  Expr negate() => ProdExpr([IntExpr.negOne, this]);
+
+  @override
+  List<MathNode> toMathNode() {
+    final Expr simplified = simplify();
+    if (simplified is! FactorialExpr) return simplified.toMathNode();
+    // Bracketed unless it is a single letter, so (x + 1)! is not read back
+    // as x + 1!.
+    return <MathNode>[
+      if (operand is VarExpr)
+        ...operand.toMathNode()
+      else
+        ParenthesisNode(content: operand.toMathNode()),
+      LiteralNode(text: '!'),
+    ];
+  }
+
+  @override
+  Expr copy() => FactorialExpr(operand.copy());
+
+  @override
+  String toString() => operand is VarExpr ? '$operand!' : '($operand)!';
 }
 
 // ============================================================
@@ -3540,7 +3647,12 @@ class DivExpr extends Expr {
   }
 
   bool _hasComplexFunctions(Expr expr) {
-    if (expr is TrigExpr || expr is LogExpr || expr is RootExpr) return true;
+    if (expr is TrigExpr ||
+        expr is LogExpr ||
+        expr is RootExpr ||
+        expr is FactorialExpr) {
+      return true;
+    }
     if (expr is ProdExpr) {
       return expr.factors.any((f) => _hasComplexFunctions(f));
     }
@@ -5212,9 +5324,9 @@ class _TokenParser {
   _ParsedExpr _parsePower() {
     _ParsedExpr base = _parsePrimary();
 
-    // Postfix factorial (e.g. `(19+2)!`). Only defined for a non-negative
-    // integer; anything else throws so the exact result is dropped and the
-    // decimal engine handles it. Computed exactly with BigInt.
+    // Postfix factorial (e.g. `(19+2)!`). A whole number from 0 up is
+    // computed exactly with BigInt; anything else is Γ(x + 1) (see
+    // [FactorialExpr]). It threw before, which is why `x!` would not plot.
     while (pos < tokens.length &&
         tokens[pos].type == _TokenType.operator &&
         tokens[pos].value == '!') {
@@ -5227,9 +5339,7 @@ class _TokenParser {
         }
         base = _ParsedExpr(IntExpr(r));
       } else {
-        throw const FormatException(
-          'factorial requires a non-negative integer',
-        );
+        base = _ParsedExpr(FactorialExpr(simplified));
       }
     }
 
@@ -5849,6 +5959,8 @@ class ExactMathEngine {
       vars.addAll(_findVariables(expr.base));
     } else if (expr is TrigExpr) {
       vars.addAll(_findVariables(expr.argument));
+    } else if (expr is FactorialExpr) {
+      vars.addAll(_findVariables(expr.operand));
     }
     return vars;
   }
@@ -6803,6 +6915,7 @@ class ExactMathEngine {
       Expr simplified = expr.simplify();
       return simplified is TrigExpr;
     }
+    if (expr is FactorialExpr) return expr.simplify() is FactorialExpr;
     if (expr is ConstExpr) return true;
     if (expr is SumExpr) return expr.terms.any(_hasIrrationalParts);
     if (expr is ProdExpr) return expr.factors.any(_hasIrrationalParts);
@@ -6936,6 +7049,11 @@ class _DecimalExprFormatter {
     }
     if (expr is AbsExpr) {
       return '|${_format(expr.operand)}|';
+    }
+    if (expr is FactorialExpr) {
+      return expr.operand is VarExpr
+          ? '${_format(expr.operand)}!'
+          : '(${_format(expr.operand)})!';
     }
     if (expr is PermExpr) {
       return 'P(${_format(expr.n)},${_format(expr.r)})';

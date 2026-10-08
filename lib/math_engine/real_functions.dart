@@ -94,3 +94,76 @@ double atanh(double a) {
   }
   return a.isNegative ? -r : r;
 }
+
+// ============================================================
+// GAMMA AND FACTORIAL
+// ============================================================
+
+/// The Lanczos approximation's coefficients for g = 7, nine terms: good to
+/// about fifteen digits across the right half-plane.
+const double lanczosG = 7;
+const List<double> lanczosCoefficients = <double>[
+  0.99999999999980993,
+  676.5203681218851,
+  -1259.1392167224028,
+  771.32342877765313,
+  -176.61502916214059,
+  12.507343278686905,
+  -0.13857109526572012,
+  9.9843695780195716e-6,
+  1.5056327351493116e-7,
+];
+
+/// √(2π), which every Lanczos sum is scaled by.
+const double sqrtTwoPi = 2.5066282746310002;
+
+/// n! for n from 0 to 170, each the double nearest the exact value. Past 170
+/// a factorial is more than a double can hold.
+final List<double> _wholeFactorials = () {
+  final List<double> out = <double>[1];
+  BigInt f = BigInt.one;
+  for (int n = 1; n <= 170; n++) {
+    f *= BigInt.from(n);
+    out.add(f.toDouble());
+  }
+  return out;
+}();
+
+/// Γ(x), the gamma function: (x − 1)! extended to every real number.
+///
+/// The Lanczos approximation right of ½ and the reflection formula
+/// Γ(x)·Γ(1 − x) = π / sin(πx) left of it. A whole number is looked up
+/// rather than approximated, so Γ(5) is 24 and not 23.999999999999996. NaN at
+/// zero and the negative whole numbers, which are poles; infinite past about
+/// 171.6, where Γ outgrows a double.
+double gamma(double x) {
+  if (x.isNaN || x == double.negativeInfinity) return double.nan;
+  if (x == double.infinity) return double.infinity;
+  if (x == x.roundToDouble()) {
+    if (x <= 0) return double.nan;
+    if (x <= 171) return _wholeFactorials[x.toInt() - 1];
+    return double.infinity;
+  }
+  if (x < 0.5) return math.pi / (_sinPi(x) * gamma(1 - x));
+  final double z = x - 1;
+  double a = lanczosCoefficients[0];
+  for (int i = 1; i < lanczosCoefficients.length; i++) {
+    a += lanczosCoefficients[i] / (z + i);
+  }
+  final double t = z + lanczosG + 0.5;
+  // t^(z + ½) taken in two halves, with e^(−t) between them: whole, it
+  // overflows near x = 143 while Γ itself is finite to 171.
+  final double half = math.pow(t, (z + 0.5) / 2).toDouble();
+  return sqrtTwoPi * a * half * (half * math.exp(-t));
+}
+
+/// x!, which is Γ(x + 1): the factorial of every real number but the
+/// negative whole ones.
+double factorial(double x) => gamma(x + 1);
+
+/// sin(πx), reduced first: sin(math.pi * x) loses digits as x grows, and the
+/// reflection formula divides by it.
+double _sinPi(double x) {
+  final double r = x % 2; // [0, 2), whatever the sign of x
+  return math.sin(math.pi * r);
+}

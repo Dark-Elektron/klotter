@@ -163,6 +163,12 @@ class SymbolicCalculus {
     if (expr is AbsExpr) {
       return _dependsOnVar(expr.operand, varName);
     }
+    // Here, or x! looked constant and d/dx of it came out as 0. Depending on
+    // x, it has no derivative here — that needs the digamma function — and
+    // says so rather than inventing one.
+    if (expr is FactorialExpr) {
+      return _dependsOnVar(expr.operand, varName);
+    }
     if (expr is PermExpr) {
       return _dependsOnVar(expr.n, varName) || _dependsOnVar(expr.r, varName);
     }

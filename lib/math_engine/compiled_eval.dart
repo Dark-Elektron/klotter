@@ -206,6 +206,11 @@ RealFunction _compileReal(Expr e, List<String> vars) {
     return (Float64List s) => f(argument(s));
   }
 
+  if (e is FactorialExpr) {
+    final RealFunction operand = _compileReal(e.operand, vars);
+    return (Float64List s) => factorial(operand(s));
+  }
+
   if (e is PermExpr) {
     final RealFunction n = _compileReal(e.n, vars);
     final RealFunction r = _compileReal(e.r, vars);
@@ -451,6 +456,11 @@ ComplexFunction _compileComplex(Expr e, List<String> vars) {
     final Complex Function(Complex) f = _complexFunction(e.func);
     final ComplexFunction argument = _compileComplex(e.argument, vars);
     return (List<Complex> s) => f(argument(s));
+  }
+
+  if (e is FactorialExpr) {
+    final ComplexFunction operand = _compileComplex(e.operand, vars);
+    return (List<Complex> s) => complexGamma(operand(s) + _one);
   }
 
   // Permutations, a derivative and the rest have no complex meaning here: NaN
