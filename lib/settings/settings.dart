@@ -89,24 +89,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 _buildSectionCard(
                   colors: colors,
-                  title: 'CALCULATION',
-                  children: [
-                    _buildPrecisionControl(
-                      settings: settings,
-                      colors: colors,
-                      sliderActiveColor: sliderActiveColor,
-                    ),
-                    const SizedBox(height: 10),
-                    Divider(color: colors.divider.withValues(alpha: 0.5)),
-                    const SizedBox(height: 10),
-                    _buildNumberFormatControl(
-                      settings: settings,
-                      colors: colors,
-                    ),
-                  ],
-                ),
-                _buildSectionCard(
-                  colors: colors,
                   title: 'BUTTON PREFERENCES',
                   children: [
                     _buildInlineSegmentedControl<String>(
@@ -339,101 +321,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
       ),
-    );
-  }
-
-  Widget _buildPrecisionControl({
-    required SettingsProvider settings,
-    required AppColors colors,
-    required Color sliderActiveColor,
-  }) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Expanded(
-          child: Text(
-            'Precision',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: colors.textPrimary, fontSize: 16),
-          ),
-        ),
-        SizedBox(
-          width: _sliderControlWidth,
-          child: Row(
-            children: [
-              Expanded(
-                child: SliderTheme(
-                  data: SliderTheme.of(context).copyWith(
-                    trackHeight: 4,
-                    thumbShape: const RoundSliderThumbShape(
-                      enabledThumbRadius: 8,
-                      elevation: 2,
-                    ),
-                    overlayShape: const RoundSliderOverlayShape(
-                      overlayRadius: 16,
-                    ),
-                    activeTrackColor: sliderActiveColor,
-                    inactiveTrackColor: colors.divider.withValues(alpha: 0.4),
-                    thumbColor: sliderActiveColor,
-                  ),
-                  child: Slider(
-                    value: settings.precision,
-                    min: 0,
-                    max: 16,
-                    divisions: 16,
-                    onChanged: (value) => settings.setPrecision(value),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                width: 32,
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                decoration: BoxDecoration(
-                  color: colors.accent,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  settings.precision.toInt().toString(),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: _foregroundFor(colors.accent),
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildNumberFormatControl({
-    required SettingsProvider settings,
-    required AppColors colors,
-  }) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Expanded(
-          child: Text(
-            'Number Format',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: colors.textPrimary, fontSize: 16),
-          ),
-        ),
-        _buildModernDropdown<NumberFormat>(
-          colors: colors,
-          value: settings.numberFormat,
-          items: NumberFormat.values,
-          labelBuilder: _getNumberFormatLabel,
-          onChanged: (value) => settings.setNumberFormat(value),
-        ),
-      ],
     );
   }
 
@@ -1020,17 +907,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Color _foregroundFor(Color background) {
     final brightness = ThemeData.estimateBrightnessForColor(background);
     return brightness == Brightness.dark ? Colors.white : Colors.black;
-  }
-
-  String _getNumberFormatLabel(NumberFormat format) {
-    switch (format) {
-      case NumberFormat.automatic:
-        return 'Automatic';
-      case NumberFormat.scientific:
-        return 'Scientific';
-      case NumberFormat.plain:
-        return 'Plain (commas)';
-    }
   }
 
   String _getPlotColorModeLabel(PlotColorMode mode) {

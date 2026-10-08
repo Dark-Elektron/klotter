@@ -1,13 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../math_engine/number_format.dart';
 import '../math_renderer/renderer.dart';
 import '../plotting/utils/colormap.dart';
 import '../utils/constants.dart';
-
-// The engine owns how numbers are written, so it need not import the settings.
-// Re-exported for the code that reads them from here.
-export '../math_engine/number_format.dart' show NumberFormat, NumberFormatting;
 
 enum ThemeType {
   /// Dark ink on pale paper. The default.
@@ -76,15 +71,12 @@ class SettingsProvider extends ChangeNotifier {
   ];
   static const double maxButtonSpacing = 12.0;
 
-  double _precision = PRECISION.toDouble();
-
   /// Light is the default: dark ink on pale paper.
   ThemeType _themeType = ThemeType.light;
   bool _isRadians = false;
   bool _hapticFeedback = true;
   bool _confirmClearAll = true;
   String _multiplicationSign = '\u00D7'; // Default: ×
-  NumberFormat _numberFormat = NumberFormat.automatic;
   double _borderRadius = 5.0;
   double _buttonSpacing = 1.0;
   String _fontFamily = FONTFAMILY;
@@ -94,7 +86,6 @@ class SettingsProvider extends ChangeNotifier {
   PlotPalette _plotPalette = PlotPalette.turbo;
 
   // Getters
-  double get precision => _precision;
   ThemeType get themeType => _themeType;
   bool get isDarkTheme =>
       _themeType != ThemeType.light &&
@@ -113,13 +104,6 @@ class SettingsProvider extends ChangeNotifier {
   /// the dialog exists to say.
   bool get confirmClearAll => _confirmClearAll;
   String get multiplicationSign => _multiplicationSign;
-  NumberFormat get numberFormat => _numberFormat;
-
-  /// How results are written, as the precision and number format settings
-  /// say. Handed to the engine by whatever formats a result (see
-  /// [NumberFormatting.apply]); the engine no longer reads the settings.
-  NumberFormatting get formatting =>
-      NumberFormatting(precision: _precision.toInt(), format: _numberFormat);
   double get borderRadius => _borderRadius;
   double get buttonSpacing => _buttonSpacing;
   String get fontFamily => _fontFamily;
@@ -145,24 +129,20 @@ class SettingsProvider extends ChangeNotifier {
   SettingsProvider._forTesting({
     ThemeType themeType = ThemeType.light,
     String multiplicationSign = '×',
-    NumberFormat numberFormat = NumberFormat.automatic,
     String? fontFamily,
   }) : _themeType = themeType,
        _multiplicationSign = multiplicationSign,
-       _numberFormat = numberFormat,
        _fontFamily = fontFamily ?? FONTFAMILY;
 
   // Factory constructor for tests
   static SettingsProvider forTesting({
     ThemeType themeType = ThemeType.light,
     String multiplicationSign = '×',
-    NumberFormat numberFormat = NumberFormat.automatic,
     String? fontFamily,
   }) {
     return SettingsProvider._forTesting(
       themeType: themeType,
       multiplicationSign: multiplicationSign,
-      numberFormat: numberFormat,
       fontFamily: fontFamily,
     );
   }
@@ -170,7 +150,6 @@ class SettingsProvider extends ChangeNotifier {
   // Load all settings from SharedPreferences
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    _precision = prefs.getDouble('precision') ?? PRECISION.toDouble();
 
     // Load theme
     String? themeStr = prefs.getString('themeType');
@@ -203,12 +182,6 @@ class SettingsProvider extends ChangeNotifier {
       maxButtonSpacing,
     );
 
-    // Load number format
-    String formatStr = prefs.getString('numberFormat') ?? 'automatic';
-    _numberFormat = NumberFormat.values.firstWhere(
-      (e) => e.name == formatStr,
-      orElse: () => NumberFormat.automatic,
-    );
 
     // Load font family
     // Cambria became STIX Two Math: Cambria Math is Microsoft's and cannot be
@@ -254,14 +227,6 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   // Setters with persistence
-  Future<void> setPrecision(double value) async {
-    _precision = value;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble('precision', value);
-
-    notifyListeners();
-  }
-
   Future<void> setThemeType(ThemeType value) async {
     _themeType = value;
     final prefs = await SharedPreferences.getInstance();
@@ -301,13 +266,6 @@ class SettingsProvider extends ChangeNotifier {
 
     // Update MathTextStyle
     MathTextStyle.setMultiplySign(value);
-    notifyListeners();
-  }
-
-  Future<void> setNumberFormat(NumberFormat value) async {
-    _numberFormat = value;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('numberFormat', value.name);
     notifyListeners();
   }
 

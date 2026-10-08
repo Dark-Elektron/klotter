@@ -120,7 +120,7 @@ class HelpPage extends StatelessWidget {
             icon: Icons.settings,
             title: 'Customization',
             description:
-                'Tap \u2630 to adjust decimal precision, themes, and haptic feedback.',
+                'Tap \u2630 to change the theme, the font and haptic feedback.',
             colors: colors,
           ),
 

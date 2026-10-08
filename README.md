@@ -102,7 +102,6 @@ and a height surface share one set of axes.
 
 ### Customisation
 
-- Decimal precision.
 - Themes, including a light theme and several dark ones.
 - Left-handed layout, which mirrors the keypad and the plot controls.
 - Haptic feedback.
