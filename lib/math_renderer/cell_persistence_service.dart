@@ -17,6 +17,9 @@ class CellData {
   /// Which rows are switched off, aligned with [rowsJson].
   final List<bool> hidden;
 
+  /// A plot's rows as one expression with `NewlineNode`s between them: how
+  /// saves made before rows existed hold a plot. Read from those, never
+  /// written now (see [CellPersistence.version]).
   final String expressionJson;
 
   /// Where the cell's plot was last left. Stored beside the expression
@@ -28,16 +31,17 @@ class CellData {
   final Map<String, dynamic>? plotView;
 
   CellData({
-    required this.expressionJson,
+    this.expressionJson = '',
     this.rowsJson = const <String>[],
     this.hidden = const <bool>[],
     this.plotView,
   });
 
   Map<String, dynamic> toJson() => {
-    // `expression` is still written so a downgrade keeps the maths, even
-    // though it loses the row boundaries.
-    'expression': expressionJson,
+    // The joined form only for a cell that has nothing else, which a save
+    // from this build never is.
+    if (rowsJson.isEmpty && expressionJson.isNotEmpty)
+      'expression': expressionJson,
     if (rowsJson.isNotEmpty) 'rows': rowsJson,
     if (hidden.contains(true)) 'hidden': hidden,
     if (plotView != null) 'plotView': plotView,
@@ -68,6 +72,23 @@ class CellData {
 class CellPersistence {
   static const String _key = 'calculator_cells';
 
+  /// Which layout of the stored blob this build writes.
+  ///
+  /// 1, with no version stored: a bare list of cells, or `{cells,
+  /// activeIndex}`, each cell holding its rows joined into one `expression`
+  /// and, from when rows existed, a copy of them as `rows`. The joined copy
+  /// was kept so an older build could still find the maths after a
+  /// downgrade, but Android will not install an older build over a newer one
+  /// without uninstalling first, which takes the data with it; the copy only
+  /// doubled every write.
+  ///
+  /// 2: `{version, cells, activeIndex}`, each cell holding `rows` only.
+  ///
+  /// A blob from a later version is read as far as this build understands it,
+  /// and kept aside first (see [_unreadableKey]), since the next save would
+  /// otherwise write over what this build cannot see.
+  static const int version = 2;
+
   /// Where the active index was kept before it moved into the cells blob.
   /// Read as a fallback for saves made then; no longer written.
   static const String _activeKey = 'active_cell';
@@ -95,18 +116,10 @@ class CellPersistence {
     final prefs = await SharedPreferences.getInstance();
     final List<Map<String, dynamic>> cells = <Map<String, dynamic>>[];
     for (int i = 0; i < rowsPerPlot.length; i++) {
-      final List<List<MathNode>> rows = rowsPerPlot[i];
-      // The joined form too, so an older build still finds its curves.
-      final List<MathNode> joined = <MathNode>[];
-      for (final List<MathNode> row in rows) {
-        if (joined.isNotEmpty) joined.add(NewlineNode());
-        joined.addAll(row);
-      }
       cells.add(
         CellData(
-          expressionJson: MathExpressionSerializer.serializeToJson(joined),
           rowsJson: <String>[
-            for (final List<MathNode> row in rows)
+            for (final List<MathNode> row in rowsPerPlot[i])
               MathExpressionSerializer.serializeToJson(row),
           ],
           hidden: i < hiddenPerPlot.length ? hiddenPerPlot[i] : const <bool>[],
@@ -116,22 +129,33 @@ class CellPersistence {
     }
     await prefs.setString(
       _key,
-      jsonEncode(<String, dynamic>{'cells': cells, 'activeIndex': activeIndex}),
+      jsonEncode(<String, dynamic>{
+        'version': version,
+        'cells': cells,
+        'activeIndex': activeIndex,
+      }),
     );
   }
 
   /// Decode the stored blob into a list of raw cell maps, handling both the
   /// new `{cells, activeIndex}` object form and the legacy bare-list form.
-  static List<dynamic>? _decodeCellList(String? jsonString) {
-    if (jsonString == null || jsonString.isEmpty) return null;
+  static ({List<dynamic>? cells, int version}) _decodeCellList(
+    String? jsonString,
+  ) {
+    if (jsonString == null || jsonString.isEmpty) {
+      return (cells: null, version: version);
+    }
     try {
       final decoded = jsonDecode(jsonString);
       if (decoded is Map<String, dynamic>) {
-        return decoded['cells'] as List<dynamic>?;
+        return (
+          cells: decoded['cells'] as List<dynamic>?,
+          version: decoded['version'] is int ? decoded['version'] as int : 1,
+        );
       }
-      if (decoded is List) return decoded;
+      if (decoded is List) return (cells: decoded, version: 1);
     } catch (_) {}
-    return null;
+    return (cells: null, version: version);
   }
 
   /// Load all cells.
@@ -143,7 +167,8 @@ class CellPersistence {
   static Future<List<CellData>> loadCells({SharedPreferences? prefs}) async {
     final sharedPrefs = prefs ?? await SharedPreferences.getInstance();
     final String? raw = sharedPrefs.getString(_key);
-    final list = _decodeCellList(raw);
+    final decoded = _decodeCellList(raw);
+    final List<dynamic>? list = decoded.cells;
     if (list == null) {
       if (raw != null && raw.isNotEmpty) {
         await sharedPrefs.setString(_unreadableKey, raw);
@@ -152,7 +177,9 @@ class CellPersistence {
     }
 
     final List<CellData> cells = <CellData>[];
-    bool skipped = false;
+    // Saved by a later build: read what this one understands, but keep the
+    // original, since the next save writes only what was understood.
+    bool skipped = decoded.version > version;
     for (final dynamic json in list) {
       try {
         cells.add(CellData.fromJson(json as Map<String, dynamic>));

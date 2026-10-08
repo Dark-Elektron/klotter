@@ -80,9 +80,11 @@ void main() {
     );
   });
 
-  test('the joined form is written too, for a downgrade', () async {
-    // An older build reads `expression` and knows nothing of `rows`. It should
-    // still find the maths, even though it loses the row boundaries.
+  test('a save holds its version and the rows, and no joined copy', () async {
+    // The rows used to be written joined as well, so an older build could
+    // still find the maths after a downgrade. Android does not install an
+    // older build over a newer one without uninstalling, which takes the data
+    // with it, so the copy protected nothing and doubled every write.
     await CellPersistence.saveRows(
       <List<List<MathNode>>>[
         <List<MathNode>>[line('2x'), line('x^2')],
@@ -90,13 +92,22 @@ void main() {
       <List<bool>>[const <bool>[]],
       <Map<String, dynamic>?>[null],
     );
-    final CellData cell = (await CellPersistence.loadCells()).single;
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    final Map<String, dynamic> blob =
+        jsonDecode(prefs.getString('calculator_cells')!)
+            as Map<String, dynamic>;
+    expect(blob['version'], CellPersistence.version);
+    final Map<String, dynamic> cell =
+        (blob['cells'] as List<dynamic>).single as Map<String, dynamic>;
+    expect(cell.containsKey('expression'), isFalse);
+    expect(cell['rows'], hasLength(2));
+
+    final CellData loaded = (await CellPersistence.loadCells()).single;
     expect(
       MathExpressionSerializer.deserializeFromJson(
-        cell.expressionJson,
-      ).whereType<NewlineNode>(),
-      hasLength(1),
-      reason: 'the two rows were not joined for the legacy field',
+        loaded.rowsJson.last,
+      ).whereType<LiteralNode>().single.text,
+      'x^2',
     );
   });
 

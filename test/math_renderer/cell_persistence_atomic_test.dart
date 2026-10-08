@@ -7,6 +7,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:klotter/math_engine/math_expression_serializer.dart';
 import 'package:klotter/math_renderer/cell_persistence_service.dart';
 import 'package:klotter/math_renderer/renderer.dart';
 import 'package:klotter/plotting/models/plot_view_state.dart';
@@ -145,6 +146,34 @@ void main() {
       prefs.getString('calculator_cells_unreadable'),
       '{"cells": [{"expression": "',
     );
+  });
+
+  test('a blob from a later version is kept aside, and read as far as it can '
+      'be', () async {
+    // The next save writes only what this build understood, so whatever a
+    // later build stored that this one cannot see would be lost with it.
+    final String raw = jsonEncode(<String, dynamic>{
+      'version': CellPersistence.version + 1,
+      'cells': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'rows': <String>[
+            MathExpressionSerializer.serializeToJson(<MathNode>[
+              LiteralNode(text: 'x'),
+            ]),
+          ],
+          'somethingLater': true,
+        },
+      ],
+      'activeIndex': 0,
+    });
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'calculator_cells': raw,
+    });
+
+    final List<CellData> cells = await CellPersistence.loadCells();
+    expect(cells, hasLength(1));
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('calculator_cells_unreadable'), raw);
   });
 
   test('a readable blob leaves no copy behind', () async {
