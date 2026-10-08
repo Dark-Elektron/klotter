@@ -132,6 +132,14 @@ Open these from the settings (☰) key on the extras keypad.
 
 ---
 
+### Screen readers
+
+With TalkBack on, every key says what it does, and every expression is read in words:
+`x² + y² = 1` is "x squared plus y squared equals 1". Double-tap a row to type into it. The words
+are TalkBack's own voice reading a label, so nothing is recorded and nothing leaves the phone.
+
+---
+
 ## Build
 
 Klotter is a Flutter application.

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'expression_selection.dart';
 import 'math_editor_controller.dart';
+import 'math_speech.dart';
 import 'scrub.dart';
 import 'renderer.dart';
 import '../utils/render_box.dart';
@@ -408,10 +409,39 @@ class MathEditorInlineState extends State<MathEditorInline> {
 
   // ============== BUILD ==============
 
+  /// A screen reader's double tap, which arrives with no place on the
+  /// expression: the row is chosen, and the caret goes to its end, where
+  /// typing carries on from.
+  void _chooseFromScreenReader() {
+    widget.onFocus?.call();
+    widget.controller.moveCursorToEnd();
+  }
+
   @override
   Widget build(BuildContext context) {
     final textScaler = MediaQuery.textScalerOf(context);
 
+    // One node for the whole expression, said in words (see [MathSpeech]):
+    // the glyphs it is drawn with mean nothing read one at a time. Taps reach
+    // the editor as raw pointer events, which a screen reader cannot send, so
+    // the node carries a tap of its own.
+    return ListenableBuilder(
+      listenable: widget.controller,
+      builder:
+          (context, child) => Semantics(
+            container: true,
+            label: MathSpeech.describe(widget.controller.expression),
+            selected: widget.showCursor,
+            onTap: _chooseFromScreenReader,
+            onTapHint: 'type here',
+            excludeSemantics: true,
+            child: child,
+          ),
+      child: _buildEditor(textScaler),
+    );
+  }
+
+  Widget _buildEditor(TextScaler textScaler) {
     return LayoutBuilder(
       builder: (context, constraints) {
         // Every build, so a box that settles late is noticed. The check itself
