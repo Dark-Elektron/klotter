@@ -229,7 +229,9 @@ class HelpPage extends StatelessWidget {
                 for (final String row in example.reads)
                   Text(
                     row,
-                    maxLines: 1,
+                    // A single row has the room of three, which a long
+                    // equation such as the quartic needs.
+                    maxLines: example.reads.length == 1 ? 2 : 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 14, color: colors.accent),
                   ),

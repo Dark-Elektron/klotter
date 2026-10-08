@@ -56,8 +56,10 @@ List<MathNode> _nodes(List<Object> parts) {
   return out;
 }
 
-MathNode _squared(String base) =>
-    ExponentNode(base: _nodes(<Object>[base]), power: _nodes(<Object>['2']));
+MathNode _squared(String base) => _power(base, '2');
+
+MathNode _power(String base, String power) =>
+    ExponentNode(base: _nodes(<Object>[base]), power: _nodes(<Object>[power]));
 
 MathNode _fn(String name, List<Object> argument) =>
     TrigNode(function: name, argument: _nodes(argument));
@@ -132,6 +134,67 @@ final List<PlotExample> plotExamples = <PlotExample>[
             '+',
             _squared('z'),
             '=1',
+          ]),
+        ],
+  ),
+  // Two of Inigo Quilez's degree-4 surfaces, which are also what 3D plotting
+  // is measured against: fine detail, and several pieces at once.
+  PlotExample(
+    title: 'Tooth',
+    reads: const <String>['x⁴ + y⁴ + z⁴ − x² − y² − z² + 0.4 = 0'],
+    shows: 'A quartic surface: a rounded cube with holes',
+    in3D: true,
+    rows:
+        () => <List<MathNode>>[
+          _nodes(<Object>[
+            _power('x', '4'),
+            '+',
+            _power('y', '4'),
+            '+',
+            _power('z', '4'),
+            _minus,
+            _squared('x'),
+            _minus,
+            _squared('y'),
+            _minus,
+            _squared('z'),
+            '+0.4=0',
+          ]),
+        ],
+  ),
+  PlotExample(
+    title: 'Quartic',
+    reads: const <String>[
+      'x⁴ + 0.5y⁴ + z⁴ + x²y² − y²z² + 0.5x²z² − x² − y² − z² + 3/8 = 0',
+    ],
+    shows: 'Another quartic: try rotating it',
+    in3D: true,
+    rows:
+        () => <List<MathNode>>[
+          _nodes(<Object>[
+            _power('x', '4'),
+            '+0.5',
+            _power('y', '4'),
+            '+',
+            _power('z', '4'),
+            '+',
+            _squared('x'),
+            _squared('y'),
+            _minus,
+            _squared('y'),
+            _squared('z'),
+            '+0.5',
+            _squared('x'),
+            _squared('z'),
+            _minus,
+            _squared('x'),
+            _minus,
+            _squared('y'),
+            _minus,
+            _squared('z'),
+            '+',
+            FractionNode(num: _nodes(<Object>['3']), den: _nodes(<Object>['8'])),
+            '=0',
           ]),
         ],
   ),
