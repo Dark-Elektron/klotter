@@ -757,6 +757,9 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   SurfaceMode get _defaultParametricSurfaceMode =>
       _show3D ? SurfaceMode.magnitude : SurfaceMode.none;
 
+  /// Show the plot in 3D or in 2D, as the button beside it does.
+  void setShow3D(bool value) => _setShow3D(value);
+
   void _setShow3D(bool value) {
     if (value == _show3D) return;
     setState(() {

@@ -42,6 +42,15 @@ A row can give a letter a value, and every other row of the plot uses it.
 
 ---
 
+### Examples
+
+An empty plot offers three examples to start from, and the help page (ⓘ) lists more: curves,
+equations, regions, polar curves, surfaces, fields, sweeps, a complex function and values to tune.
+Opening one fills the plot on screen when nothing is typed on it, or a new plot after it when
+something is, so nothing typed is written over.
+
+---
+
 ### Structural mathematics input
 
 Klotter shows mathematics as it is written rather than as plain text.

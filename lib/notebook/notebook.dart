@@ -176,6 +176,40 @@ class Notebook {
     return true;
   }
 
+  /// Whether nothing is typed on any row of the plot at [index].
+  ///
+  /// Unlike [hasContent], which asks of the row being typed into, this asks
+  /// of them all: a plot whose first row is empty can still hold a curve
+  /// below it.
+  bool isBlank(int index) => rowsOf(index).every(
+    (ExpressionRow row) => row.controller.getExpression().trim().isEmpty,
+  );
+
+  /// Make the open plot's rows [lines], one row to each, with the caret at
+  /// the end of the last, as one step of history.
+  ///
+  /// Every row's editor announces its expression as it is set, and each of
+  /// those would be an undo step of its own — so undo would take the plot
+  /// back through itself half filled in. They are let pass, and the change is
+  /// recorded once, when it is whole.
+  void fillActivePlot(List<List<MathNode>> lines) {
+    final Plot plot = activePlot;
+    _restoring = true;
+    try {
+      _disposeRowsOf(plot);
+      for (final List<MathNode> line in lines) {
+        final ExpressionRow row = _newRow();
+        row.controller.setExpression(line);
+        plot.rows.add(row);
+      }
+      if (plot.rows.isEmpty) plot.rows.add(_newRow());
+      plot.activeRow = plot.rows.length - 1;
+    } finally {
+      _restoring = false;
+    }
+    recordHistoryPoint();
+  }
+
   /// Insert a new, empty plot at [at] — after the open one unless told — and
   /// open it.
   Plot insertPlot({int? at}) {

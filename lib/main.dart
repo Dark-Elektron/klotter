@@ -15,6 +15,7 @@ import 'math_engine/math_expression_serializer.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
+import 'examples.dart';
 import 'keypad/keypad.dart';
 import 'notebook/notebook.dart';
 import 'walkthrough/walkthrough_service.dart';
@@ -846,31 +847,108 @@ class HomePageState extends State<HomePage>
           ),
         ],
       ),
-      child: InlinePlotPanel(
-        key: _plotPanelKeys.putIfAbsent(
-          plot.id,
-          () => GlobalKey<InlinePlotPanelState>(),
-        ),
-        expression: plotExpression,
-        nodes: _getPlotNodes(index),
-        bottomInset: _visibleRowPanelHeight(index),
-        hiddenRows: <bool>[
-          for (final ExpressionRow r in rowsOf(index)) !r.visible,
+      child: Stack(
+        fit: StackFit.expand,
+        children: <Widget>[
+          _buildPlotPanel(index, plot, plotExpression),
+          // Over the part of the plot the rows leave showing, and gone with
+          // the first key typed: the plot is the user's from then on. Not
+          // during the tour, which is pointing at other things.
+          if (notebook.isBlank(index) && !_walkthroughService.isActive)
+            Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              bottom: _visibleRowPanelHeight(index),
+              child: _startingExamples(colors),
+            ),
         ],
-        initialView: plot.view,
-        coordinateSystem: _variableSystem,
-        // The plot itself, not its position, which another plot being added
-        // or removed before it would change under this callback.
-        onViewChanged: (view) => plot.view = view,
-        onRowErrors: (Map<int, String> byRow) {
-          // No entry and an empty report both mean "nothing wrong". The
-          // panel reports once whenever it is built, so treating them as
-          // different would rebuild the page for every plot swiped to.
-          if (mapEquals(_rowErrors[plot.id] ?? const <int, String>{}, byRow)) {
-            return;
-          }
-          setState(() => _rowErrors[plot.id] = byRow);
-        },
+      ),
+    );
+  }
+
+  Widget _buildPlotPanel(int index, Plot plot, String plotExpression) {
+    return InlinePlotPanel(
+      key: _plotPanelKeys.putIfAbsent(
+        plot.id,
+        () => GlobalKey<InlinePlotPanelState>(),
+      ),
+      expression: plotExpression,
+      nodes: _getPlotNodes(index),
+      bottomInset: _visibleRowPanelHeight(index),
+      hiddenRows: <bool>[
+        for (final ExpressionRow r in rowsOf(index)) !r.visible,
+      ],
+      initialView: plot.view,
+      coordinateSystem: _variableSystem,
+      // The plot itself, not its position, which another plot being added
+      // or removed before it would change under this callback.
+      onViewChanged: (view) => plot.view = view,
+      onRowErrors: (Map<int, String> byRow) {
+        // No entry and an empty report both mean "nothing wrong". The
+        // panel reports once whenever it is built, so treating them as
+        // different would rebuild the page for every plot swiped to.
+        if (mapEquals(_rowErrors[plot.id] ?? const <int, String>{}, byRow)) {
+          return;
+        }
+        setState(() => _rowErrors[plot.id] = byRow);
+      },
+    );
+  }
+
+  /// Three plots to start from, offered on a plot with nothing typed on it.
+  ///
+  /// Centred, so the same for either hand. The rest are on the help page.
+  Widget _startingExamples(AppColors colors) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Text(
+            'Start from an example',
+            style: TextStyle(fontSize: 13, color: colors.textSecondary),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
+            children: <Widget>[
+              for (final PlotExample example in startingExamples)
+                _exampleChip(example),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'More under ⓘ',
+            style: TextStyle(fontSize: 12, color: colors.textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// An example, as the plot's own chips are drawn but big enough to hit
+  /// without aiming.
+  Widget _exampleChip(PlotExample example) {
+    return Semantics(
+      button: true,
+      label: 'Open the ${example.title} example, ${example.reads.join(', ')}',
+      excludeSemantics: true,
+      child: GestureDetector(
+        onTap: () => openExample(example),
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.45),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Text(
+            example.reads.last,
+            style: const TextStyle(color: Colors.white, fontSize: 15),
+          ),
+        ),
       ),
     );
   }
@@ -1561,6 +1639,23 @@ class HomePageState extends State<HomePage>
     });
   }
 
+  /// Put [example] on a plot: the one on screen when nothing is typed on it,
+  /// and otherwise a new one after it, so nothing typed is written over.
+  ///
+  /// One step of history either way: undo takes it off again, and the new
+  /// plot with it.
+  void openExample(PlotExample example) {
+    if (!notebook.isBlank(activeIndex)) addPlot();
+    final Plot plot = notebook.activePlot;
+    notebook.fillActivePlot(example.rows());
+    // In the dimension it is meant to be seen in. A new plot's panel reads
+    // that from the view when it is built; one already built is told.
+    plot.view = plot.view.copyWith(show3D: example.in3D);
+    _plotPanelKeys[plot.id]?.currentState?.setShow3D(example.in3D);
+    updateMathEditor();
+    _flushSave();
+  }
+
   /// Remove the plot at [index]; the last one stays.
   void removePlot(int index) {
     if (!notebook.removePlotAt(index)) return;
@@ -1873,6 +1968,7 @@ class HomePageState extends State<HomePage>
                 if (!removeActiveRow()) removePlot(plot);
               },
               onExportPlot: _exportPlot,
+              onOpenExample: openExample,
               variableSystem: _variableSystem,
               unitVectorSystem: _unitVectorSystem,
               onVariableSystemChanged: (system) {

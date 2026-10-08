@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:klotter/examples.dart';
 import 'package:klotter/help.dart';
 import 'package:klotter/utils/utils.dart';
 import 'buttons.dart';
@@ -101,6 +102,9 @@ class CalculatorKeypad extends StatefulWidget {
   /// Save the plot of the cell being edited to a file.
   final VoidCallback? onExportPlot;
 
+  /// Put an example chosen on the help page on a plot.
+  final void Function(PlotExample example)? onOpenExample;
+
   /// Which system the three variable keys are showing.
   ///
   /// Held by the owner rather than the keypad because the plot has to know it
@@ -144,6 +148,7 @@ class CalculatorKeypad extends StatefulWidget {
     this.onUndoAppState,
     this.onRedoAppState,
     this.onExportPlot,
+    this.onOpenExample,
     this.variableSystem = CoordinateSystem.cartesian,
     this.unitVectorSystem = CoordinateSystem.cartesian,
     this.onVariableSystemChanged,
@@ -1992,10 +1997,14 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     final Widget kExport = _extrasAction('⇪', fontSize: 30, () {
       widget.onExportPlot?.call();
     });
-    final Widget kHelp = _extrasAction(
-      'ⓘ',
-      () => Navigator.push(context, SlidePageRoute(page: HelpPage())),
-    );
+    // The help page closes with the example tapped on it, if one was.
+    final Widget kHelp = _extrasAction('ⓘ', () async {
+      final PlotExample? chosen = await Navigator.push<PlotExample>(
+        context,
+        SlidePageRoute<PlotExample>(page: const HelpPage()),
+      );
+      if (chosen != null) widget.onOpenExample?.call(chosen);
+    });
     final Widget kSettings = Container(
       key: widget.settingsButtonKey,
       child: _extrasAction('☰', () {

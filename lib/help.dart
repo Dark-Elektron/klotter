@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
+import 'examples.dart';
 import 'utils/app_colors.dart';
 
+/// How klotter works, and plots to start from.
+///
+/// Tapping an example closes the page with that example as its result, for
+/// whoever opened it to put on a plot.
 class HelpPage extends StatelessWidget {
   const HelpPage({super.key});
 
@@ -48,6 +53,34 @@ class HelpPage extends StatelessWidget {
             'A scientific calculator that graphs what you type.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 16, color: colors.textSecondary),
+          ),
+          Divider(height: 40, color: colors.divider),
+
+          Text(
+            'Examples',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: colors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Tap one to open it as a plot. Anything already typed stays: it '
+            'opens in a new plot after yours.',
+            style: TextStyle(fontSize: 14, color: colors.textSecondary),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 150,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: plotExamples.length,
+              separatorBuilder: (context, i) => const SizedBox(width: 10),
+              itemBuilder:
+                  (context, i) =>
+                      _buildExampleCard(context, plotExamples[i], colors),
+            ),
           ),
           Divider(height: 40, color: colors.divider),
 
@@ -154,6 +187,63 @@ class HelpPage extends StatelessWidget {
 
           const SizedBox(height: 40),
         ],
+      ),
+    );
+  }
+
+  Widget _buildExampleCard(
+    BuildContext context,
+    PlotExample example,
+    AppColors colors,
+  ) {
+    final BorderRadius corner = BorderRadius.circular(8);
+    return Semantics(
+      button: true,
+      label: 'Open the ${example.title} example, ${example.reads.join(', ')}',
+      excludeSemantics: true,
+      child: Material(
+        color: colors.containerBackground,
+        borderRadius: corner,
+        child: InkWell(
+          borderRadius: corner,
+          onTap: () => Navigator.of(context).pop(example),
+          child: Container(
+            width: 172,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              borderRadius: corner,
+              border: Border.all(color: colors.divider),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  example.title,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: colors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                for (final String row in example.reads)
+                  Text(
+                    row,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 14, color: colors.accent),
+                  ),
+                const Spacer(),
+                Text(
+                  example.shows,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
