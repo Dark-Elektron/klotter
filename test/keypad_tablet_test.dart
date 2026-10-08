@@ -107,9 +107,9 @@ void main() {
       await pumpTablet(tester, landscape: false);
       Size sizeOf(String label) =>
           tester.getSize(find.widgetWithText(MyButton, label).first);
-      // Not a unit vector: those carry the coordinate-system menu now, so
-      // they are PopupMenuCalcButtons rather than plain MyButtons.
-      expect(sizeOf('7'), equals(sizeOf('°')));
+      // Not a unit vector or k: those carry long-press menus, so they are
+      // PopupMenuCalcButtons rather than plain MyButtons.
+      expect(sizeOf('7'), equals(sizeOf('e')));
       expect(sizeOf('7'), equals(sizeOf('=')));
     });
   });
@@ -142,10 +142,10 @@ void main() {
       await pumpTablet(tester, landscape: true);
       Size sizeOf(String label) =>
           tester.getSize(find.widgetWithText(MyButton, label).first);
-      // ° rather than a unit vector: those carry the coordinate-system menu
-      // now, so they are PopupMenuCalcButtons rather than plain MyButtons.
-      expect(sizeOf('⌧').width, closeTo(sizeOf('°').width, 0.5));
-      expect(sizeOf('7').width, closeTo(sizeOf('°').width, 0.5));
+      // e rather than a unit vector or k: those carry long-press menus, so
+      // they are PopupMenuCalcButtons rather than plain MyButtons.
+      expect(sizeOf('⌧').width, closeTo(sizeOf('e').width, 0.5));
+      expect(sizeOf('7').width, closeTo(sizeOf('e').width, 0.5));
     });
 
     testWidgets('the dropped extras key is still reachable elsewhere', (

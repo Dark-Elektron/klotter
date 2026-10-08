@@ -6,6 +6,8 @@ import '../../math_renderer/math_nodes.dart';
 import '../../math_engine/math_engine.dart';
 import '../../utils/coordinate_system.dart';
 
+part 'plot_definitions.dart';
+
 /// How the two sides of a relation compare.
 ///
 /// The distinction is what gets drawn: an equation is a curve, an inequality
@@ -212,8 +214,13 @@ class PlotExpression {
     if (text.contains(complexVariableMark)) return true;
     for (final RegExpMatch m in RegExp(r'[A-Za-z]+').allMatches(text)) {
       final String word = m.group(0)!;
+      if (!word.contains('i')) continue;
+      // A word with one of the variable key's letters in it is its letters
+      // multiplied, whatever it spells, as a plot reads it (see
+      // [PlotDefinitions.bindings]): `pi` typed as p and then i is p times i.
+      if (word.split('').any(PlotDefinitions.names.contains)) return true;
       if (_wordsWithI.contains(word.toLowerCase())) continue;
-      if (word.contains('i')) return true;
+      return true;
     }
     return false;
   }
@@ -267,12 +274,17 @@ class PlotExpression {
   }
 
   /// Compile [nodes] from a calculator cell.
+  ///
+  /// [definitions] are the values the plot's other rows give its letters
+  /// (see [PlotDefinitions]); a letter with none is reported as needing one.
   factory PlotExpression.compile(
     List<MathNode> nodes, {
     CoordinateSystem system = CoordinateSystem.cartesian,
     bool isVectorComponent = false,
     ({double min, double max}) thetaRange = defaultThetaRange,
+    PlotDefinitions? definitions,
   }) {
+    final PlotDefinitions given = definitions ?? PlotDefinitions.none;
     // Read before anything simplifies: `0i` folds to nothing and `i - i`
     // cancels, so the compiled form can lose a unit the user plainly typed.
     final bool complex = usesImaginaryUnit(nodes);
@@ -288,7 +300,13 @@ class PlotExpression {
     final ({List<List<MathNode>> segments, List<String> ops}) split =
         _splitAllRelations(nodes);
     if (split.ops.length >= 2) {
-      return _compileChain(split.segments, split.ops, system, thetaRange);
+      return _compileChain(
+        split.segments,
+        split.ops,
+        system,
+        thetaRange,
+        given,
+      );
     }
 
     // An equation is a level set, not a height. Rewriting it as `lhs - rhs`
@@ -320,7 +338,11 @@ class PlotExpression {
 
     Expr compiled;
     try {
-      compiled = MathNodeToExpr.convert(source).simplify();
+      compiled =
+          MathNodeToExpr.convert(
+            source,
+            varBindings: given.bindings,
+          ).simplify();
     } catch (e) {
       return PlotExpression._(null, {}, 'Invalid function syntax');
     }
@@ -352,11 +374,10 @@ class PlotExpression {
     if (parameters.isNotEmpty) {
       final Set<String> strays = free.difference(parameterVariables);
       if (strays.isNotEmpty) {
-        final List<String> sorted = strays.toList()..sort();
         return PlotExpression._(
           null,
           const <String>{},
-          'Cannot plot: unknown variable ${sorted.join(', ')}',
+          given.unknownVariables(strays),
         );
       }
       if (_hasUnresolvedCalculus(compiled)) {
@@ -395,12 +416,7 @@ class PlotExpression {
     // plot at all.
     if (complex) unknown.remove('i');
     if (unknown.isNotEmpty) {
-      final List<String> sorted = unknown.toList()..sort();
-      return PlotExpression._(
-        null,
-        const {},
-        'Cannot plot: unknown variable ${sorted.join(', ')}',
-      );
+      return PlotExpression._(null, const {}, given.unknownVariables(unknown));
     }
 
     // A line with no '=' means what a bare expression means in its own system.
@@ -424,6 +440,7 @@ class PlotExpression {
           <MathNode>[LiteralNode(text: 'r='), ...nodes],
           system: system,
           thetaRange: thetaRange,
+          definitions: given,
         );
       }
       if (system == CoordinateSystem.spherical) {
@@ -438,6 +455,7 @@ class PlotExpression {
           <MathNode>[LiteralNode(text: 'ρ='), ...nodes],
           system: system,
           thetaRange: thetaRange,
+          definitions: given,
         );
       }
     }
@@ -500,12 +518,14 @@ class PlotExpression {
                   relation.$2,
                   'r',
                   const <String>{'θ'},
+                  given,
                 ),
                 CoordinateSystem.spherical => _sweptRadiusOf(
                   relation.$1,
                   relation.$2,
                   'ρ',
                   const <String>{'θ', 'φ'},
+                  given,
                 ),
                 CoordinateSystem.cartesian => null,
               },
@@ -526,6 +546,7 @@ class PlotExpression {
     List<MathNode> rhs,
     String symbol,
     Set<String> angles,
+    PlotDefinitions definitions,
   ) {
     bool alone(List<MathNode> side) =>
         side.length == 1 &&
@@ -535,7 +556,11 @@ class PlotExpression {
     if (radius == null) return null;
     final Expr compiled;
     try {
-      compiled = MathNodeToExpr.convert(radius).simplify();
+      compiled =
+          MathNodeToExpr.convert(
+            radius,
+            varBindings: definitions.bindings,
+          ).simplify();
     } catch (_) {
       return null;
     }
@@ -619,6 +644,7 @@ class PlotExpression {
     List<String> ops,
     CoordinateSystem system,
     ({double min, double max}) thetaRange,
+    PlotDefinitions definitions,
   ) {
     final List<PlotRelation> relations = <PlotRelation>[
       for (final String op in ops) _relationOperators[op]!,
@@ -637,11 +663,15 @@ class PlotExpression {
     final Set<String> variables = <String>{};
     CoordinateSystem? chosen;
     for (int i = 0; i < ops.length; i++) {
-      final PlotExpression part = PlotExpression.compile(<MathNode>[
-        ...segments[i],
-        LiteralNode(text: ops[i]),
-        ...segments[i + 1],
-      ], system: system);
+      final PlotExpression part = PlotExpression.compile(
+        <MathNode>[
+          ...segments[i],
+          LiteralNode(text: ops[i]),
+          ...segments[i + 1],
+        ],
+        system: system,
+        definitions: definitions,
+      );
       if (!part.isValid) return part;
       if (part.isComplex || part.isParametric) {
         return PlotExpression._(

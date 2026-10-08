@@ -15,6 +15,7 @@ import '../walkthrough/walkthrough_steps.dart';
 import '../math_renderer/math_editor_controller.dart';
 import '../math_renderer/selection_wrapper.dart';
 import '../math_renderer/math_text_style.dart';
+import '../plotting/parsers/plot_expression.dart' show PlotDefinitions;
 
 /// Custom ScrollPhysics that restricts swipe direction
 class DirectionalScrollPhysics extends ScrollPhysics {
@@ -212,7 +213,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     <String>['sci.x', 'sci.y', 'sci.z', 'sci.eq', 'sci.sq'],
     <String>['sci.xhat', 'sci.yhat', 'sci.zhat', 'sci.geq', 'sci.root'],
     <String>['sci.sin', 'sci.cos', 'sci.tan', 'sci.pi', 'sci.log'],
-    <String>['sci.asin', 'sci.acos', 'sci.atan', 'sci.e', 'sci.deg'],
+    <String>['sci.asin', 'sci.acos', 'sci.atan', 'sci.e', 'sci.var'],
   ];
 
   /// The extras page: the old two rows' left halves over their right halves,
@@ -322,7 +323,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
     'sci.geq',
     'sci.root',
     'sci.e',
-    'sci.deg',
+    'sci.var',
   ];
 
   /// Names for `_extrasButtons()`, in the order it builds them.
@@ -452,7 +453,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
       'sci.tan',
       'sci.atan',
       'sci.pi',
-      'sci.deg',
+      'sci.var',
       'num.1',
       'num.2',
       'num.3',
@@ -526,7 +527,7 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
       'sci.acos',
       'sci.atan',
       'sci.e',
-      'sci.deg',
+      'sci.var',
       'num.0',
       'num.dot',
       'num.exp',
@@ -1120,10 +1121,11 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
   //   x     y     z     =    x²
   //   x̂     ŷ     ẑ     ≥    √
   //   sin   cos   tan   π    log
-  //   asin  acos  atan  e    °
+  //   asin  acos  atan  e    k
   //
   // Long-press collapses x² -> xⁿ and log -> ln/logᵣ, which is what freed
-  // the three slots the unit vectors occupy.
+  // the three slots the unit vectors occupy. k holds the other letters a row
+  // can give a value to.
   // ============================================================
 
   Widget _sciPlain(String label, VoidCallback onTap) {
@@ -1389,7 +1391,22 @@ class _CalculatorKeypadState extends State<CalculatorKeypad> {
         ],
       ),
       _sciPlain('e', () => _activeController?.insertCharacter('e')),
-      _sciPlain('°', () => _activeController?.insertCharacter('°')),
+      // A letter to give a value to: a row `k = 2` gives every other row of
+      // the plot that k (see [PlotDefinitions]). k is on the key and the rest
+      // are behind it. The slot was °, which only ever multiplied by π/180 —
+      // something π and a fraction already write.
+      _sciMenu(
+        'k',
+        onTap: () => _activeController?.insertCharacter('k'),
+        menuItems: [
+          for (final String letter in PlotDefinitions.names)
+            if (letter != 'k')
+              _sciItem(
+                letter,
+                () => _activeController?.insertCharacter(letter),
+              ),
+        ],
+      ),
     ];
   }
 

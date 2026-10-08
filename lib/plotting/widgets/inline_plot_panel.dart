@@ -326,9 +326,10 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
   /// as it took to draw the first time.
   ///
   /// Keyed by everything a compiled row depends on or is given — its text,
-  /// its coordinate system, its row and whether it is hidden — since the row
-  /// and the flag are written onto the object, and two plots must not share
-  /// one that either could change.
+  /// its coordinate system, its row and whether it is hidden, and the values
+  /// it reads from the rows that give its letters one — since the row and the
+  /// flag are written onto the object, and two plots must not share one that
+  /// either could change.
   static final Map<String, PlotExpression> _compiledRows =
       <String, PlotExpression>{};
   static final Map<String, VectorFieldParser> _compiledFields =
@@ -350,12 +351,17 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     return made;
   }
 
-  PlotExpression _compileRow(List<MathNode> line, int row) {
+  PlotExpression _compileRow(
+    List<MathNode> line,
+    int row,
+    PlotDefinitions definitions,
+  ) {
     final bool hidden = _rowHidden(row);
+    final String source = MathExpressionSerializer.serializeToJson(line);
     final String key =
         '${widget.coordinateSystem.name}|$row|$hidden|'
         '${_thetaRange.min}|${_thetaRange.max}|'
-        '${MathExpressionSerializer.serializeToJson(line)}';
+        '${definitions.valuesReadBy(source)}|$source';
     return _remember(
       _compiledRows,
       key,
@@ -364,18 +370,27 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
               line,
               system: widget.coordinateSystem,
               thetaRange: _thetaRange,
+              definitions: definitions,
             )
             ..seriesIndex = row
             ..hidden = hidden,
     );
   }
 
-  VectorFieldParser? _compileField(List<MathNode> line, int row) {
-    final String key = '$row|${MathExpressionSerializer.serializeToJson(line)}';
+  VectorFieldParser? _compileField(
+    List<MathNode> line,
+    int row,
+    PlotDefinitions definitions,
+  ) {
+    final String source = MathExpressionSerializer.serializeToJson(line);
+    final String key = '$row|${definitions.valuesReadBy(source)}|$source';
     if (_compiledFields.containsKey(key)) {
       return _remember(_compiledFields, key, () => _compiledFields[key]!);
     }
-    final VectorFieldParser? made = VectorFieldParser.fromNodes(line);
+    final VectorFieldParser? made = VectorFieldParser.fromNodes(
+      line,
+      definitions: definitions,
+    );
     // Not remembered when there is no field: that is the cheap answer, and
     // the map holds parsers only.
     if (made == null) return null;
@@ -409,6 +424,11 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     // and what was left was the sweep with the other lines' terms folded into
     // its components. The cell drew nothing and called itself vector arrows.
     final List<List<MathNode>> lines = PlotExpression.splitLines(widget.nodes);
+    // The rows giving letters their values come first, since every other row
+    // reads them. They draw nothing themselves: each is left out below, as a
+    // hidden row is, and says only what is wrong with it, if anything.
+    final PlotDefinitions definitions = PlotDefinitions.read(lines);
+    bool drawn(int row) => !definitions.rows.containsKey(row);
     // All of them. Two fields on one set of axes get two sets of arrows and a
     // colour ramp each, the same way two surfaces do — sharing the full
     // rainbow would put every magnitude in both and neither could be followed.
@@ -421,9 +441,12 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     // no `hidden` of its own — leaving it out here is what hiding means.
     final List<VectorFieldParser> fields = <VectorFieldParser>[
       for (int row = 0; row < lines.length; row++)
-        if (VectorFieldParser.isVectorFieldNodes(lines[row]) &&
+        if (drawn(row) &&
+            VectorFieldParser.isVectorFieldNodes(lines[row]) &&
             !_rowHidden(row))
-          if (_compileField(lines[row], row) case final VectorFieldParser f) f,
+          if (_compileField(lines[row], row, definitions)
+              case final VectorFieldParser f)
+            f,
     ];
     final VectorFieldParser? vector = fields.isEmpty ? null : fields.first;
 
@@ -435,12 +458,21 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
       // were compiled without either, so a curve sharing a cell with a field
       // could not be hidden and took whatever colour its position happened to
       // give it.
+      final List<PlotExpression> beside = <PlotExpression>[
+        for (int row = 0; row < lines.length; row++)
+          if (drawn(row) && !VectorFieldParser.isVectorFieldNodes(lines[row]))
+            _compileRow(lines[row], row, definitions),
+      ];
       final List<PlotExpression> alongside =
-          <PlotExpression>[
-            for (int row = 0; row < lines.length; row++)
-              if (!VectorFieldParser.isVectorFieldNodes(lines[row]))
-                _compileRow(lines[row], row),
-          ].where((PlotExpression e) => e.isValid).toList();
+          beside.where((PlotExpression e) => e.isValid).toList();
+      // The rows say what is wrong with them here too. Nothing reported on
+      // this path, so marks from before a field was added stayed up after
+      // the rows under them were fixed.
+      _reportRowErrors(<int, String>{
+        ...definitions.errors,
+        for (final PlotExpression e in beside)
+          if (!e.isValid) e.seriesIndex: e.error ?? 'Cannot plot this line',
+      });
 
       setState(() {
         _currentFunction =
@@ -483,13 +515,15 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
     // about nothing.
     final List<PlotExpression> compiled = <PlotExpression>[
       for (int row = 0; row < lines.length; row++)
-        if (!VectorFieldParser.isVectorFieldNodes(lines[row]))
-          _compileRow(lines[row], row),
+        if (drawn(row) && !VectorFieldParser.isVectorFieldNodes(lines[row]))
+          _compileRow(lines[row], row, definitions),
     ];
 
     if (compiled.isEmpty) {
-      // Nothing but hidden fields. Bare axes, and no error: closing an eye is
-      // not a mistake to report.
+      // Nothing but hidden fields and values for letters. Bare axes, and no
+      // error over them: closing an eye is not a mistake to report, and a
+      // value is waiting for a row to use it. A value that cannot be read
+      // still says so on its own row.
       setState(() {
         _functions = const <PlotExpression>[];
         _currentFunction = PlotExpression.invalid;
@@ -498,12 +532,13 @@ class InlinePlotPanelState extends State<InlinePlotPanel> {
         _fieldType = FieldType.scalar;
         _errorMessage = null;
       });
-      _reportRowErrors(const <int, String>{});
+      _reportRowErrors(definitions.errors);
       return;
     }
 
     // By row, so the rows themselves can say which line the trouble is on.
     final Map<int, String> rowErrors = <int, String>{
+      ...definitions.errors,
       for (final PlotExpression e in compiled)
         if (!e.isValid) e.seriesIndex: e.error ?? 'Cannot plot this line',
     };

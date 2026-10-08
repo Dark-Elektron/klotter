@@ -109,6 +109,14 @@ class HelpPage extends StatelessWidget {
           ),
           _buildHelpStep(
             context,
+            icon: Icons.tune,
+            title: 'Variables',
+            description:
+                'Press k on the scientific keypad, or hold it for a, b, p, m and n. Give the letter a value in a row of its own, such as k = 2, and every other row of the plot uses it: k = 2 above kx draws 2x. Long-press the number and drag sideways to tune it and watch the curves move.',
+            colors: colors,
+          ),
+          _buildHelpStep(
+            context,
             icon: Icons.ios_share,
             title: 'Export A Plot',
             description:

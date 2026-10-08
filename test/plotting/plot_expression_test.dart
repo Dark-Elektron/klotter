@@ -38,7 +38,9 @@ void main() {
     // The old MathParser returned 0 for every token it did not recognise, so
     // these expressions rendered as a confident flat line at y = 0.
     test('unknown variable is an error, not zero', () {
-      final p = PlotExpression.compile([LiteralNode(text: 'a')]);
+      // q rather than a: a is a letter a row can give a value to, and says
+      // so (see plot_definitions_test).
+      final p = PlotExpression.compile([LiteralNode(text: 'q')]);
       expect(p.isValid, isFalse);
       expect(p.error, contains('unknown variable'));
       expect(p.evaluate(1), isNaN);

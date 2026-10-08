@@ -22,6 +22,7 @@ import 'walkthrough/walkthrough_overlay.dart';
 import 'utils/coordinate_system.dart';
 import 'math_renderer/math_editor_controller.dart';
 import 'plotting/models/plot_view_state.dart';
+import 'plotting/parsers/plot_expression.dart' show PlotDefinitions;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'plotting/export/plot_exporter.dart';
@@ -921,6 +922,11 @@ class HomePageState extends State<HomePage>
   /// Keyed by the row's own [ExpressionRow.rowKey], not its position, so
   /// Flutter reuses the right element when a row is inserted above or removed.
   Widget _buildRow(int index, List<ExpressionRow> rows, int r) {
+    // A row giving a letter its value draws nothing, so it has no curve to
+    // colour or hide.
+    final String? defines = PlotDefinitions.nameDefinedBy(
+      rows[r].controller.expression,
+    );
     return KeyedSubtree(
       key: rows[r].rowKey,
       child: Row(
@@ -933,7 +939,7 @@ class HomePageState extends State<HomePage>
         // thumb the setting says is doing the reaching.
         textDirection: _leftHanded ? TextDirection.rtl : null,
         children: <Widget>[
-          _rowSwatch(index, rows[r], r),
+          _rowSwatch(index, rows[r], r, defines: defines),
           Expanded(
             // Measured here, not from the panel: the editor shares its
             // row with the swatch and the eye, so the panel's width is
@@ -974,7 +980,15 @@ class HomePageState extends State<HomePage>
                   ),
             ),
           ),
-          _rowEye(rows[r]),
+          // Its space kept, so the expression does not shift sideways as a
+          // row becomes a value or stops being one.
+          Visibility(
+            visible: defines == null,
+            maintainSize: true,
+            maintainAnimation: true,
+            maintainState: true,
+            child: _rowEye(rows[r]),
+          ),
         ],
       ),
     );
@@ -1136,32 +1150,40 @@ class HomePageState extends State<HomePage>
       Provider.of<SettingsProvider>(context).handedness ==
       Handedness.leftHanded;
 
+  /// Which rows of which plot could not be drawn, and why.
+  final Map<String, Map<int, String>> _rowErrors =
+      <String, Map<int, String>>{};
+
   /// The colour a row's curve is drawn in.
   ///
   /// Reads the same palette entry the painters do, by row number, so the dot
   /// and the curve cannot disagree. Tapping it moves the caret to that row,
   /// which makes the whole left edge a way of choosing what to edit.
-  /// Which rows of which plot could not be drawn, and why.
-  final Map<String, Map<int, String>> _rowErrors =
-      <String, Map<int, String>>{};
-
-  Widget _rowSwatch(int plot, ExpressionRow row, int r) {
+  ///
+  /// [defines] is the letter the row gives a value to, when it gives one.
+  Widget _rowSwatch(
+    int plot,
+    ExpressionRow row,
+    int r, {
+    required String? defines,
+  }) {
     final Color colour = _rowTheme.seriesColor(r);
     final String? trouble = _rowErrors[notebook.plots[plot].id]?[r];
+    void choose() {
+      if (activeIndex != plot || activeRow != r) {
+        setState(() {
+          activeIndex = plot;
+          activeRow = r;
+        });
+      }
+    }
 
     // A row that cannot be drawn says so on its own dot. The banner over the
     // plot names the first problem but not the line it belongs to, which with
     // several rows stacked is the half you need.
     if (trouble != null) {
       return GestureDetector(
-        onTap: () {
-          if (activeIndex != plot || activeRow != r) {
-            setState(() {
-              activeIndex = plot;
-              activeRow = r;
-            });
-          }
-        },
+        onTap: choose,
         behavior: HitTestBehavior.opaque,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -1177,15 +1199,27 @@ class HomePageState extends State<HomePage>
       );
     }
 
+    // A row giving a letter its value draws no curve, so it wears no colour:
+    // a dot would promise a line that is not there. It wears the mark of
+    // what it is for instead — a value to tune.
+    if (defines != null) {
+      return GestureDetector(
+        onTap: choose,
+        behavior: HitTestBehavior.opaque,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          child: Tooltip(
+            message:
+                'Gives $defines its value. '
+                'Long-press the number and drag to tune it.',
+            child: Icon(Icons.tune, size: 13, color: _rowTheme.controlIdle),
+          ),
+        ),
+      );
+    }
+
     return GestureDetector(
-      onTap: () {
-        if (activeIndex != plot || activeRow != r) {
-          setState(() {
-            activeIndex = plot;
-            activeRow = r;
-          });
-        }
-      },
+      onTap: choose,
       behavior: HitTestBehavior.opaque,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6),

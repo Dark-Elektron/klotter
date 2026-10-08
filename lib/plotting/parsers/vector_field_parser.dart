@@ -67,8 +67,12 @@ class VectorFieldParser {
   /// Split [nodes] into per-axis components and compile each.
   ///
   /// Returns null when there is no unit vector to key off, which is how the
-  /// caller decides this is an ordinary scalar expression.
-  static VectorFieldParser? fromNodes(List<MathNode> nodes) {
+  /// caller decides this is an ordinary scalar expression. [definitions] are
+  /// the values the plot's other rows give its letters.
+  static VectorFieldParser? fromNodes(
+    List<MathNode> nodes, {
+    PlotDefinitions? definitions,
+  }) {
     if (!isVectorFieldNodes(nodes)) return null;
 
     final terms = _splitTerms(nodes);
@@ -150,7 +154,13 @@ class VectorFieldParser {
     if (xNodes == null && yNodes == null && zNodes == null) return null;
 
     PlotExpression? compile(List<MathNode>? n) =>
-        n == null ? null : PlotExpression.compile(n, isVectorComponent: true);
+        n == null
+            ? null
+            : PlotExpression.compile(
+              n,
+              isVectorComponent: true,
+              definitions: definitions,
+            );
 
     final x = compile(xNodes);
     final y = compile(yNodes);

@@ -121,7 +121,7 @@ void main() {
         <String>['x', 'y', 'z', '=', 'x²'],
         <String>[...hats, '≥', '√'],
         <String>['sin', 'cos', 'tan', 'π', 'log'],
-        <String>['asin', 'acos', 'atan', 'e', '°'],
+        <String>['asin', 'acos', 'atan', 'e', 'k'],
       ];
       double above = double.negativeInfinity;
       for (final List<String> row in rows) {
@@ -151,7 +151,7 @@ void main() {
         '=': '≥',
         'x²': '√',
         'π': 'e',
-        'log': '°',
+        'log': 'k',
       };
       pairs.forEach((String above, String below) {
         expect(

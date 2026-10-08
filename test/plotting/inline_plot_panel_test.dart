@@ -209,7 +209,8 @@ void main() {
 
   group('errors are surfaced, never plotted as zero', () {
     testWidgets('an unknown variable shows the error banner', (tester) async {
-      await tester.pumpWidget(host(expression: 'a', nodes: literal('a')));
+      // q rather than a, which is a letter a row can give a value to.
+      await tester.pumpWidget(host(expression: 'q', nodes: literal('q')));
       await tester.pumpAndSettle();
 
       expect(find.textContaining('unknown variable'), findsOneWidget);

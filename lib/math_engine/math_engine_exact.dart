@@ -4521,7 +4521,7 @@ class MathNodeToExpr {
       final Expr body = convert(
         node.body,
         ansExpressions: ansExpressions,
-        varBindings: varBindings,
+        varBindings: _unbinding(varBindings, varName),
       );
 
       // If 'at' is empty, it's a symbolic derivative
@@ -4608,7 +4608,7 @@ class MathNodeToExpr {
         Expr body = convert(
           node.body,
           ansExpressions: ansExpressions,
-          varBindings: varBindings,
+          varBindings: _unbinding(varBindings, varName),
         );
         return [_Token.fromExpr(IntegralExpr(body, varName))];
       }
@@ -4634,7 +4634,7 @@ class MathNodeToExpr {
         Expr body = convert(
           node.body,
           ansExpressions: ansExpressions,
-          varBindings: varBindings,
+          varBindings: _unbinding(varBindings, varName),
         );
         return [
           _Token.fromExpr(
@@ -4678,7 +4678,7 @@ class MathNodeToExpr {
           Expr body = convert(
             node.body,
             ansExpressions: ansExpressions,
-            varBindings: varBindings,
+            varBindings: _unbinding(varBindings, varName),
           );
           return [
             _Token.fromExpr(
@@ -4701,7 +4701,7 @@ class MathNodeToExpr {
         Expr body = convert(
           node.body,
           ansExpressions: ansExpressions,
-          varBindings: varBindings,
+          varBindings: _unbinding(varBindings, varName),
         );
         return [
           _Token.fromExpr(
@@ -4941,6 +4941,16 @@ class MathNodeToExpr {
           continue;
         }
 
+        // A word with a bound letter in it is its letters multiplied, even
+        // where it spells a name: with p bound, `pi` is p times i, not π. A
+        // letter given a value means itself wherever it is typed.
+        if (word.length > 1 &&
+            varBindings != null &&
+            word.split('').any(varBindings.containsKey)) {
+          tokens.addAll(_lettersOf(word, varBindings));
+          continue;
+        }
+
         // Radian suffix is a no-op in default radian mode: xrad == x
         if (word.toLowerCase() == 'rad' &&
             tokens.isNotEmpty &&
@@ -4995,20 +5005,7 @@ class MathNodeToExpr {
         } else {
           // Check if the whole word is a known multiple-character variable (should have been caught by varBindings above)
           // otherwise split it
-          for (int j = 0; j < word.length; j++) {
-            String c = word[j];
-            if (j > 0) {
-              tokens.add(_Token(_TokenType.operator, '*'));
-            }
-            // Check for digits inside word (e.g. x2)
-            if (_isDigit(c)) {
-              tokens.add(_Token(_TokenType.number, c));
-            } else if (varBindings != null && varBindings.containsKey(c)) {
-              tokens.add(_Token.fromExpr(varBindings[c]!));
-            } else {
-              tokens.add(_Token.fromExpr(VarExpr(c)));
-            }
-          }
+          tokens.addAll(_lettersOf(word, varBindings));
         }
         continue;
       }
@@ -5017,6 +5014,43 @@ class MathNodeToExpr {
     }
 
     return tokens;
+  }
+
+  /// [word] as its letters multiplied: `xy` is x times y.
+  static List<_Token> _lettersOf(String word, Map<String, Expr>? varBindings) {
+    final List<_Token> tokens = <_Token>[];
+    for (int j = 0; j < word.length; j++) {
+      final String c = word[j];
+      if (j > 0) {
+        tokens.add(_Token(_TokenType.operator, '*'));
+      }
+      // Check for digits inside word (e.g. x2)
+      if (_isDigit(c)) {
+        tokens.add(_Token(_TokenType.number, c));
+      } else if (varBindings != null && varBindings.containsKey(c)) {
+        tokens.add(_Token.fromExpr(varBindings[c]!));
+      } else if (c == 'e') {
+        // Euler's number, as it is standing alone. It was a variable named e
+        // inside a word, so `xe` asked for a value of e that nothing gives.
+        tokens.add(_Token.fromExpr(ConstExpr.e));
+      } else {
+        tokens.add(_Token.fromExpr(VarExpr(c)));
+      }
+    }
+    return tokens;
+  }
+
+  /// [varBindings] without [name], for the body of d/dk or ∫ … dk: k is the
+  /// operator's own variable there, whatever value it has outside, as a sum's
+  /// index is its own inside the sum.
+  static Map<String, Expr>? _unbinding(
+    Map<String, Expr>? varBindings,
+    String name,
+  ) {
+    if (varBindings == null || !varBindings.containsKey(name)) {
+      return varBindings;
+    }
+    return <String, Expr>{...varBindings}..remove(name);
   }
 
   static bool _canApplyPostfixUnit(_Token token) {

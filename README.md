@@ -29,6 +29,19 @@ Each plot holds a stack of rows, and every row is its own curve on shared axes.
 
 ---
 
+### Variables
+
+A row can give a letter a value, and every other row of the plot uses it.
+
+- Press `k` on the scientific keypad, or hold it for `a`, `b`, `p`, `m` and `n`.
+- Write `k = 2` in a row of its own. That row is not drawn: it gives `k` to the rest of the plot, so
+  `kx` draws `2x`.
+- One value can use another, as in `b = 2a`, whichever row comes first.
+- Long-press the number and drag sideways to tune it. Every curve that uses the letter moves with it.
+- A row that uses a letter with no value is marked and says which row to add.
+
+---
+
 ### Structural mathematics input
 
 Klotter shows mathematics as it is written rather than as plain text.

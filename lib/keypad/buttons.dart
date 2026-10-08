@@ -227,7 +227,6 @@ const Map<String, String> _spokenFaces = <String, String>{
   '!': 'factorial',
   'ⁿPᵣ': 'permutations',
   'ⁿCᵣ': 'combinations',
-  '°': 'degrees',
   // Calculus.
   'd/dx': 'derivative',
   'd/dx|ₐ': 'derivative at a point',
