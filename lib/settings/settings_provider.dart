@@ -73,7 +73,6 @@ class SettingsProvider extends ChangeNotifier {
 
   /// Light is the default: dark ink on pale paper.
   ThemeType _themeType = ThemeType.light;
-  bool _isRadians = false;
   bool _hapticFeedback = true;
   bool _confirmClearAll = true;
   String _multiplicationSign = '\u00D7'; // Default: ×
@@ -93,7 +92,6 @@ class SettingsProvider extends ChangeNotifier {
       _themeType != ThemeType.softPink &&
       _themeType != ThemeType.desertSand &&
       _themeType != ThemeType.honeyMustard;
-  bool get isRadians => _isRadians;
   bool get hapticFeedback => _hapticFeedback;
 
   /// Whether ⌧ asks before wiping every cell.
@@ -169,7 +167,6 @@ class SettingsProvider extends ChangeNotifier {
     }
     // Otherwise a fresh install, which keeps the default: light.
 
-    _isRadians = prefs.getBool('isRadians') ?? false;
     _hapticFeedback = prefs.getBool('hapticFeedback') ?? true;
     _confirmClearAll = prefs.getBool('confirmClearAll') ?? true;
     _multiplicationSign = prefs.getString('multiplicationSign') ?? '\u00D7';
@@ -236,13 +233,6 @@ class SettingsProvider extends ChangeNotifier {
 
   Future<void> toggleDarkTheme(bool value) async {
     await setThemeType(value ? ThemeType.dark : ThemeType.classic);
-  }
-
-  Future<void> toggleRadians(bool value) async {
-    _isRadians = value;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('isRadians', value);
-    notifyListeners();
   }
 
   Future<void> toggleHapticFeedback(bool value) async {
