@@ -28,6 +28,14 @@ class Plot {
   /// Where the plot was last left: restored from storage, taken from its panel
   /// on leaving it, and kept up to date as the view moves.
   PlotViewState view = PlotViewState.initial;
+
+  /// Which of [rows] the caret was last in.
+  ///
+  /// Each plot keeps its own. It was one number for the whole notebook, so
+  /// after typing in the third row of one plot and swiping to a plot with one
+  /// row, the caret pointed past that plot's last row and was drawn nowhere,
+  /// while the keys went on typing into its first.
+  int activeRow = 0;
 }
 
 /// Every plot, in order, which one is open, and which of its rows is being
@@ -53,8 +61,13 @@ class Notebook {
   /// Which plot is open.
   int activeIndex = 0;
 
-  /// Which row of the open plot is being typed into.
-  int activeRow = 0;
+  /// Which row of the open plot is being typed into: the open plot's own
+  /// [Plot.activeRow], so moving between plots puts the caret back where it
+  /// was left in each.
+  int get activeRow => plots.isEmpty ? 0 : activePlot.activeRow;
+  set activeRow(int value) {
+    if (plots.isNotEmpty) activePlot.activeRow = value;
+  }
 
   static int _nextPlotId = 0;
 
@@ -201,6 +214,7 @@ class Notebook {
       ..clear()
       ..add(first);
     first.rows.add(_newRow());
+    first.activeRow = 0;
     activeIndex = 0;
   }
 
@@ -431,6 +445,10 @@ class Notebook {
         );
         rows[r].visible = saved[r].visible;
       }
+    }
+    // Every plot's own row, kept where it can be, inside what it now holds.
+    for (final Plot plot in plots) {
+      plot.activeRow = plot.activeRow.clamp(0, plot.rows.length - 1);
     }
     activeIndex = state.activeIndex.clamp(0, n - 1);
     // Clamped against the plot it lands in, which may hold fewer rows than

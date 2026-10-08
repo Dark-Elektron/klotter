@@ -88,6 +88,22 @@ void main() {
       expect(book.activeRow, 0);
     });
 
+    test('each plot keeps the row its caret was in', () {
+      // One number for the whole notebook pointed past the last row of a plot
+      // with fewer rows, so no caret was drawn there.
+      type(book.rowsOf(0).first, 'x');
+      book.addRowBelowActive();
+      type(book.rowsOf(0)[1], 'y');
+      book.addRowBelowActive();
+      expect(book.activeRow, 2);
+      book.insertPlot();
+      expect(book.activeRow, 0, reason: 'a new plot starts on its first row');
+      book.activeIndex = 0;
+      expect(book.activeRow, 2, reason: 'back where it was left');
+      book.activeIndex = 1;
+      expect(book.activeRow, 0);
+    });
+
     test('every row made is handed over to be wired up', () {
       final List<ExpressionRow> made = <ExpressionRow>[];
       final Notebook watched = Notebook(onRowCreated: made.add);
