@@ -51,6 +51,7 @@ extension Plot3DSurfaces on Plot3DPainter {
         ca,
         cb,
         depth,
+        spansFog: false,
       );
       scene.addTriangle(
         start + side,
@@ -60,6 +61,7 @@ extension Plot3DSurfaces on Plot3DPainter {
         cb,
         cb,
         depth,
+        spansFog: false,
       );
     }
   }
@@ -486,7 +488,8 @@ extension Plot3DSurfaces on Plot3DPainter {
     return (quads: quads, minV: minZ, maxV: maxZ, mesh: mesh);
   }
 
-  /// Draw every z = f(x, y) in the cell on one set of axes.
+  /// Draw every z = f(x, y) in the cell on one set of axes, and with
+  /// [withLevelSurfaces] every equation too.
   ///
   /// All surfaces and the floor go into a single depth-ordered scene, so they
   /// occlude one another properly: where one surface passes under another the
@@ -498,12 +501,18 @@ extension Plot3DSurfaces on Plot3DPainter {
   /// since `surfaceMode` defaults to none it was the second that ran for an
   /// ordinary z = f(x, y). Three separate fixes were made to the first one and
   /// none of them ever appeared on screen.
-  void _drawHeightSurfaces(Canvas canvas, Size size, double focalLength) {
+  void _drawHeightSurfaces(
+    Canvas canvas,
+    Size size,
+    double focalLength, {
+    bool withLevelSurfaces = false,
+  }) {
     final List<PlotExpression> curves = _sheetCurves;
     if (curves.isEmpty &&
         _lineCurves.isEmpty &&
         !_isParametric &&
-        !function.isComplex) {
+        !function.isComplex &&
+        !withLevelSurfaces) {
       return;
     }
 
@@ -609,6 +618,10 @@ extension Plot3DSurfaces on Plot3DPainter {
     _addComplexSurfacesTo(scene, size, focalLength);
     _addParametricSurfaceTo(scene, size, focalLength);
     _addParametricTo(scene, size, focalLength);
+    // Equations join it too: a level surface sorted on its own and painted
+    // first was covered by every height surface, wherever the two were.
+    final int equations =
+        withLevelSurfaces ? _addLevelSurfacesTo(scene, size, focalLength) : 0;
 
     // Tick labels and arrowheads join the same order as the surfaces, so a
     // surface nearer the camera covers the numbers behind it. They were drawn
@@ -622,6 +635,10 @@ extension Plot3DSurfaces on Plot3DPainter {
     _addAxisMarksTo(scene, size, focalLength);
 
     scene.paint(canvas, fog: plotTheme.fog.toARGB32());
+
+    // The equations' key first, as when they were drawn first; a height
+    // surface's bar, where there is one, goes over it.
+    _drawLevelSurfaceKey(canvas, size, equations);
 
     // A colorbar keys one ramp to one set of values, so it can only speak for
     // a lone surface. With several, each has its own ramp and its own range,

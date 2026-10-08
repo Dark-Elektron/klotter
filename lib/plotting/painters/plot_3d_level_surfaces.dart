@@ -14,12 +14,29 @@ extension Plot3DLevelSurfaces on Plot3DPainter {
     double focalLength, {
     required bool withFloor,
   }) {
+    // The floor and axes in the same back-to-front order as the triangles,
+    // so the plane cuts through the surface where it should instead of the
+    // whole surface being painted over a finished floor. That is what made a
+    // sphere sit on top of its own axes.
+    final _DepthScene scene = _DepthScene();
+    if (withFloor) {
+      _addFloorGridTo(scene, size, focalLength);
+      _addAxisChromeTo(scene, size, focalLength);
+    }
+    final int equations = _addLevelSurfacesTo(scene, size, focalLength);
+    if (withFloor) _addAxisMarksTo(scene, size, focalLength);
+    scene.paint(canvas, fog: plotTheme.fog.toARGB32());
+    _drawLevelSurfaceKey(canvas, size, equations);
+  }
+
+  /// Put every equation in the cell into [scene], and say how many there were.
+  int _addLevelSurfacesTo(_DepthScene scene, Size size, double focalLength) {
     // Hidden equations are dropped before the ramp index is taken, so the ones
     // still showing keep telling themselves apart. Their solid colour comes
     // from the row number, so it does not move when a neighbour is hidden.
     final List<PlotExpression> equations =
         _curves.where((PlotExpression e) => e.isLevelSet && !e.hidden).toList();
-    if (equations.isEmpty) return;
+    if (equations.isEmpty) return 0;
 
     final List<LevelMesh> meshes = <LevelMesh>[
       for (int i = 0; i < equations.length; i++)
@@ -33,7 +50,7 @@ extension Plot3DLevelSurfaces on Plot3DPainter {
       0,
       (int sum, LevelMesh m) => sum + m.triangleCount,
     );
-    if (count == 0) return;
+    if (count == 0) return 0;
 
     final Float32List world;
     final Int32List meshColors;
@@ -172,141 +189,38 @@ extension Plot3DLevelSurfaces on Plot3DPainter {
       halfH,
     );
 
-    // Sort indices, not triangles: moving an int is cheaper than moving nine
-    // floats, and the vertex buffers stay put.
-    final List<int> order = _farToNear(depth, total);
-
-    // Washed towards the ground with distance (see [depthFog]), from the
-    // nearest triangle to the farthest. Worked out here, per frame, because it
-    // turns with the camera; the colours it starts from are cached.
-    double near = double.infinity, far = double.negativeInfinity;
-    for (int t = 0; t < count; t++) {
-      final double d = depth[t];
-      if (d < near) near = d;
-      if (d > far) far = d;
+    // Each triangle's colours as they are added: the surface's own, and for
+    // a grid line's two triangles, laid out by [_projectMeshLines] as
+    // (start, start, end) and (start, end, end), the ink of the end each
+    // corner belongs to, so the line shades along its length. The fog and the
+    // order are the scene's.
+    final Int32List argb = Int32List(total * 3);
+    argb.setRange(0, count * 3, meshColors);
+    for (int s = 0; s < segments * 2; s++) {
+      final int line = s >> 1;
+      final int start = meshInks[line * 2];
+      final int end = meshInks[line * 2 + 1];
+      final int c = (count + s) * 3;
+      argb[c] = start;
+      argb[c + 1] = s.isEven ? start : end;
+      argb[c + 2] = end;
     }
-    // In 256ths, so the blend below is integers only.
-    final double fogScale = !(far > near) ? 0 : depthFog * 256 / (far - near);
-    final int fog = plotTheme.fog.toARGB32();
+    scene.addTriangles(screen, argb, depth, total, spanning: count);
+    return equations.length;
+  }
 
-    final Float32List positions = Float32List(total * 6);
-    final Int32List colors = Int32List(total * 3);
-    for (int i = 0; i < total; i++) {
-      final int src = order[i];
-      // Six floats copied by hand: setRange's checks cost more than the copy.
-      final int to = i * 6, from = src * 6;
-      positions[to] = screen[from];
-      positions[to + 1] = screen[from + 1];
-      positions[to + 2] = screen[from + 2];
-      positions[to + 3] = screen[from + 3];
-      positions[to + 4] = screen[from + 4];
-      positions[to + 5] = screen[from + 5];
-      final int k =
-          fogScale == 0
-              ? 0
-              : min(256, ((depth[src] - near) * fogScale).toInt());
-      if (src < count) {
-        final int c = i * 3;
-        final int m = src * 3;
-        colors[c] = fogBlend(meshColors[m], k, fog);
-        colors[c + 1] = fogBlend(meshColors[m + 1], k, fog);
-        colors[c + 2] = fogBlend(meshColors[m + 2], k, fog);
-      } else {
-        // A grid line's two triangles, laid out by [_projectMeshLines] as
-        // (start, start, end) and (start, end, end): each corner takes the ink
-        // of the end it belongs to, so the line shades along its length.
-        final int line = (src - count) >> 1;
-        final int start = meshInks[line * 2];
-        final int end = meshInks[line * 2 + 1];
-        final bool first = (src - count).isEven;
-        final int c = i * 3;
-        colors[c] = fogBlend(start, k, fog);
-        colors[c + 1] = fogBlend(first ? start : end, k, fog);
-        colors[c + 2] = fogBlend(end, k, fog);
-      }
-    }
-
-    // The floor and axes are merged into the same back-to-front order as the
-    // triangles, so the plane cuts through the surface where it should instead
-    // of the whole surface being painted over a finished floor. That is what
-    // made a sphere sit on top of its own axes.
-    //
-    // Deliberately not _DepthScene: it holds a few doubles and an Offset per
-    // vertex, which is fine for the 5,000 triangles a height surface makes and
-    // not for the 33,000 a hyperboloid marches to. The packed buffers stay,
-    // and runs of consecutive triangles are drawn as views into them.
-    final _LineCollector chrome = _LineCollector();
-    if (withFloor) {
-      _addFloorGridTo(chrome, size, focalLength);
-      _addAxisChromeTo(chrome, size, focalLength);
-      _addAxisMarksTo(chrome, size, focalLength);
-    }
-
-    void drawRun(int startTriangle, int endTriangle) {
-      if (endTriangle <= startTriangle) return;
-      final Vertices vertices = Vertices.raw(
-        VertexMode.triangles,
-        // Views, not copies: the engine takes its own copy of what it is
-        // given, and every mark splits the surface into another run.
-        Float32List.sublistView(positions, startTriangle * 6, endTriangle * 6),
-        colors: Int32List.sublistView(
-          colors,
-          startTriangle * 3,
-          endTriangle * 3,
-        ),
-      );
-      canvas.drawVertices(vertices, BlendMode.dst, Paint());
-      vertices.dispose();
-    }
-
-    // Lines go out in batches, not one at a time: splitting the surface at
-    // every line costs a drawVertices per line, and that, not the vertex data,
-    // is what dominates.
-    //
-    // The error this trades for is confined to one batch — lines inside a
-    // batch are drawn at the depth of the first of them, so a line can sit in
-    // front of triangles within that narrow depth band. It is only the floor
-    // and the axes that come through here now, a few dozen lines rather than
-    // the thousands the grid used to add, so the batches are two or three
-    // lines deep and the band is negligible.
-    const int maxRuns = 64;
-    final List<int> lineOrder = chrome.farToNear;
-    final int batch =
-        lineOrder.isEmpty ? 1 : (lineOrder.length / maxRuns).ceil();
-
-    //
-    // A mark — an axis number, a tick, an arrowhead — is never batched. It
-    // starts a batch of its own, so it is placed at exactly its own depth: a
-    // number drawn at the depth of a farther line would be covered by the
-    // triangles between the two, which are behind it.
-    int runStart = 0;
-    int drawn = 0;
-    int inBatch = 0;
-    for (final int item in lineOrder) {
-      final bool mark = chrome.isMark[item];
-      if (mark || inBatch == 0) {
-        final double cut = chrome.depths[item];
-        // Everything further away than this is already behind it.
-        while (drawn < total && depth[order[drawn]] > cut) {
-          drawn++;
-        }
-        drawRun(runStart, drawn);
-        runStart = drawn;
-      }
-      chrome.painters[item](canvas);
-      inBatch = mark ? 0 : (inBatch + 1) % batch;
-    }
-    drawRun(runStart, total);
-
-    // A solid surface has no ramp, so a bar of numbers beside it labels
-    // nothing — and the swatches name ramps that are not on screen. Height
-    // surfaces have always held this back; level surfaces drew the bar
-    // regardless, which put a rainbow scale over a plain blue shape.
-    if (surfaceMode == SurfaceMode.none) return;
-    if (equations.length == 1) {
+  /// The colour key for [equations] level surfaces drawn.
+  ///
+  /// A solid surface has no ramp, so a bar of numbers beside it labels
+  /// nothing — and the swatches name ramps that are not on screen. Height
+  /// surfaces have always held this back; level surfaces drew the bar
+  /// regardless, which put a rainbow scale over a plain blue shape.
+  void _drawLevelSurfaceKey(Canvas canvas, Size size, int equations) {
+    if (equations == 0 || surfaceMode == SurfaceMode.none) return;
+    if (equations == 1) {
       _drawColorbar3D(canvas, size, -rangeZ, rangeZ);
     } else {
-      _drawSurfaceLegend(canvas, size, equations.length);
+      _drawSurfaceLegend(canvas, size, equations);
     }
   }
 

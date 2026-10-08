@@ -150,63 +150,66 @@ final Int32List _noInks = Int32List(0);
 /// be read off it; half the shade still shows the form.
 const double _valueShadeStrength = 0.5;
 
-/// Indices into [depth] ordered far to near, for the painter's algorithm.
+/// Indices into [depth] ordered far to near, for the painter's algorithm,
+/// and in the order given where two fall together.
 ///
 /// A counting sort over 4,096 depth buckets rather than a comparison sort.
 /// `List.sort` with a closure over a `Float64List` costs 7.2 ms on the 38,000
-/// triangles one of these surfaces marches to, and drawing the grid as
-/// geometry roughly doubles what has to be ordered — which would have put the
-/// sort alone over a frame. Bucketed it is 0.25 ms, and 0.68 ms at twice the
-/// count.
+/// triangles one of these surfaces marches to; bucketed it is 0.25 ms, and a
+/// scene holding a level surface and its grid can pass 95,000. That was what
+/// made a height surface slow: its scene was sorted with a closure, and drew
+/// in 40 ms what now takes 13.
 ///
-/// The precision given up is nothing here. A bucket spans the box's depth over
-/// 4,096, which against a marching cell is under two per cent of one, so the
-/// arbitrary order inside a bucket can only swap primitives that are already
-/// far closer together than the depth bias separating a grid line from its
-/// surface.
-List<int> _farToNear(Float64List depth, int count) {
-  const int buckets = 4096;
+/// The precision given up is nothing. A bucket spans the box's depth over
+/// 4,096, a fraction of a pixel, and triangles are placed by their centres in
+/// any case: where two surfaces cross, the order is already only as good as
+/// the size of a triangle, many buckets across. A second pass of buckets to
+/// make the order exact cost a level surface on its own a fifteenth of its
+/// frame for nothing that could be seen.
+Int32List _farToNear(Float64List depth, int count) {
   double lo = double.infinity;
   double hi = double.negativeInfinity;
   for (int i = 0; i < count; i++) {
     final double d = depth[i];
+    if (!d.isFinite) continue;
     if (d < lo) lo = d;
     if (d > hi) hi = d;
   }
-  // Everything at one depth, or nothing finite to go on: any order will do.
-  if (!(hi > lo)) return List<int>.generate(count, (int i) => i);
+  final Int32List order = Int32List(count);
+  // Everything at one depth, or nothing finite to go on: the order given.
+  if (!(hi > lo)) {
+    for (int i = 0; i < count; i++) {
+      order[i] = i;
+    }
+    return order;
+  }
 
+  const int buckets = 4096;
   final double scale = (buckets - 1) / (hi - lo);
   final Int32List bucket = Int32List(count);
   final Int32List starts = Int32List(buckets + 1);
   for (int i = 0; i < count; i++) {
-    // Reversed on the way in, so bucket 0 is the furthest away.
-    final int b = buckets - 1 - ((depth[i] - lo) * scale).toInt();
+    final double d = depth[i];
+    // Reversed on the way in, so bucket 0 is the furthest away. Something
+    // without a depth goes first, so whatever is drawn after can cover it.
+    final int b =
+        d == double.negativeInfinity
+            ? buckets - 1
+            : d.isFinite
+            ? buckets - 1 - ((d - lo) * scale).toInt()
+            : 0;
     bucket[i] = b;
     starts[b + 1]++;
   }
   for (int b = 0; b < buckets; b++) {
     starts[b + 1] += starts[b];
   }
-  final Int32List out = Int32List(count);
   for (int i = 0; i < count; i++) {
-    out[starts[bucket[i]]++] = i;
+    order[starts[bucket[i]]++] = i;
   }
-  return out;
+  return order;
 }
 
-/// A back-to-front drawing list holding both triangles and line segments.
-///
-/// The floor grid used to be painted before the surface, unconditionally, so
-/// the surface always won — the floor never appeared in front of it even where
-/// it was nearer the camera, and a surface dipping below the floor was drawn
-/// over ground that should have hidden it. Sorting both kinds of primitive
-/// together is what makes them occlude each other.
-///
-/// Consecutive triangles are still submitted as one `drawVertices`; the batch
-/// is only flushed when a line has to be drawn between them, so a scene with a
-/// few hundred grid segments costs a few hundred draw calls rather than one per
-/// triangle.
 /// Somewhere depth-tagged line segments can be sent.
 ///
 /// The floor grid and axis chrome are built the same way whoever is drawing
@@ -241,61 +244,60 @@ class _ImmediateSink implements _LineSink {
       paint(canvas);
 }
 
-/// Just keeps the lines and marks, for a caller that does its own merging.
-class _LineCollector implements _LineSink {
-  final List<void Function(Canvas canvas)> painters =
-      <void Function(Canvas canvas)>[];
-  final List<double> depths = <double>[];
-
-  /// Which entries are marks rather than lines. A mark is never batched with
-  /// its neighbours: it is placed at exactly its own depth.
-  final List<bool> isMark = <bool>[];
-
-  @override
-  void addLine(Offset from, Offset to, Paint paint, double depth) {
-    painters.add((Canvas canvas) => canvas.drawLine(from, to, paint));
-    depths.add(depth);
-    isMark.add(false);
-  }
-
-  @override
-  void addMark(void Function(Canvas canvas) paint, double depth) {
-    painters.add(paint);
-    depths.add(depth);
-    isMark.add(true);
-  }
-
-  int get length => depths.length;
-
-  /// Indices ordered far to near, matching how triangles are sorted — and in
-  /// the order they were added where two are at one depth. See
-  /// [_DepthScene.paint].
-  List<int> get farToNear => List<int>.generate(length, (i) => i)..sort((x, y) {
-    final int byDepth = depths[y].compareTo(depths[x]);
-    return byDepth != 0 ? byDepth : x.compareTo(y);
-  });
-}
-
-/// What a [_DepthScene] entry is.
-const int _sceneTriangle = 0;
-const int _sceneLine = 1;
-const int _sceneMark = 2;
-
+/// A back-to-front drawing list: triangles, and the lines and marks drawn
+/// between them.
+///
+/// Everything in the box goes into one, so that whatever is nearer the
+/// camera covers what is behind it whatever kind of thing each is. The floor
+/// grid used to be painted before the surface, so the surface always won;
+/// a level surface was drawn as a finished scene of its own and a height
+/// surface over it, so the height surface always won — a saddle covered a
+/// sphere sitting on it.
+///
+/// Triangles are kept packed, six screen floats, three colours and a depth
+/// each, since a level surface brings tens of thousands of them. Lines and
+/// marks are few and are kept as they come; each is drawn at its own place in
+/// the order, between runs of triangles that go out as one `drawVertices`
+/// each.
 class _DepthScene implements _LineSink {
-  final List<double> _depths = <double>[];
-  final List<int> _kind = <int>[];
+  Float32List _xy = Float32List(6 * 256);
+  Int32List _argb = Int32List(3 * 256);
+  Float64List _depth = Float64List(256);
+  int _triangles = 0;
 
-  // Triangles: six screen floats and three packed colours each.
-  final List<double> _triXY = <double>[];
-  final List<int> _triColor = <int>[];
-
-  // Lines: four screen floats each, plus a paint.
-  final List<double> _lineXY = <double>[];
-  final List<Paint> _linePaint = <Paint>[];
-
-  // Marks: whatever paints them.
-  final List<void Function(Canvas canvas)> _marks =
+  final List<void Function(Canvas canvas)> _chrome =
       <void Function(Canvas canvas)>[];
+  final List<double> _chromeDepth = <double>[];
+  final List<bool> _chromeIsMark = <bool>[];
+
+  /// How many triangles had been added before each line or mark: at its own
+  /// depth, it goes after those and before the rest.
+  final List<int> _chromeAfter = <int>[];
+
+  /// The depths the fog runs between: the surfaces' own, not the grid lines
+  /// lifted off them towards the camera. A lone flat surface facing the
+  /// camera has no span, and is not fogged; counting the lift as one gave it
+  /// a span with the whole surface at the far end of it, which darkened it.
+  double _near = double.infinity;
+  double _far = double.negativeInfinity;
+
+  void _spanFog(double depth) {
+    if (!depth.isFinite) return;
+    if (depth < _near) _near = depth;
+    if (depth > _far) _far = depth;
+  }
+
+  void _reserve(int more) {
+    final int need = _triangles + more;
+    if (need <= _depth.length) return;
+    int capacity = _depth.length * 2;
+    while (capacity < need) {
+      capacity *= 2;
+    }
+    _xy = Float32List(capacity * 6)..setRange(0, _triangles * 6, _xy);
+    _argb = Int32List(capacity * 3)..setRange(0, _triangles * 3, _argb);
+    _depth = Float64List(capacity)..setRange(0, _triangles, _depth);
+  }
 
   void addTriangle(
     Offset a,
@@ -304,110 +306,188 @@ class _DepthScene implements _LineSink {
     int ca,
     int cb,
     int cc,
-    double depth,
-  ) {
-    _depths.add(depth);
-    _kind.add(_sceneTriangle);
-    _triXY.addAll(<double>[a.dx, a.dy, b.dx, b.dy, c.dx, c.dy]);
-    _triColor.addAll(<int>[ca, cb, cc]);
+    double depth, {
+    bool spansFog = true,
+  }) {
+    if (spansFog) _spanFog(depth);
+    _reserve(1);
+    final int o = _triangles * 6;
+    _xy[o] = a.dx;
+    _xy[o + 1] = a.dy;
+    _xy[o + 2] = b.dx;
+    _xy[o + 3] = b.dy;
+    _xy[o + 4] = c.dx;
+    _xy[o + 5] = c.dy;
+    final int k = _triangles * 3;
+    _argb[k] = ca;
+    _argb[k + 1] = cb;
+    _argb[k + 2] = cc;
+    _depth[_triangles++] = depth;
+  }
+
+  /// [count] triangles already projected, as packed as they are kept here: a
+  /// level surface's, copied in at once rather than one at a time. The first
+  /// [spanning] of them are surface, and set how far the fog runs; the rest
+  /// are its grid.
+  void addTriangles(
+    Float32List xy,
+    Int32List argb,
+    Float64List depth,
+    int count, {
+    required int spanning,
+  }) {
+    for (int t = 0; t < spanning; t++) {
+      _spanFog(depth[t]);
+    }
+    // Nothing here yet, and the arrays are exactly the triangles: taken as
+    // they are rather than copied. That is the whole scene for a level
+    // surface on its own, tens of thousands of triangles a frame.
+    if (_triangles == 0 &&
+        depth.length == count &&
+        xy.length == count * 6 &&
+        argb.length == count * 3) {
+      _xy = xy;
+      _argb = argb;
+      _depth = depth;
+      _triangles = count;
+      return;
+    }
+    _reserve(count);
+    _xy.setRange(_triangles * 6, (_triangles + count) * 6, xy);
+    _argb.setRange(_triangles * 3, (_triangles + count) * 3, argb);
+    _depth.setRange(_triangles, _triangles + count, depth);
+    _triangles += count;
   }
 
   @override
   void addLine(Offset a, Offset b, Paint paint, double depth) {
-    _depths.add(depth);
-    _kind.add(_sceneLine);
-    _lineXY.addAll(<double>[a.dx, a.dy, b.dx, b.dy]);
-    _linePaint.add(paint);
+    _chrome.add((Canvas canvas) => canvas.drawLine(a, b, paint));
+    _chromeDepth.add(depth);
+    _chromeIsMark.add(false);
+    _chromeAfter.add(_triangles);
   }
 
   @override
   void addMark(void Function(Canvas canvas) paint, double depth) {
-    _depths.add(depth);
-    _kind.add(_sceneMark);
-    _marks.add(paint);
+    _chrome.add(paint);
+    _chromeDepth.add(depth);
+    _chromeIsMark.add(true);
+    _chromeAfter.add(_triangles);
   }
 
   /// Draw everything far to near, the triangles washed towards [fog] with
   /// their distance (see [depthFog]).
   void paint(Canvas canvas, {int? fog}) {
-    final int n = _depths.length;
-    if (n == 0) return;
+    final int n = _triangles;
+    final int m = _chrome.length;
+    if (n == 0 && m == 0) return;
 
-    // The triangles' own depth range: the fog runs from the nearest of them
-    // to the farthest, whatever else is in the scene.
-    double near = double.infinity, far = double.negativeInfinity;
+    final Int32List order = _farToNear(_depth, n);
+
+    // The fog runs from the nearest surface to the farthest, worked out per
+    // frame because it turns with the camera. In 256ths, so the blend is
+    // integers only.
+    final double near = _near, far = _far;
+    final double fogScale =
+        fog == null || !(far > near) ? 0 : depthFog * 256 / (far - near);
+
+    final Float32List positions = Float32List(n * 6);
+    final Int32List colors = Int32List(n * 3);
     for (int i = 0; i < n; i++) {
-      if (_kind[i] != _sceneTriangle) continue;
-      final double d = _depths[i];
-      if (d < near) near = d;
-      if (d > far) far = d;
-    }
-    final double fogPerDepth =
-        fog != null && far > near ? depthFog / (far - near) : 0;
-
-    // Far to near, and in the order added where two are at one depth. The
-    // sort is not stable on its own, and an axis name shares its arrowhead's
-    // depth: which of the two came out on top depended on everything else in
-    // the scene, so adding a curve somewhere else could put the arrowhead
-    // over the name.
-    final List<int> order = List<int>.generate(n, (i) => i);
-    order.sort((a, b) {
-      final int byDepth = _depths[b].compareTo(_depths[a]);
-      return byDepth != 0 ? byDepth : a.compareTo(b);
-    });
-
-    // Running indices into the per-kind buffers, so a primitive's data can be
-    // found from its position among its own kind.
-    final List<int> kindIndex = List<int>.filled(n, -1);
-    final List<int> counts = <int>[0, 0, 0];
-    for (int i = 0; i < n; i++) {
-      kindIndex[i] = counts[_kind[i]]++;
-    }
-
-    final List<double> batchXY = <double>[];
-    final List<int> batchColor = <int>[];
-
-    void flush() {
-      if (batchXY.isEmpty) return;
-      final Vertices vertices = Vertices.raw(
-        VertexMode.triangles,
-        Float32List.fromList(batchXY),
-        colors: Int32List.fromList(batchColor),
-      );
-      canvas.drawVertices(vertices, BlendMode.dst, Paint());
-      vertices.dispose();
-      batchXY.clear();
-      batchColor.clear();
-    }
-
-    for (final int i in order) {
-      switch (_kind[i]) {
-        case _sceneLine:
-          flush();
-          final int o = kindIndex[i] * 4;
-          canvas.drawLine(
-            Offset(_lineXY[o], _lineXY[o + 1]),
-            Offset(_lineXY[o + 2], _lineXY[o + 3]),
-            _linePaint[kindIndex[i]],
-          );
-        case _sceneMark:
-          flush();
-          _marks[kindIndex[i]](canvas);
-        default:
-          final int o = kindIndex[i] * 6;
-          final int c = kindIndex[i] * 3;
-          batchXY.addAll(_triXY.getRange(o, o + 6));
-          if (fogPerDepth == 0) {
-            batchColor.addAll(_triColor.getRange(c, c + 3));
-          } else {
-            final double amount = (_depths[i] - near) * fogPerDepth;
-            for (int v = 0; v < 3; v++) {
-              batchColor.add(fogArgb(_triColor[c + v], amount, fog!));
-            }
-          }
+      final int src = order[i];
+      // Six floats copied by hand: setRange's checks cost more than the copy.
+      final int to = i * 6, from = src * 6;
+      positions[to] = _xy[from];
+      positions[to + 1] = _xy[from + 1];
+      positions[to + 2] = _xy[from + 2];
+      positions[to + 3] = _xy[from + 3];
+      positions[to + 4] = _xy[from + 4];
+      positions[to + 5] = _xy[from + 5];
+      final double d = _depth[src];
+      final int k =
+          fogScale == 0 || !d.isFinite
+              ? 0
+              : min(256, ((d - near) * fogScale).toInt());
+      final int c = i * 3, cs = src * 3;
+      if (k == 0) {
+        colors[c] = _argb[cs];
+        colors[c + 1] = _argb[cs + 1];
+        colors[c + 2] = _argb[cs + 2];
+      } else {
+        colors[c] = fogBlend(_argb[cs], k, fog!);
+        colors[c + 1] = fogBlend(_argb[cs + 1], k, fog);
+        colors[c + 2] = fogBlend(_argb[cs + 2], k, fog);
       }
     }
-    flush();
+
+    void drawRun(int startTriangle, int endTriangle) {
+      if (endTriangle <= startTriangle) return;
+      final Vertices vertices = Vertices.raw(
+        VertexMode.triangles,
+        // Views, not copies: the engine takes its own copy of what it is
+        // given, and every line splits the triangles into another run.
+        Float32List.sublistView(positions, startTriangle * 6, endTriangle * 6),
+        colors: Int32List.sublistView(
+          colors,
+          startTriangle * 3,
+          endTriangle * 3,
+        ),
+      );
+      // BlendMode.dst keeps the vertex colours; the paint contributes nothing.
+      canvas.drawVertices(vertices, BlendMode.dst, Paint());
+      vertices.dispose();
+    }
+
+    // Far to near, and in the order added where two are at one depth: an
+    // axis name shares its arrowhead's depth, and which of the two came out
+    // on top must not depend on everything else in the scene.
+    final List<int> chromeOrder = List<int>.generate(m, (int i) => i)
+      ..sort((int x, int y) {
+        final int byDepth = _chromeDepth[y].compareTo(_chromeDepth[x]);
+        return byDepth != 0 ? byDepth : x.compareTo(y);
+      });
+
+    // Lines go out in batches when there are many, each drawn where the first
+    // of its batch falls among the triangles. Every split of the triangles is
+    // another drawVertices, and the floor and axes are nearly a thousand
+    // segments, cut short so that a surface can cover part of one: a split at
+    // each made a level surface on its own a tenth slower to draw. A line
+    // drawn with the first of its batch can be covered by a triangle just
+    // behind it, within a few thousandths of the box's depth, which is only
+    // where the floor meets a surface. A mark is never batched: each is
+    // placed at exactly its own depth.
+    const int maxRuns = 256;
+    int lines = 0;
+    for (final bool mark in _chromeIsMark) {
+      if (!mark) lines++;
+    }
+    final int batch = lines <= maxRuns ? 1 : (lines / maxRuns).ceil();
+
+    int runStart = 0;
+    int drawn = 0;
+    int inBatch = 0;
+    for (final int c in chromeOrder) {
+      final bool mark = _chromeIsMark[c];
+      if (mark || inBatch == 0) {
+        final double cut = _chromeDepth[c];
+        final int after = _chromeAfter[c];
+        // Every triangle behind it, and those at its depth added before it.
+        while (drawn < n) {
+          final int t = order[drawn];
+          final double d = _depth[t];
+          if (!d.isFinite || d > cut || (d == cut && t < after)) {
+            drawn++;
+          } else {
+            break;
+          }
+        }
+        drawRun(runStart, drawn);
+        runStart = drawn;
+      }
+      _chrome[c](canvas);
+      inBatch = mark ? 0 : (inBatch + 1) % batch;
+    }
+    drawRun(runStart, n);
   }
 }
 
@@ -1049,17 +1129,18 @@ class Plot3DPainter extends CustomPainter {
       // is shared, and only the variables say whether this is an arrow at
       // every point or one point swept into a curve.
       //
-      // This draws the sweep together with any z = f(x, y) and standing curves
-      // in the cell, because they all belong in one depth-ordered scene.
-      _drawHeightSurfaces(canvas, size, focalLength);
-      // Equations are contoured rather than sampled, so they have a renderer
-      // of their own and it has to be asked. It only ran in the scalar branch,
-      // so a cell holding a sweep and a circle drew the sweep alone — the
-      // circle was compiled, framed and then never drawn.
-      if (_curves.any((PlotExpression e) => e.isLevelSet)) {
-        // The scene above already laid the floor down in depth order.
-        _drawLevelSurface(canvas, size, focalLength, withFloor: false);
-      }
+      // This draws the sweep together with any z = f(x, y), standing curves
+      // and equations in the cell, because they all belong in one
+      // depth-ordered scene. Equations are marched rather than sampled, and
+      // were once left to the scalar branch alone, so a cell holding a sweep
+      // and a circle drew the sweep alone — the circle was compiled, framed
+      // and then never drawn.
+      _drawHeightSurfaces(
+        canvas,
+        size,
+        focalLength,
+        withLevelSurfaces: _curves.any((PlotExpression e) => e.isLevelSet),
+      );
     } else if (fieldType == FieldType.vector && vectorParser != null) {
       // Vector field visualization
       if (showSurface && !vectorParser!.is3D) {
@@ -1102,31 +1183,41 @@ class Plot3DPainter extends CustomPainter {
       // A cell can hold both kinds at once — z = x²+y² on one line and
       // x²+y²+z²=4 on the next — so the two are not exclusive. Each renderer
       // takes the lines that belong to it.
-      if (_curves.any((PlotExpression e) => e.isLevelSet)) {
-        // An equation defines a surface, not a height: there is no z = f(x,y)
-        // to sample, so it is contoured rather than sampled.
-        // The height renderer owns the floor when there is one; otherwise
-        // this is the only thing that can draw it in the right order.
-        _drawLevelSurface(
+      // An equation defines a surface, not a height: there is no z = f(x, y)
+      // to sample, so it is marched rather than sampled.
+      final bool levels = _curves.any((PlotExpression e) => e.isLevelSet);
+      final bool field = is3DFunction && plotMode == PlotMode.field;
+      if (_hasHeightSurface && !field) {
+        // Sheets, curves and equations go into the one depth-ordered scene
+        // this builds, so whichever is nearer the camera covers the other.
+        // sin(x) on one line and x²+y² on the next is a curve standing beside
+        // a surface. The equations were drawn first, as a finished scene of
+        // their own, and the heights over them: a saddle was always in front
+        // of a sphere, and a polar curve's wall, however they really sat.
+        _drawHeightSurfaces(
           canvas,
           size,
           focalLength,
-          withFloor: !_hasHeightSurface,
+          withLevelSurfaces: levels,
         );
-      }
-      if (_hasHeightSurface) {
-        if (is3DFunction && plotMode == PlotMode.field) {
+
+        if (showContour && _sheetCurves.isNotEmpty) {
+          _drawSurfaceContours(canvas, size, focalLength);
+        }
+      } else {
+        // The height renderer owns the floor when it runs; otherwise this is
+        // the only thing that can draw it in the right order.
+        if (levels) {
+          _drawLevelSurface(
+            canvas,
+            size,
+            focalLength,
+            withFloor: !_hasHeightSurface,
+          );
+        }
+        if (_hasHeightSurface) {
           _drawScalarField3D(canvas, size, focalLength);
           if (showContour) _drawContourLines3D(canvas, size, focalLength);
-        } else {
-          // Sheets and curves are not exclusive either. sin(x) on one line and
-          // x²+y² on the next is a curve standing beside a surface; both go
-          // into the one depth-ordered scene this builds.
-          _drawHeightSurfaces(canvas, size, focalLength);
-
-          if (showContour && _sheetCurves.isNotEmpty) {
-            _drawSurfaceContours(canvas, size, focalLength);
-          }
         }
       }
     }
