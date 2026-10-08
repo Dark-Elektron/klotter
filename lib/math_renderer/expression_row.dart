@@ -18,6 +18,7 @@ class ExpressionRow {
   ExpressionRow({required this.id})
     : controller = MathEditorController(),
       editorKey = GlobalKey<MathEditorInlineState>(),
+      rowKey = GlobalKey(),
       scroll = ScrollController();
 
   /// Stable across edits, reorders and reloads.
@@ -30,6 +31,11 @@ class ExpressionRow {
 
   final MathEditorController controller;
   final GlobalKey<MathEditorInlineState> editorKey;
+
+  /// The whole row, swatch and eye with the editor, for bringing it into view
+  /// in the panel. Outside the row's horizontal scroller, which [editorKey] is
+  /// inside, so revealing the row cannot scroll the expression sideways.
+  final GlobalKey rowKey;
 
   /// Horizontal scroll, so a long expression can run past the panel edge.
   final ScrollController scroll;

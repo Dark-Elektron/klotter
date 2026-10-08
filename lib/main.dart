@@ -1,4 +1,4 @@
-import 'dart:math' show exp;
+import 'dart:math' show exp, min;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show DragStartBehavior;
@@ -199,6 +199,8 @@ class HomePageState extends State<HomePage>
     _rowErrors.removeWhere((String id, _) => gone(id));
     _rowPanelHeight.removeWhere((String id, _) => gone(id));
     _rowPanelKeys.removeWhere((String id, _) => gone(id));
+    _threeRowsHeight.removeWhere((String id, _) => gone(id));
+    _revealedRow.removeWhere((String id, _) => gone(id));
   }
 
   /// Drives the plot-page transition. Physics are disabled — the strip below
@@ -850,7 +852,7 @@ class HomePageState extends State<HomePage>
         ),
         expression: plotExpression,
         nodes: _getPlotNodes(index),
-        bottomInset: _rowPanelHeight[plot.id] ?? 0,
+        bottomInset: _visibleRowPanelHeight(index),
         hiddenRows: <bool>[
           for (final ExpressionRow r in rowsOf(index)) !r.visible,
         ],
@@ -881,6 +883,8 @@ class HomePageState extends State<HomePage>
   Widget _buildRowStack(int index, BoxConstraints constraints) {
     final List<ExpressionRow> rows = rowsOf(index);
     if (rows.isEmpty) return const SizedBox.shrink();
+    final String plot = notebook.plots[index].id;
+    if (index == activeIndex) _revealActiveRow(plot, rows);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -890,68 +894,162 @@ class HomePageState extends State<HomePage>
       spacing: _rowGap,
       children: <Widget>[
         for (int r = 0; r < rows.length; r++)
-          // Keyed by the row's own id, not its position, so Flutter reuses
-          // the right element when a row is inserted above or removed. Not by
-          // an identity hash, which two live objects can share.
-          KeyedSubtree(
-            key: ValueKey<String>(rows[r].id),
-            child: Row(
-              // Centred, because a row can be tall — a fraction or an integral
-              // is several times the height of a plain expression — and chrome
-              // pinned to the top would drift away from it.
-              crossAxisAlignment: CrossAxisAlignment.center,
-              // Mirrored for a left-handed layout, like the keypad: the
-              // colour swatch and the eye swap sides so both stay under the
-              // thumb the setting says is doing the reaching.
-              textDirection: _leftHanded ? TextDirection.rtl : null,
-              children: <Widget>[
-                _rowSwatch(index, rows[r], r),
-                Expanded(
-                  // Measured here, not from the panel: the editor shares its
-                  // row with the swatch and the eye, so the panel's width is
-                  // wider than the slot it actually gets. Handing it the panel
-                  // width made every expression too wide for its box, which
-                  // pushed the glyphs and the caret off centre.
-                  child: LayoutBuilder(
-                    builder:
-                        (context, slot) => SingleChildScrollView(
-                          controller: rows[r].scroll,
-                          scrollDirection: Axis.horizontal,
-                          reverse: true,
-                          child: MathEditorInline(
-                            key: rows[r].editorKey,
-                            controller: rows[r].controller,
-                            showCursor: activeIndex == index && activeRow == r,
-                            minWidth: slot.maxWidth,
-                            // Drag-to-tune edits the node tree directly, so the plot needs
-                            // a rebuild to resample.
-                            onExpressionChanged: () {
-                              updateMathEditor();
-                              setState(() {});
-                            },
-                            onFocus: () {
-                              if (activeIndex != index || activeRow != r) {
-                                setState(() {
-                                  activeIndex = index;
-                                  activeRow = r;
-                                });
-                              }
-                              // Touching an expression means typing into it,
-                              // so a folded keypad comes back — as a phone's
-                              // keyboard rises when a field is tapped. Left
-                              // folded, the caret would blink with no keys.
-                              _setKeypadHidden(false);
-                            },
-                          ),
-                        ),
+          // The third row says where it ends, which is how tall the panel may
+          // grow (see [_threeRowsHeight]). From three rows rather than four,
+          // so the height is known when the fourth arrives and the panel
+          // never grows past it on the way.
+          if (r == _visibleRows - 1)
+            LayoutReporter(
+              rootKey: _rowPanelKeys.putIfAbsent(plot, () => GlobalKey()),
+              version: (plot, rows[r].id),
+              report:
+                  (Rect rect, RenderObject? _) => _noteThreeRowsHeight(
+                    plot,
+                    rect.bottom,
+                    capped: rows.length > _visibleRows,
                   ),
-                ),
-                _rowEye(rows[r]),
-              ],
-            ),
-          ),
+              child: _buildRow(index, rows, r),
+            )
+          else
+            _buildRow(index, rows, r),
       ],
     );
+  }
+
+  /// One expression row: its swatch, its editor and its eye.
+  ///
+  /// Keyed by the row's own [ExpressionRow.rowKey], not its position, so
+  /// Flutter reuses the right element when a row is inserted above or removed.
+  Widget _buildRow(int index, List<ExpressionRow> rows, int r) {
+    return KeyedSubtree(
+      key: rows[r].rowKey,
+      child: Row(
+        // Centred, because a row can be tall — a fraction or an integral
+        // is several times the height of a plain expression — and chrome
+        // pinned to the top would drift away from it.
+        crossAxisAlignment: CrossAxisAlignment.center,
+        // Mirrored for a left-handed layout, like the keypad: the
+        // colour swatch and the eye swap sides so both stay under the
+        // thumb the setting says is doing the reaching.
+        textDirection: _leftHanded ? TextDirection.rtl : null,
+        children: <Widget>[
+          _rowSwatch(index, rows[r], r),
+          Expanded(
+            // Measured here, not from the panel: the editor shares its
+            // row with the swatch and the eye, so the panel's width is
+            // wider than the slot it actually gets. Handing it the panel
+            // width made every expression too wide for its box, which
+            // pushed the glyphs and the caret off centre.
+            child: LayoutBuilder(
+              builder:
+                  (context, slot) => SingleChildScrollView(
+                    controller: rows[r].scroll,
+                    scrollDirection: Axis.horizontal,
+                    reverse: true,
+                    child: MathEditorInline(
+                      key: rows[r].editorKey,
+                      controller: rows[r].controller,
+                      showCursor: activeIndex == index && activeRow == r,
+                      minWidth: slot.maxWidth,
+                      // Drag-to-tune edits the node tree directly, so the plot needs
+                      // a rebuild to resample.
+                      onExpressionChanged: () {
+                        updateMathEditor();
+                        setState(() {});
+                      },
+                      onFocus: () {
+                        if (activeIndex != index || activeRow != r) {
+                          setState(() {
+                            activeIndex = index;
+                            activeRow = r;
+                          });
+                        }
+                        // Touching an expression means typing into it,
+                        // so a folded keypad comes back — as a phone's
+                        // keyboard rises when a field is tapped. Left
+                        // folded, the caret would blink with no keys.
+                        _setKeypadHidden(false);
+                      },
+                    ),
+                  ),
+            ),
+          ),
+          _rowEye(rows[r]),
+        ],
+      ),
+    );
+  }
+
+  /// How many rows the panel shows before it scrolls.
+  ///
+  /// Every row it shows is height taken from the plot above it, so past three
+  /// the stack scrolls rather than growing.
+  static const int _visibleRows = 3;
+
+  /// How tall the first three rows of each plot stand, for plots with three
+  /// or more.
+  ///
+  /// Measured, because rows are not one height — a fraction or an integral is
+  /// several times a plain expression — so "three rows" is the third row's
+  /// bottom edge, reported where it is painted.
+  final Map<String, double> _threeRowsHeight = <String, double>{};
+
+  void _noteThreeRowsHeight(
+    String plot,
+    double height, {
+    required bool capped,
+  }) {
+    if (((_threeRowsHeight[plot] ?? -1) - height).abs() < 0.5) return;
+    // With three rows nothing is held to it yet: it is kept for the fourth,
+    // whose arrival rebuilds anyway.
+    if (!capped) {
+      _threeRowsHeight[plot] = height;
+      return;
+    }
+    // Reported from paint, so the rebuild waits for the frame to finish.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() => _threeRowsHeight[plot] = height);
+    });
+  }
+
+  /// The height the row panel may take: all of its rows up to three, the
+  /// first three past that.
+  double? _rowPanelCap(int index) {
+    if (rowsOf(index).length <= _visibleRows) return null;
+    return _threeRowsHeight[notebook.plots[index].id];
+  }
+
+  /// The row of each plot last brought into view.
+  final Map<String, String> _revealedRow = <String, String>{};
+
+  /// Scroll the panel to the row being typed into when that row changes.
+  ///
+  /// A row added past the third would otherwise arrive below the panel's
+  /// edge, and the keys would type into something out of sight. Only the
+  /// panel scrolls: the row is revealed by its own key, outside its
+  /// expression's horizontal scroller.
+  void _revealActiveRow(String plot, List<ExpressionRow> rows) {
+    final ExpressionRow row = rows[activeRow.clamp(0, rows.length - 1)];
+    if (_revealedRow[plot] == row.id) return;
+    _revealedRow[plot] = row.id;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final BuildContext? target = row.rowKey.currentContext;
+      if (!mounted || target == null) return;
+      // One of the two moves, whichever side of the panel the row is past;
+      // the other finds nothing to do.
+      for (final ScrollPositionAlignmentPolicy policy in const <ScrollPositionAlignmentPolicy>[
+        ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+        ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+      ]) {
+        Scrollable.ensureVisible(
+          target,
+          alignmentPolicy: policy,
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+        );
+      }
+    });
   }
 
   /// How tall each plot's row panel is, measured rather than guessed.
@@ -997,6 +1095,14 @@ class HomePageState extends State<HomePage>
   /// nudge if the stack feels cramped or airy.
   static const double _rowInset = 1;
   static const double _rowGap = 1;
+
+  /// How much of the plot the row panel covers: its measured height, or the
+  /// three rows it shows when it holds more.
+  double _visibleRowPanelHeight(int index) {
+    final double measured = _rowPanelHeight[notebook.plots[index].id] ?? 0;
+    final double? cap = _rowPanelCap(index);
+    return cap == null ? measured : min(measured, cap + 2 * _rowInset);
+  }
 
   /// The palette the plot draws with.
   ///
@@ -1167,12 +1273,15 @@ class HomePageState extends State<HomePage>
                     builder: (context, constraints) {
                       // Rows can outgrow their share of the page, so the stack
                       // scrolls rather than pushing the plot off the top.
+                      final double room =
+                          constraints.maxHeight.isFinite
+                              ? constraints.maxHeight
+                              : 260;
+                      final double? cap = _rowPanelCap(index);
                       return ConstrainedBox(
                         constraints: BoxConstraints(
-                          maxHeight:
-                              constraints.maxHeight.isFinite
-                                  ? constraints.maxHeight
-                                  : 260,
+                          // Three rows at most; the rest scroll.
+                          maxHeight: cap == null ? room : min(room, cap),
                         ),
                         child: SingleChildScrollView(
                           // No outer horizontal scroller: each row owns its
