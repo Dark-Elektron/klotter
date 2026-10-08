@@ -2980,7 +2980,7 @@ class MathRenderer extends StatelessWidget {
 }
 
 /// Widget for rendering a literal text node.
-class LiteralWidget extends StatefulWidget {
+class LiteralWidget extends StatelessWidget {
   final LiteralNode node;
   final double fontSize;
   final String? parentId;
@@ -3007,135 +3007,147 @@ class LiteralWidget extends StatefulWidget {
   });
 
   @override
-  State<LiteralWidget> createState() => _LiteralWidgetState();
-}
-
-class _LiteralWidgetState extends State<LiteralWidget> {
-  int _lastReportedVersion = -1;
-
-  /// The position reported alongside [_lastReportedVersion].
-  ///
-  /// The version alone is not enough. A node's index inside its sibling list
-  /// can change without the version moving — inserting a caret anchor beside
-  /// an atomic symbol used to do exactly that — and the registry is what taps
-  /// are resolved against, so a stale index sends the caret to the wrong node.
-  /// Reported separately so a shift repairs itself even if some future caller
-  /// forgets to bump the version.
-  int? _lastReportedIndex;
-  String? _lastReportedParentId;
-  String? _lastReportedPath;
-
-  final GlobalKey _textKey = GlobalKey();
-  bool _layoutRetryScheduled = false;
-
-  /// True when what is registered still describes this widget.
-  bool get _reportIsCurrent =>
-      _lastReportedVersion == widget.structureVersion &&
-      _lastReportedIndex == widget.index &&
-      _lastReportedParentId == widget.parentId &&
-      _lastReportedPath == widget.path;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _reportLayout());
-  }
-
-  @override
-  void didUpdateWidget(covariant LiteralWidget oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.structureVersion != widget.structureVersion ||
-        oldWidget.node.id != widget.node.id ||
-        oldWidget.node.text != widget.node.text ||
-        oldWidget.index != widget.index ||
-        oldWidget.parentId != widget.parentId ||
-        oldWidget.path != widget.path) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _reportLayout());
-    }
-  }
-
-  void _reportLayout() {
-    if (!mounted) return;
-    if (_reportIsCurrent) return;
-
-    final RenderBox? box = laidOutBox(context);
-    if (box == null || !box.attached) {
-      _scheduleLayoutRetry();
-      return;
-    }
-
-    final RenderBox? rootBox = laidOutBox(widget.rootKey.currentContext);
-    if (rootBox == null || !rootBox.attached) {
-      _scheduleLayoutRetry();
-      return;
-    }
-
-    final globalPos = box.localToGlobal(Offset.zero);
-    final relativePos = rootBox.globalToLocal(globalPos);
-    final rect = relativePos & box.size;
-
-    RenderParagraph? renderParagraph;
-    final renderObject = _textKey.currentContext?.findRenderObject();
-    if (renderObject is RenderParagraph) {
-      renderParagraph = renderObject;
-    }
-
-    widget.controller.registerNodeLayout(
-      NodeLayoutInfo(
-        rect: rect,
-        node: widget.node,
-        parentId: widget.parentId,
-        path: widget.path,
-        index: widget.index,
-        fontSize: widget.fontSize,
-        textScaler: widget.textScaler,
-        renderParagraph: renderParagraph,
-        forceLeadingOperatorPadding: widget.forceLeadingOperatorPadding,
-      ),
-    );
-
-    _lastReportedVersion = widget.structureVersion;
-    _lastReportedIndex = widget.index;
-    _lastReportedParentId = widget.parentId;
-    _lastReportedPath = widget.path;
-  }
-
-  void _scheduleLayoutRetry() {
-    if (_layoutRetryScheduled) return;
-    _layoutRetryScheduled = true;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _layoutRetryScheduled = false;
-      if (!mounted) return;
-      if (_reportIsCurrent) return;
-      _reportLayout();
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final text = widget.node.text;
-
-    if (text.isEmpty) {
-      return SizedBox(
-        width: math.max(2.0, widget.fontSize * 0.06),
-        height: widget.fontSize,
+    final Widget glyphs;
+    if (node.text.isEmpty) {
+      glyphs = SizedBox(width: math.max(2.0, fontSize * 0.06), height: fontSize);
+    } else {
+      glyphs = Text(
+        MathTextStyle.toDisplayText(
+          node.text,
+          forceLeadingOperatorPadding: forceLeadingOperatorPadding,
+        ),
+        style: MathTextStyle.getStyle(
+          fontSize,
+        ).copyWith(color: MathTextStyle.ink),
+        textScaler: textScaler,
       );
     }
-
-    final displayText = MathTextStyle.toDisplayText(
-      text,
-      forceLeadingOperatorPadding: widget.forceLeadingOperatorPadding,
+    return LayoutReporter(
+      rootKey: rootKey,
+      // Everything the report says besides the box. A literal's place in its
+      // sibling list can change without the structure version moving, and a
+      // stale index sends a tap to the wrong node, so the place is part of it.
+      version: (
+        structureVersion,
+        node.id,
+        node.text,
+        parentId,
+        path,
+        index,
+        fontSize,
+        textScaler,
+        forceLeadingOperatorPadding,
+      ),
+      report:
+          (Rect rect, RenderObject? drawn) => controller.reportNodeLayout(
+            NodeLayoutInfo(
+              rect: rect,
+              node: node,
+              parentId: parentId,
+              path: path,
+              index: index,
+              fontSize: fontSize,
+              textScaler: textScaler,
+              // The text's own layout, for placing the caret between
+              // characters; an empty literal has none.
+              renderParagraph: drawn is RenderParagraph ? drawn : null,
+              forceLeadingOperatorPadding: forceLeadingOperatorPadding,
+            ),
+          ),
+      child: glyphs,
     );
+  }
+}
 
-    return Text(
-      key: _textKey,
-      displayText,
-      style: MathTextStyle.getStyle(
-        widget.fontSize,
-      ).copyWith(color: MathTextStyle.ink),
-      textScaler: widget.textScaler,
+/// Reports where its child is painted to the editor's layout registry, which
+/// taps, the caret and selection are all resolved against.
+///
+/// Each kind of node used to measure itself after the frame, in a post-frame
+/// callback, through [laidOutBox] — whose check for a box still waiting on
+/// layout runs only in debug builds, so a release build could accept a box
+/// read at the wrong moment — and only when its own widget changed, with a
+/// retry loop and version bookkeeping copied into every kind of node that did
+/// it. A node that forgot to was unselectable.
+///
+/// This measures from paint instead, where the child's place is known, and
+/// whenever it changes; the measurement is applied once the frame is done
+/// (see [EditorLayout.reportNodeLayout]). It behaves the same in every build,
+/// and a node is given a box by being wrapped in one of these.
+class LayoutReporter extends SingleChildRenderObjectWidget {
+  const LayoutReporter({
+    super.key,
+    required this.rootKey,
+    required this.version,
+    required this.report,
+    super.child,
+  });
+
+  /// The editor's content box, which every position is measured against.
+  final GlobalKey rootKey;
+
+  /// Everything a report says besides the box itself. When it changes the
+  /// report is made again, moved or not: the registry is emptied on every new
+  /// structure version and has to be filled again.
+  final Object version;
+
+  /// Hands the measured box, and the child's render object, to the registry.
+  final void Function(Rect rect, RenderObject? drawn) report;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      RenderLayoutReporter(rootKey, version, report);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    covariant RenderLayoutReporter renderObject,
+  ) {
+    renderObject
+      ..rootKey = rootKey
+      ..report = report
+      ..version = version;
+  }
+}
+
+class RenderLayoutReporter extends RenderProxyBox {
+  RenderLayoutReporter(this.rootKey, this._version, this.report);
+
+  GlobalKey rootKey;
+  void Function(Rect rect, RenderObject? drawn) report;
+
+  Object _version;
+  set version(Object value) {
+    if (value == _version) return;
+    _version = value;
+    _reported = null;
+    // Painted again even if nothing about it looks different, so the report
+    // is made again.
+    markNeedsPaint();
+  }
+
+  /// The box last reported, so an unchanged one is not reported again.
+  Rect? _reported;
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    super.paint(context, offset);
+    final RenderObject? root = rootKey.currentContext?.findRenderObject();
+    if (root == null || !hasSize || !_isBelow(root)) return;
+    final Rect rect = MatrixUtils.transformRect(
+      getTransformTo(root),
+      Offset.zero & size,
     );
+    if (rect == _reported) return;
+    _reported = rect;
+    report(rect, child);
+  }
+
+  bool _isBelow(RenderObject ancestor) {
+    for (RenderObject? p = parent; p != null; p = p.parent) {
+      if (identical(p, ancestor)) return true;
+    }
+    return false;
   }
 }
 
@@ -3190,7 +3202,7 @@ class RadicalSymbolPainter extends CustomPainter {
 }
 
 /// Wrapper for composite nodes to register their layout bounds
-class _ComplexNodeWrapper extends StatefulWidget {
+class _ComplexNodeWrapper extends StatelessWidget {
   final Widget child;
   final MathNode node;
   final int index;
@@ -3212,77 +3224,25 @@ class _ComplexNodeWrapper extends StatefulWidget {
   });
 
   @override
-  State<_ComplexNodeWrapper> createState() => _ComplexNodeWrapperState();
-}
-
-class _ComplexNodeWrapperState extends State<_ComplexNodeWrapper> {
-  bool _registerRetryScheduled = false;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _register());
-  }
-
-  @override
-  void didUpdateWidget(covariant _ComplexNodeWrapper oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // Position too, not just identity: a composite's index inside its sibling
-    // list can shift without the structure version moving, and selection
-    // resolves anchors through the index this registers.
-    if (oldWidget.structureVersion != widget.structureVersion ||
-        oldWidget.node.id != widget.node.id ||
-        oldWidget.index != widget.index ||
-        oldWidget.parentId != widget.parentId ||
-        oldWidget.path != widget.path) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _register());
-    }
-  }
-
-  void _register() {
-    if (!mounted) return;
-
-    final RenderBox? box = laidOutBox(context);
-    if (box == null || !box.attached) {
-      _scheduleRegisterRetry();
-      return;
-    }
-
-    final RenderBox? rootBox = laidOutBox(widget.rootKey.currentContext);
-    if (rootBox == null || !rootBox.attached) {
-      _scheduleRegisterRetry();
-      return;
-    }
-
-    final globalPos = box.localToGlobal(Offset.zero);
-    final relativePos = rootBox.globalToLocal(globalPos);
-    final rect = relativePos & box.size;
-
-    widget.controller.registerComplexNodeLayout(
-      ComplexNodeInfo(
-        node: widget.node,
-        parentId: widget.parentId,
-        path: widget.path,
-        index: widget.index,
-        rect: rect,
-      ),
-    );
-  }
-
-  void _scheduleRegisterRetry() {
-    if (_registerRetryScheduled) return;
-    _registerRetryScheduled = true;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _registerRetryScheduled = false;
-      if (!mounted) return;
-      _register();
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return widget.child;
+    return LayoutReporter(
+      rootKey: rootKey,
+      // Position too, not just identity: a composite's index inside its
+      // sibling list can shift without the structure version moving, and
+      // selection resolves anchors through the index this registers.
+      version: (structureVersion, node.id, parentId, path, index),
+      report:
+          (Rect rect, RenderObject? _) => controller.reportComplexNodeLayout(
+            ComplexNodeInfo(
+              node: node,
+              parentId: parentId,
+              path: path,
+              index: index,
+              rect: rect,
+            ),
+          ),
+      child: child,
+    );
   }
 }
 
@@ -3637,7 +3597,7 @@ class RenderCursorOverlay extends RenderProxyBox {
 /// It registers a box and nothing else — no `renderParagraph`, because there
 /// is no interior to index into. The caret goes before or after; selection
 /// takes the whole node.
-class AtomWidget extends StatefulWidget {
+class AtomWidget extends StatelessWidget {
   const AtomWidget({
     super.key,
     required this.node,
@@ -3664,102 +3624,27 @@ class AtomWidget extends StatefulWidget {
   final TextScaler textScaler;
 
   @override
-  State<AtomWidget> createState() => _AtomWidgetState();
-}
-
-class _AtomWidgetState extends State<AtomWidget> {
-  int? _lastReportedVersion;
-
-  /// See the same fields on `_LiteralWidgetState`: an index can move without
-  /// the version moving, and a stale index in the registry mislocates taps.
-  int? _lastReportedIndex;
-  String? _lastReportedParentId;
-  String? _lastReportedPath;
-
-  bool _retryScheduled = false;
-
-  bool get _reportIsCurrent =>
-      _lastReportedVersion == widget.structureVersion &&
-      _lastReportedIndex == widget.index &&
-      _lastReportedParentId == widget.parentId &&
-      _lastReportedPath == widget.path;
-
-  @override
-  void initState() {
-    super.initState();
-    // Reported from here rather than only from `build`, which runs before this
-    // subtree has been laid out.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _report());
-  }
-
-  @override
-  void didUpdateWidget(covariant AtomWidget oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.structureVersion != widget.structureVersion ||
-        oldWidget.node.id != widget.node.id ||
-        oldWidget.index != widget.index ||
-        oldWidget.parentId != widget.parentId ||
-        oldWidget.path != widget.path) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _report());
-    }
-  }
-
-  void _scheduleRetry() {
-    if (_retryScheduled) return;
-    _retryScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _retryScheduled = false;
-      if (mounted) _report();
-    });
-  }
-
-  void _report() {
-    if (!mounted) return;
-    if (_reportIsCurrent) return;
-
-    final RenderBox? box = laidOutBox(context);
-    if (box == null || !box.attached) {
-      _scheduleRetry();
-      return;
-    }
-    final RenderBox? rootBox = laidOutBox(widget.rootKey.currentContext);
-    if (rootBox == null || !rootBox.attached) {
-      _scheduleRetry();
-      return;
-    }
-
-    final Offset relative = rootBox.globalToLocal(
-      box.localToGlobal(Offset.zero),
-    );
-    widget.controller.registerNodeLayout(
-      NodeLayoutInfo(
-        rect: relative & box.size,
-        node: widget.node,
-        parentId: widget.parentId,
-        path: widget.path,
-        index: widget.index,
-        fontSize: widget.fontSize,
-        textScaler: widget.textScaler,
-        renderParagraph: null,
-        forceLeadingOperatorPadding: false,
-      ),
-    );
-    _lastReportedVersion = widget.structureVersion;
-    _lastReportedIndex = widget.index;
-    _lastReportedParentId = widget.parentId;
-    _lastReportedPath = widget.path;
-  }
-
-  @override
   Widget build(BuildContext context) {
-    // Deliberately not reporting from here.
-    //
-    // `build` runs before this frame's layout, so the render box still holds
-    // last frame's geometry. In a release build `laidOutBox` cannot see the
-    // pending-layout flag — that check is inside an `assert` — so the stale
-    // rect was accepted, stamped with the current version, and the correct
-    // post-frame report was then skipped as a duplicate. Reporting only from
-    // `initState`, `didUpdateWidget` and the retry keeps every rect measured.
-    return widget.child;
+    return LayoutReporter(
+      rootKey: rootKey,
+      version: (structureVersion, node.id, parentId, path, index, fontSize),
+      report:
+          (Rect rect, RenderObject? _) => controller.reportNodeLayout(
+            NodeLayoutInfo(
+              rect: rect,
+              node: node,
+              parentId: parentId,
+              path: path,
+              index: index,
+              fontSize: fontSize,
+              textScaler: textScaler,
+              // A box and no interior: the caret goes before or after, and
+              // selection takes the whole node.
+              renderParagraph: null,
+              forceLeadingOperatorPadding: false,
+            ),
+          ),
+      child: child,
+    );
   }
 }

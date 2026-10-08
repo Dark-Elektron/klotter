@@ -54,10 +54,11 @@ per frame.
   at the far outer edge. CE stays away from ⌫. Never copy klator's layout over
   it. `keypad_geometry_test`, `keypad_coordinates_test` and
   `keypad_tablet_test` guard it.
-- **New nodes must be selectable.** A node drawn without registering its
-  layout cannot be tapped into, selected, copied or deleted. Text-like leaves
-  register through `LiteralWidget`, and atomic symbols (π, x̂, z̲) through
-  `AtomWidget`; an atomic symbol is selected whole, never by character.
+- **New nodes must be selectable.** A node drawn without a box in the layout
+  registry cannot be tapped into, selected, copied or deleted. A node gets one
+  by being wrapped in a `LayoutReporter`, which reports where it is painted;
+  `LiteralWidget`, `AtomWidget` (π, x̂, z̲) and the composite wrapper all are.
+  An atomic symbol is selected whole, never by character.
 - **Plot performance is judged on devices.** The test VM runs two to three
   times faster than a mid-range phone. The benchmark shapes are Inigo
   Quilez's degree-4 surfaces, such as `x^4+y^4+z^4-x^2-y^2-z^2+0.4=0`.

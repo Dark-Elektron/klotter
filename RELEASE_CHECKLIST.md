@@ -9,12 +9,17 @@ flutter install --release      # or install the APK on a device
 
 ## Why a release build specifically
 
-Much of this app's geometry goes through `laidOutBox`, which decides whether a
+Some of this app's geometry goes through `laidOutBox`, which decides whether a
 box is usable. Part of that decision — `debugNeedsLayout` — is computed inside
 an `assert`, so **in release it is never set** and the helper accepts boxes it
-would refuse in debug. Anything positioned from a measured box can therefore
-behave differently in the two builds: the walkthrough spotlight, the caret, tap
-targeting, the long-press readout.
+would refuse in debug. Anything positioned from a box measured that way can
+behave differently in the two builds: the walkthrough spotlight, the selection
+handles, the popup menus and the measured height of the row panel.
+
+The expression's own layout no longer works that way. Each node reports its
+box while it is painted (`LayoutReporter`), the same in every build, so the
+caret, tap targeting and selection do not depend on the build. They are still
+worth a look on a device.
 
 Debug-only assertions also mean a release build cannot show the layout errors
 that debugging surfaces. A silent release is not evidence that the layout is

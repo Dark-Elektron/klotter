@@ -29,6 +29,47 @@ extension EditorLayout on MathEditorController {
     _complexNodeMap[info.node.id] = info;
   }
 
+  /// A node's layout, as measured while it was painted (see
+  /// [LayoutReporter]); registered once the frame is done.
+  ///
+  /// Painting is where a node's place is known, but registering can move the
+  /// caret, and the caret's notifier may not be told anything during paint. So
+  /// the measurement is taken there and applied straight after the frame:
+  /// nothing is read back from a box that might have moved since.
+  void reportNodeLayout(NodeLayoutInfo info) {
+    _reportedNodeLayouts.add(info);
+    _scheduleReportFlush();
+  }
+
+  /// [reportNodeLayout] for a composite node's whole box.
+  void reportComplexNodeLayout(ComplexNodeInfo info) {
+    _reportedComplexLayouts.add(info);
+    _scheduleReportFlush();
+  }
+
+  void _scheduleReportFlush() {
+    if (_reportFlushScheduled) return;
+    _reportFlushScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _reportFlushScheduled = false;
+      final List<NodeLayoutInfo> nodes = List<NodeLayoutInfo>.of(
+        _reportedNodeLayouts,
+      );
+      final List<ComplexNodeInfo> complexes = List<ComplexNodeInfo>.of(
+        _reportedComplexLayouts,
+      );
+      _reportedNodeLayouts.clear();
+      _reportedComplexLayouts.clear();
+      if (_disposed) return;
+      for (final ComplexNodeInfo info in complexes) {
+        registerComplexNodeLayout(info);
+      }
+      for (final NodeLayoutInfo info in nodes) {
+        registerNodeLayout(info);
+      }
+    });
+  }
+
   /// Puts the caret where the current cursor position actually is.
   ///
   /// The rect is otherwise only refreshed opportunistically, as each node

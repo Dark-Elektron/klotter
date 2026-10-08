@@ -65,6 +65,13 @@ class MathEditorController extends ChangeNotifier {
   Rect? _cachedContentBounds;
   bool _contentBoundsValid = false;
 
+  /// Layouts reported from paint, waiting for the frame to finish (see
+  /// [EditorLayout.reportNodeLayout]).
+  final List<NodeLayoutInfo> _reportedNodeLayouts = <NodeLayoutInfo>[];
+  final List<ComplexNodeInfo> _reportedComplexLayouts = <ComplexNodeInfo>[];
+  bool _reportFlushScheduled = false;
+  bool _disposed = false;
+
   /// [notifyListeners] for the parts of this class kept in other files,
   /// whose extensions may not call a protected member directly.
   void _notifyListeners() => notifyListeners();
@@ -75,6 +82,7 @@ class MathEditorController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _cursorNotifier.dispose();
     cursorPaintNotifier.dispose(); // Add this line
     super.dispose();
