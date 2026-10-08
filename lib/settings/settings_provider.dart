@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../math_renderer/renderer.dart';
 import '../plotting/utils/colormap.dart';
 import '../utils/constants.dart';
+import '../utils/system_font.dart';
 
 enum ThemeType {
   /// Dark ink on pale paper. The default.
@@ -59,15 +60,22 @@ enum KeypadColorMode {
 class SettingsProvider extends ChangeNotifier {
   static const double maxButtonRadius = 36.0;
 
+  /// The phone's own font, offered beside the two the app carries.
+  ///
+  /// Not a family the app declares: what it draws in is worked out on the
+  /// phone (see [SystemFont] and [textFontFamily]).
+  static const String systemFont = 'System';
+
   /// The font families the user can pick between.
   ///
-  /// Every name has to be a family declared in pubspec.yaml, or choosing it
-  /// silently falls back to the default. Kept here rather than on the screen
-  /// so a saved choice can be checked against it when settings load.
+  /// Every name but [systemFont] has to be a family declared in pubspec.yaml,
+  /// or choosing it silently falls back to the default. Kept here rather than
+  /// on the screen so a saved choice can be checked against it when settings
+  /// load.
   static const List<String> availableFonts = <String>[
     'OpenSans',
     'STIXTwoMath',
-    'Rosemary',
+    systemFont,
   ];
   static const double maxButtonSpacing = 12.0;
 
@@ -104,7 +112,14 @@ class SettingsProvider extends ChangeNotifier {
   String get multiplicationSign => _multiplicationSign;
   double get borderRadius => _borderRadius;
   double get buttonSpacing => _buttonSpacing;
+  /// The font chosen in Settings, as it is offered there.
   String get fontFamily => _fontFamily;
+
+  /// The family text is drawn in: the one chosen, or for [systemFont] the
+  /// phone's font where it had to be loaded, and otherwise null — the
+  /// platform's default, which is the system font everywhere else.
+  String? get textFontFamily =>
+      _fontFamily == systemFont ? SystemFont.family : _fontFamily;
   KeypadColorMode get keypadColorMode => _keypadColorMode;
 
   /// Applies to both the tablet block order and the phone's number pad.
@@ -185,9 +200,20 @@ class SettingsProvider extends ChangeNotifier {
     // shipped inside the app, so a saved choice of it carries over to its free
     // equivalent. Any other family no longer offered falls back to the
     // default, rather than handing the settings menu a value it cannot show.
+    //
+    // Rosemary was carried in the app for a phone whose own font it is. It is
+    // Samsung's, so it could not stay, and the phone's own font is offered in
+    // its place — which on that phone is Rosemary.
     final String savedFont = prefs.getString('fontFamily') ?? FONTFAMILY;
-    _fontFamily = savedFont == 'Cambria' ? 'STIXTwoMath' : savedFont;
+    _fontFamily = switch (savedFont) {
+      'Cambria' => 'STIXTwoMath',
+      'Rosemary' => systemFont,
+      _ => savedFont,
+    };
     if (!availableFonts.contains(_fontFamily)) _fontFamily = FONTFAMILY;
+    // Before the first frame, so text is not laid out once in the default
+    // and again in the phone's font a moment later.
+    if (_fontFamily == systemFont) await SystemFont.load();
 
     // Load keypad color mode
     final String paletteStr = prefs.getString('plotPalette') ?? 'turbo';
@@ -218,7 +244,7 @@ class SettingsProvider extends ChangeNotifier {
     MathTextStyle.setMultiplySign(_multiplicationSign);
 
     // Set global font family on load
-    MathTextStyle.setFontFamily(_fontFamily);
+    MathTextStyle.setFontFamily(textFontFamily);
 
     notifyListeners();
   }
@@ -275,11 +301,12 @@ class SettingsProvider extends ChangeNotifier {
 
   Future<void> setFontFamily(String value) async {
     _fontFamily = value;
+    if (value == systemFont) await SystemFont.load();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('fontFamily', value);
 
     // Update MathTextStyle
-    MathTextStyle.setFontFamily(value);
+    MathTextStyle.setFontFamily(textFontFamily);
     notifyListeners();
   }
 

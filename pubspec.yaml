@@ -125,9 +125,6 @@ flutter:
     - family: STIXTwoMath
       fonts:
         - asset: assets/fonts/STIXTwoMath-Regular.otf
-    - family: Rosemary
-      fonts:
-        - asset: assets/fonts/Rosemary.ttf
 
   # To add assets to your application, add an assets section, like this:
   assets:

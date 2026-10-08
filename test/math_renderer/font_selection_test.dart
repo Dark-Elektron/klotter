@@ -20,10 +20,11 @@ void main() {
       expect(MathTextStyle.fontFamily, equals('STIXTwoMath'));
       expect(MathTextStyle.getStyle(32).fontFamily, equals('STIXTwoMath'));
 
-      // Change to Rosemary
-      MathTextStyle.setFontFamily('Rosemary');
-      expect(MathTextStyle.fontFamily, equals('Rosemary'));
-      expect(MathTextStyle.getStyle(32).fontFamily, equals('Rosemary'));
+      // No family at all: the platform's default, which is what the System
+      // choice draws in where there was nothing to load.
+      MathTextStyle.setFontFamily(null);
+      expect(MathTextStyle.fontFamily, isNull);
+      expect(MathTextStyle.getStyle(32).fontFamily, isNull);
     });
 
     test('SettingsProvider.forTesting respects fontFamily parameter', () {
@@ -35,10 +36,12 @@ void main() {
       );
       expect(stixProvider.fontFamily, equals('STIXTwoMath'));
 
-      final rosemaryProvider = SettingsProvider.forTesting(
-        fontFamily: 'Rosemary',
+      final systemProvider = SettingsProvider.forTesting(
+        fontFamily: SettingsProvider.systemFont,
       );
-      expect(rosemaryProvider.fontFamily, equals('Rosemary'));
+      expect(systemProvider.fontFamily, equals(SettingsProvider.systemFont));
+      // Nothing to load off a phone, so the platform's default.
+      expect(systemProvider.textFontFamily, isNull);
     });
 
     test(
@@ -67,6 +70,29 @@ void main() {
       addTearDown(settings.dispose);
       expect(settings.fontFamily, 'STIXTwoMath');
       expect(MathTextStyle.fontFamily, 'STIXTwoMath');
+    });
+
+    test("Rosemary carries over to the phone's own font", () async {
+      // It was carried in the app for a phone whose own font it is, and the
+      // phone's own font replaced it.
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'fontFamily': 'Rosemary',
+      });
+      final SettingsProvider settings = await SettingsProvider.create();
+      addTearDown(settings.dispose);
+      expect(settings.fontFamily, SettingsProvider.systemFont);
+      expect(MathTextStyle.fontFamily, settings.textFontFamily);
+    });
+
+    test("choosing the phone's font reaches the maths", () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final SettingsProvider settings = await SettingsProvider.create();
+      addTearDown(settings.dispose);
+      await settings.setFontFamily(SettingsProvider.systemFont);
+      expect(settings.fontFamily, SettingsProvider.systemFont);
+      // Off a phone there is nothing to load: the platform's default.
+      expect(settings.textFontFamily, isNull);
+      expect(MathTextStyle.fontFamily, isNull);
     });
 
     test('one that is no longer offered falls back to the default', () async {

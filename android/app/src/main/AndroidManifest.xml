@@ -42,5 +42,15 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- The font apps a Galaxy phone ships with, where Samsung's FlipFont
+             keeps the font chosen in the phone's settings. Read for the System
+             font choice (SystemFont.kt, whose list this has to match): Flutter
+             cannot see a FlipFont font by itself. -->
+        <package android:name="com.monotype.android.font.rosemary" />
+        <package android:name="com.monotype.android.font.foundation" />
+        <package android:name="com.monotype.android.font.samsungone" />
+        <package android:name="com.monotype.android.font.roboto" />
+        <package android:name="com.monotype.android.font.chococooky" />
+        <package android:name="com.monotype.android.font.cooljazz" />
     </queries>
 </manifest>

@@ -125,6 +125,8 @@ and a height surface share one set of axes.
 ### Customisation
 
 - Themes, including a light theme and several dark ones.
+- Fonts: Open Sans, STIX Two Math, or the phone's own font. On a Galaxy phone that is the font
+  chosen in the phone's settings, read from the font app it came in, so nothing is downloaded.
 - Left-handed layout, which mirrors the keypad and the plot controls.
 - Haptic feedback.
 

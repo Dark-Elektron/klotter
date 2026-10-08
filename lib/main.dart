@@ -77,7 +77,7 @@ class MyApp extends StatelessWidget {
             // constant here meant the setting changed the expression (which
             // asks MathTextStyle) while every button, label and result stayed
             // on OpenSans.
-            fontFamily: settings.fontFamily,
+            fontFamily: settings.textFontFamily,
             scaffoldBackgroundColor: Colors.white,
             appBarTheme: const AppBarTheme(
               backgroundColor: Colors.blueGrey,
@@ -96,7 +96,7 @@ class MyApp extends StatelessWidget {
             // constant here meant the setting changed the expression (which
             // asks MathTextStyle) while every button, label and result stayed
             // on OpenSans.
-            fontFamily: settings.fontFamily,
+            fontFamily: settings.textFontFamily,
             scaffoldBackgroundColor: const Color(0xFF121212),
             appBarTheme: const AppBarTheme(
               backgroundColor: Color(0xFF1E1E1E),

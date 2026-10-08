@@ -73,7 +73,7 @@ void main() {
     );
   });
 
-  test('every font on offer is declared and its file exists', () {
+  test('every font the app carries is declared and its file exists', () {
     final Map<String, List<String>> declared = declaredFonts();
 
     expect(
@@ -82,7 +82,11 @@ void main() {
       reason: 'the settings screen offers no fonts at all',
     );
 
-    for (final String family in SettingsScreen.availableFonts) {
+    // All but the phone's own, which the app does not carry: it is found on
+    // the phone (see SystemFont).
+    for (final String family in SettingsScreen.availableFonts.where(
+      (String f) => f != SettingsProvider.systemFont,
+    )) {
       expect(
         declared.keys,
         contains(family),
@@ -99,6 +103,15 @@ void main() {
         );
       }
     }
+  });
+
+  test("the phone's own font is offered, and not carried", () {
+    expect(SettingsScreen.availableFonts, contains(SettingsProvider.systemFont));
+    expect(declaredFonts().keys, isNot(contains(SettingsProvider.systemFont)));
+    // Samsung's, all rights reserved: it went when the phone's own font
+    // came in, which on a phone set to Rosemary is Rosemary anyway.
+    expect(declaredFonts().keys, isNot(contains('Rosemary')));
+    expect(File('assets/fonts/Rosemary.ttf').existsSync(), isFalse);
   });
 
   test('the default font is one of them', () {

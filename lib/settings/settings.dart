@@ -990,8 +990,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return 'Open Sans';
       case 'STIXTwoMath':
         return 'STIX Two Math';
-      case 'Rosemary':
-        return 'Rosemary';
+      case SettingsProvider.systemFont:
+        return 'System';
       default:
         return family;
     }

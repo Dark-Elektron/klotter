@@ -34,11 +34,13 @@ class MathTextStyle {
     _multiplySign = sign;
   }
 
-  static String _fontFamily = FONTFAMILY;
+  static String? _fontFamily = FONTFAMILY;
 
-  static String get fontFamily => _fontFamily;
+  /// The family expressions are drawn in; null is the platform's default,
+  /// which is what the System choice draws in where nothing had to be loaded.
+  static String? get fontFamily => _fontFamily;
 
-  static void setFontFamily(String family) {
+  static void setFontFamily(String? family) {
     _fontFamily = family;
   }
 
