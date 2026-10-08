@@ -27,20 +27,25 @@ measure geometry differently (see the checklist), so check release builds.
 
 | Path | What it holds |
 |---|---|
-| `lib/main.dart` | `HomePage`: plots and their rows, page strip, undo/redo, saving, export |
+| `lib/notebook/notebook.dart` | The document: the plots in order (each with a stable `id`, its rows and its view), the open plot and row, adding and removing, saving and restoring, undo history |
+| `lib/main.dart` | `HomePage`: draws the notebook, the page strip, the keypad handle, export. What it keeps per plot is keyed by `Plot.id` |
 | `lib/keypad/` | The keypad. Layouts are authored by key name, right-handed, in `keypad.dart` |
-| `lib/math_renderer/` | The node tree (`math_nodes.dart`), the editor (`math_editor_controller.dart`), drawing (`renderer.dart`), selection, persistence |
-| `lib/math_engine/` | `math_engine_exact.dart` turns nodes into `Expr` trees and simplifies them; `expr_eval.dart` samples them for plotting; `real_functions.dart` holds the hyperbolic functions; `math_engine.dart` formats numbers |
+| `lib/math_renderer/` | The node tree (`math_nodes.dart`), the editor (`math_editor_controller.dart` plus its `editor_*.dart` parts), drawing (`renderer.dart`), selection, persistence |
+| `lib/math_engine/` | Plain Dart, no Flutter (`core_is_plain_dart_test` enforces it). `math_engine_exact.dart` turns nodes into `Expr` trees and simplifies them; `compiled_eval.dart` compiles an `Expr` into closures for sampling, with `expr_eval.dart` as the reference walk; `real_functions.dart` holds the hyperbolic functions; `number_format.dart` says how numbers are written |
 | `lib/plotting/parsers/plot_expression.dart` | Compiles one row into something drawable: the coordinate system, relation and error |
-| `lib/plotting/painters/` | The 2D and 3D painters |
+| `lib/plotting/painters/` | The 2D painter, and the 3D painter with its `plot_3d_*.dart` parts by what they draw |
 | `lib/plotting/utils/` | Marching squares and tetrahedra (`level_set.dart`), caches, colour maps, picking |
 | `lib/settings/`, `lib/walkthrough/` | Settings, and the first-run tour |
 
 A row's path to the screen: `List<MathNode>` → `MathNodeToExpr.convert(...)
-.simplify()` → `PlotExpression.compile` (once per edit) → `evaluate(x, y, z)`
-per sample. Geometry is cached against the compiled expression's identity
-(`PlotCacheKey`), so keep compiled expressions alive rather than recompiling
-per frame.
+.simplify()` → `PlotExpression.compile` (once per edit) → compiled to closures
+on first use → `evaluate(x, y, z)` per sample. Geometry is cached against the
+compiled expression's identity (`PlotCacheKey`), so keep compiled expressions
+alive rather than recompiling per frame.
+
+Large classes are split across `part` files as extensions on the class, by
+what each part does. Statics stay in the class and are qualified from the
+parts, and a `ChangeNotifier`'s parts notify through a private forwarder.
 
 ## Rules that are easy to break
 
