@@ -1836,7 +1836,11 @@ List<double> _polarCurveYAt(
 /// [path] with the points it can do without: every run between breaks is
 /// cut down to the fewest points that keep it within [tolerance] of where it
 /// was (Douglas–Peucker). Breaks are kept where they are.
-List<PlanePoint?> _thinned(List<PlanePoint?> path, double tolerance) {
+List<PlanePoint?> _thinned(
+  List<PlanePoint?> path,
+  double tolerance, {
+  double longest = double.infinity,
+}) {
   final List<PlanePoint?> out = <PlanePoint?>[];
   // How far p is from the segment a–b, not from the line through them: a
   // closed loop starts and ends at one point, and the line through a point
@@ -1881,10 +1885,16 @@ List<PlanePoint?> _thinned(List<PlanePoint?> path, double tolerance) {
           at = k;
         }
       }
-      if (furthest > tolerance) {
-        keep[at - start] = true;
-        pending.add((i, at));
-        pending.add((at, j));
+      final double dx = path[j]!.x - path[i]!.x;
+      final double dy = path[j]!.y - path[i]!.y;
+      final bool tooLong = dx * dx + dy * dy > longest * longest;
+      if (furthest > tolerance || tooLong) {
+        // Split where the path strays furthest, or for a run that only went
+        // on too long, in the middle.
+        final int split = furthest > tolerance ? at : (i + j) ~/ 2;
+        keep[split - start] = true;
+        pending.add((i, split));
+        pending.add((split, j));
       }
     }
     for (int k = start; k <= end; k++) {
@@ -2026,6 +2036,7 @@ LevelSurface _polarWall(
       chord: chord,
     ),
     chord / 8,
+    longest: chord,
   );
   final int courses = max(1, resolution ~/ 2);
   final double dz = (zMax - zMin) / courses;

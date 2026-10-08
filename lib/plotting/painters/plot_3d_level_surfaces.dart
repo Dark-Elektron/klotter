@@ -29,47 +29,89 @@ extension Plot3DLevelSurfaces on Plot3DPainter {
     _drawLevelSurfaceKey(canvas, size, equations);
   }
 
-  /// Put every equation in the cell into [scene], and say how many there were.
+  /// Put every equation in the cell into [scene], cut where two of them
+  /// cross, and say how many there were.
   int _addLevelSurfacesTo(_DepthScene scene, Size size, double focalLength) {
+    final List<LevelMesh> meshes = _levelMeshesOnShow();
+    if (meshes.isEmpty) return 0;
+    final List<SurfaceTriangles> triangles = _cutsFor(
+      meshes,
+      <SurfaceTriangles>[
+        for (final LevelMesh m in meshes)
+          (
+            world: m.world,
+            colors: m.colors,
+            count: m.triangleCount,
+            sides: null,
+          ),
+      ],
+    );
+    return _addLevelMeshesTo(scene, size, focalLength, meshes, triangles)
+        ? meshes.length
+        : 0;
+  }
+
+  /// The meshes of the equations on show, in row order.
+  List<LevelMesh> _levelMeshesOnShow() {
     // Hidden equations are dropped before the ramp index is taken, so the ones
     // still showing keep telling themselves apart. Their solid colour comes
     // from the row number, so it does not move when a neighbour is hidden.
     final List<PlotExpression> equations =
         _curves.where((PlotExpression e) => e.isLevelSet && !e.hidden).toList();
-    if (equations.isEmpty) return 0;
-
-    final List<LevelMesh> meshes = <LevelMesh>[
+    return <LevelMesh>[
       for (int i = 0; i < equations.length; i++)
         _levelMeshFor(equations[i], i, equations.length),
     ];
+  }
 
+  /// [meshes] into [scene]: their triangles as [triangles] has them — the
+  /// meshes' own, or the same cut where they cross another surface — and
+  /// their grids from the meshes themselves. False when there was nothing to
+  /// draw.
+  bool _addLevelMeshesTo(
+    _DepthScene scene,
+    Size size,
+    double focalLength,
+    List<LevelMesh> meshes,
+    List<SurfaceTriangles> triangles,
+  ) {
     // Every equation's triangles go into one buffer and are sorted together,
     // so two surfaces that pass through each other interleave instead of one
     // being drawn wholly in front of the other.
-    final int count = meshes.fold<int>(
+    final int count = triangles.fold<int>(
       0,
-      (int sum, LevelMesh m) => sum + m.triangleCount,
+      (int sum, SurfaceTriangles t) => sum + t.count,
     );
-    if (count == 0) return 0;
+    if (count == 0) return false;
 
     final Float32List world;
     final Int32List meshColors;
-    final Float32List reach;
-    if (meshes.length == 1) {
-      world = meshes.first.world;
-      meshColors = meshes.first.colors;
-      reach = meshes.first.reach;
+    if (triangles.length == 1) {
+      world = triangles.first.world;
+      meshColors = triangles.first.colors;
     } else {
       world = Float32List(count * 9);
       meshColors = Int32List(count * 3);
-      reach = Float32List(count);
+      int at = 0;
+      for (final SurfaceTriangles t in triangles) {
+        world.setRange(at * 9, (at + t.count) * 9, t.world);
+        meshColors.setRange(at * 3, (at + t.count) * 3, t.colors);
+        at += t.count;
+      }
+    }
+    // A grid line is lifted by no more than the triangle it was drawn on,
+    // which is numbered as its mesh numbers them, cut or not.
+    final Float32List reach;
+    if (meshes.length == 1) {
+      reach = meshes.first.reach;
+    } else {
+      reach = Float32List(
+        meshes.fold<int>(0, (int sum, LevelMesh m) => sum + m.triangleCount),
+      );
       int at = 0;
       for (final LevelMesh m in meshes) {
-        final int n = m.triangleCount;
-        world.setRange(at * 9, (at + n) * 9, m.world);
-        meshColors.setRange(at * 3, (at + n) * 3, m.colors);
-        reach.setRange(at, at + n, m.reach);
-        at += n;
+        reach.setRange(at, at + m.triangleCount, m.reach);
+        at += m.triangleCount;
       }
     }
 
@@ -172,6 +214,16 @@ extension Plot3DLevelSurfaces on Plot3DPainter {
       depth[t] = depthSum / 3;
     }
 
+    // Pieces cut at crossings, ordered by which side faces the camera.
+    int firstOfMesh = 0;
+    for (final SurfaceTriangles t in triangles) {
+      final CrossingSides? sides = t.sides;
+      if (sides != null) {
+        _orderAtCrossings(sides, depth, firstOfMesh, focalLength);
+      }
+      firstOfMesh += t.count;
+    }
+
     _projectMeshLines(
       meshLines,
       meshFrom,
@@ -205,8 +257,15 @@ extension Plot3DLevelSurfaces on Plot3DPainter {
       argb[c + 1] = s.isEven ? start : end;
       argb[c + 2] = end;
     }
-    scene.addTriangles(screen, argb, depth, total, spanning: count);
-    return equations.length;
+    scene.addTriangles(
+      screen,
+      argb,
+      depth,
+      total,
+      spanning: count,
+      fresh: true,
+    );
+    return true;
   }
 
   /// The colour key for [equations] level surfaces drawn.

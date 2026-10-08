@@ -35,14 +35,18 @@ measure geometry differently (see the checklist), so check release builds.
 | `lib/plotting/parsers/plot_expression.dart` | Compiles one row into something drawable: the coordinate system, relation and error |
 | `lib/plotting/parsers/plot_definitions.dart` | Rows such as `k = 2` that give the variable key's letters (a, b, k, p, m, n) a value. Read before the other rows and bound into their compile; not drawn |
 | `lib/plotting/painters/` | The 2D painter, and the 3D painter with its `plot_3d_*.dart` parts by what they draw |
-| `lib/plotting/utils/` | Marching squares and tetrahedra (`level_set.dart`), caches, colour maps, picking |
+| `lib/plotting/utils/` | Marching squares and tetrahedra (`level_set.dart`), caches, colour maps, picking, and `crossing_cuts.dart`, which cuts surfaces where they cross |
 | `lib/settings/`, `lib/walkthrough/` | Settings, and the first-run tour |
 
 A row's path to the screen: `List<MathNode>` → `MathNodeToExpr.convert(...)
 .simplify()` → `PlotExpression.compile` (once per edit) → compiled to closures
 on first use → `evaluate(x, y, z)` per sample. Geometry is cached against the
 compiled expression's identity (`PlotCacheKey`), so keep compiled expressions
-alive rather than recompiling per frame. A row's compile is keyed by the values
+alive rather than recompiling per frame. The 3D view has no depth buffer: every
+surface's triangles go into one scene sorted by depth, height surfaces and level
+surfaces alike as cached world-space meshes, and surfaces that cross are cut
+along the crossing once per set of meshes (`cutAtCrossings`), never per frame.
+A row's compile is keyed by the values
 it reads (`PlotDefinitions.valuesReadBy`), so tuning k recompiles only the rows
 that use k.
 

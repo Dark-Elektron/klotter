@@ -13,6 +13,7 @@ import '../parsers/plot_expression.dart';
 import '../utils/parametric.dart';
 import '../parsers/vector_field_parser.dart';
 import '../utils/colormap.dart';
+import '../utils/crossing_cuts.dart';
 import '../utils/level_set.dart';
 import '../utils/plot_cache.dart';
 import '../utils/plot_theme.dart';
@@ -69,6 +70,77 @@ class Quad {
 /// coloured there.
 typedef _GridPiece =
     ({Point3D a, Point3D b, double va, double vb, double la, double lb});
+
+/// A height surface ready to project: its triangles in the view-scaled world
+/// space a level surface's mesh uses, coloured, with its grid lines and the
+/// span of values its colours were taken over.
+///
+/// None of it depends on the camera, and all of it was worked out again on
+/// every frame of a rotation: every cell cut at the walls of the box, the
+/// light at every corner, a [Quad] apiece. Now it is made once and kept, and
+/// a frame only puts it on the screen.
+class _SheetMesh {
+  _SheetMesh(
+    this.world,
+    this.colors,
+    this.lines,
+    this.inks,
+    this.minV,
+    this.maxV,
+  ) : count = colors.length ~/ 3,
+      lineCount = inks.length ~/ 2;
+
+  /// Nine floats per triangle, unrotated.
+  final Float32List world;
+
+  /// A packed colour per corner, three per triangle.
+  final Int32List colors;
+  final int count;
+
+  /// The grid, six floats per segment, unrotated, and the ink at each end.
+  final Float32List lines;
+  final Int32List inks;
+  final int lineCount;
+
+  final double minV, maxV;
+}
+
+/// Room for a few surfaces at both of their resolutions, still and moving.
+final PlotCache<_SheetMesh> _sheetCache = PlotCache<_SheetMesh>(8);
+
+/// Which shapes a set of cuts was made for: the very meshes, not equal ones.
+/// A mesh is made afresh whenever anything it depends on changes, so a new
+/// mesh is a new shape.
+class _CutsKey {
+  _CutsKey(this.shapes)
+    : hashCode = Object.hashAll(<int>[
+        for (final Object shape in shapes) identityHashCode(shape),
+      ]);
+
+  final List<Object> shapes;
+
+  @override
+  final int hashCode;
+
+  @override
+  bool operator ==(Object other) {
+    if (other is! _CutsKey || other.shapes.length != shapes.length) {
+      return false;
+    }
+    for (int i = 0; i < shapes.length; i++) {
+      if (!identical(other.shapes[i], shapes[i])) return false;
+    }
+    return true;
+  }
+}
+
+/// The surfaces of the last few plots, cut where they cross.
+final PlotCache<List<SurfaceTriangles>> _cutCache =
+    PlotCache<List<SurfaceTriangles>>(4);
+
+/// The box the last still frame was drawn in, to tell a turn of the camera,
+/// which keeps it, from a pinch, which changes it on every frame.
+List<double> _stillBox = const <double>[];
 
 class FieldPoint3D {
   final Point3D point;
@@ -308,16 +380,44 @@ class _DepthScene implements _LineSink {
     int cc,
     double depth, {
     bool spansFog = true,
+  }) => addTriangleAt(
+    a.dx,
+    a.dy,
+    b.dx,
+    b.dy,
+    c.dx,
+    c.dy,
+    ca,
+    cb,
+    cc,
+    depth,
+    spansFog: spansFog,
+  );
+
+  /// [addTriangle] with the corners taken apart, for a caller adding
+  /// thousands a frame without an [Offset] apiece.
+  void addTriangleAt(
+    double ax,
+    double ay,
+    double bx,
+    double by,
+    double cx,
+    double cy,
+    int ca,
+    int cb,
+    int cc,
+    double depth, {
+    bool spansFog = true,
   }) {
     if (spansFog) _spanFog(depth);
     _reserve(1);
     final int o = _triangles * 6;
-    _xy[o] = a.dx;
-    _xy[o + 1] = a.dy;
-    _xy[o + 2] = b.dx;
-    _xy[o + 3] = b.dy;
-    _xy[o + 4] = c.dx;
-    _xy[o + 5] = c.dy;
+    _xy[o] = ax;
+    _xy[o + 1] = ay;
+    _xy[o + 2] = bx;
+    _xy[o + 3] = by;
+    _xy[o + 4] = cx;
+    _xy[o + 5] = cy;
     final int k = _triangles * 3;
     _argb[k] = ca;
     _argb[k + 1] = cb;
@@ -328,13 +428,15 @@ class _DepthScene implements _LineSink {
   /// [count] triangles already projected, as packed as they are kept here: a
   /// level surface's, copied in at once rather than one at a time. The first
   /// [spanning] of them are surface, and set how far the fog runs; the rest
-  /// are its grid.
+  /// are its grid. [fresh] arrays were made for this scene alone, and are
+  /// taken as they are when it has no triangles yet.
   void addTriangles(
     Float32List xy,
     Int32List argb,
     Float64List depth,
     int count, {
     required int spanning,
+    bool fresh = false,
   }) {
     for (int t = 0; t < spanning; t++) {
       _spanFog(depth[t]);
@@ -342,7 +444,8 @@ class _DepthScene implements _LineSink {
     // Nothing here yet, and the arrays are exactly the triangles: taken as
     // they are rather than copied. That is the whole scene for a level
     // surface on its own, tens of thousands of triangles a frame.
-    if (_triangles == 0 &&
+    if (fresh &&
+        _triangles == 0 &&
         depth.length == count &&
         xy.length == count * 6 &&
         argb.length == count * 3) {

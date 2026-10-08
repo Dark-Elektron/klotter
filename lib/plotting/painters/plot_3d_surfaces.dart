@@ -191,6 +191,24 @@ extension Plot3DSurfaces on Plot3DPainter {
     }
   }
 
+  /// Cells on a side for one of [surfaces] sharing the axes.
+  ///
+  /// The budget is the whole scene, not one surface. Every surface used to get
+  /// the full grid, so two surfaces did twice the clipping, rotating,
+  /// projecting and depth-sorting and a drag frame went from 11 ms to 22 ms.
+  /// Dividing by the square root keeps the total number of cells roughly
+  /// fixed however many surfaces share the axes — the same reasoning as the
+  /// parametric sampler's cell budget.
+  int _surfaceCells(int surfaces, {bool? moving}) {
+    final int base =
+        (moving ?? interacting)
+            ? Plot3DPainter._surfaceGridMoving
+            : Plot3DPainter._surfaceGridStill;
+    return surfaces <= 1 ? base : max(16, (base / sqrt(surfaces)).round());
+  }
+
+  /// [rotated] false leaves the corners in world space, for a mesh that is
+  /// made once and projected on every frame (see [_sheetMeshFor]).
   ({List<Quad> quads, double minV, double maxV, List<_GridPiece> mesh})
   _surfaceQuads(
     PlotExpression parser, {
@@ -198,21 +216,9 @@ extension Plot3DSurfaces on Plot3DPainter {
     double Function(double x, double y)? heightAt,
     int surfaces = 1,
     double Function(double x, double y)? valueAt,
+    bool rotated = true,
   }) {
-    // The budget is the whole scene, not one surface.
-    //
-    // Every surface used to get the full grid, so two surfaces did twice the
-    // clipping, rotating, projecting and depth-sorting and a drag frame went
-    // from 11 ms to 22 ms. Dividing by the square root keeps the total number
-    // of cells roughly fixed however many surfaces share the axes — the same
-    // reasoning as the parametric sampler's cell budget.
-    final int base =
-        interacting
-            ? Plot3DPainter._surfaceGridMoving
-            : Plot3DPainter._surfaceGridStill;
-    final int cells =
-        gridSize ??
-        (surfaces <= 1 ? base : max(16, (base / sqrt(surfaces)).round()));
+    final int cells = gridSize ?? _surfaceCells(surfaces);
     // Heights are cached: rotating changes where the camera sees the surface
     // from, not the surface, so re-walking the expression tree every frame was
     // wasted work.
@@ -329,12 +335,10 @@ extension Plot3DSurfaces on Plot3DPainter {
     final List<Quad> quads = <Quad>[];
 
     /// One corner, ready to be cut against the walls.
-    Point3D world(({double x, double y, double z, double v, double l}) c) =>
-        Point3D(
-          c.x * scaleX,
-          c.y * scaleY,
-          c.z * scaleZ,
-        ).rotateZ(rotationZ).rotateX(rotationX);
+    Point3D world(({double x, double y, double z, double v, double l}) c) {
+      final Point3D at = Point3D(c.x * scaleX, c.y * scaleY, c.z * scaleZ);
+      return rotated ? at.rotateZ(rotationZ).rotateX(rotationX) : at;
+    }
 
     /// Sutherland–Hodgman against one wall, in data space.
     ///
@@ -488,6 +492,311 @@ extension Plot3DSurfaces on Plot3DPainter {
     return (quads: quads, minV: minZ, maxV: maxZ, mesh: mesh);
   }
 
+  /// [curve] as a mesh to project, made once for its window, its resolution
+  /// and its colouring (see [_SheetMesh]).
+  ///
+  /// [index] of [of] picks its ramp from the palette.
+  _SheetMesh _sheetMeshFor(PlotExpression curve, int index, int of) {
+    // Off means one colour, not one ramp. The menu had offered this all along
+    // and the painter ignored it, so a surface was always coloured by its own
+    // height — which the shape already shows.
+    final bool solid = surfaceMode == SurfaceMode.none;
+    // The series palette, always — including for a lone surface. Falling back
+    // to the accent when there was only one meant a surface was yellow on its
+    // own and blue the moment a second was added, so adding a plot recoloured
+    // the one already there.
+    final int plainArgb = _theme.seriesColor(curve.seriesIndex).toARGB32();
+    Object keyAt(int cells) => PlotCacheKey(curve, <num>[
+      rangeX,
+      rangeY,
+      rangeZ,
+      cells,
+      scaleX,
+      scaleY,
+      scaleZ,
+      showMesh ? 1 : 0,
+      surfaceMode.index,
+      palette.index,
+      plainArgb,
+      index,
+      of,
+    ]);
+    final int cells = _surfaceCells(of);
+    return _sheetCache.resolve(
+      keyAt(cells),
+      () {
+        final built = _surfaceQuads(curve, gridSize: cells, rotated: false);
+        // Each surface is coloured against its own range. Sharing one range
+        // across all of them would flatten a shallow surface to a single
+        // colour whenever a steeper one is on the same axes.
+        final Color Function(double) ramp = surfaceColormap(
+          index,
+          of: of,
+          palette: palette,
+        );
+        final double span = built.maxV - built.minV;
+
+        // A corner's colour under the key light, the same light a level
+        // surface is lit by. Solid used to be shaded by how squarely each
+        // cell faced the camera, which lights whatever you look at straight
+        // on and so hides the shape exactly where you are looking at it;
+        // coloured by value it was not lit at all. Per corner, interpolated
+        // across the cell: one colour from the cell average makes each cell a
+        // flat block, which reads as banding however fine the grid.
+        int shade(double v, double light) =>
+            solid
+                ? litSurfaceArgb(plainArgb, light)
+                : litSurfaceArgb(
+                  ramp(((v - built.minV) / span).clamp(0.0, 1.0)).toARGB32(),
+                  light,
+                  strength: _valueShadeStrength,
+                );
+
+        // Each quad here is one triangle of a cell's fan: p4 repeats p3.
+        final List<Quad> quads = built.quads;
+        final Float32List world = Float32List(quads.length * 9);
+        final Int32List colors = Int32List(quads.length * 3);
+        for (int t = 0; t < quads.length; t++) {
+          final Quad q = quads[t];
+          final int w = t * 9;
+          world[w] = q.p1.x;
+          world[w + 1] = q.p1.y;
+          world[w + 2] = q.p1.z;
+          world[w + 3] = q.p2.x;
+          world[w + 4] = q.p2.y;
+          world[w + 5] = q.p2.z;
+          world[w + 6] = q.p3.x;
+          world[w + 7] = q.p3.y;
+          world[w + 8] = q.p3.z;
+          colors[t * 3] = shade(q.v1, q.l1);
+          colors[t * 3 + 1] = shade(q.v2, q.l2);
+          colors[t * 3 + 2] = shade(q.v3, q.l3);
+        }
+        final List<_GridPiece> mesh = built.mesh;
+        final Float32List lines = Float32List(mesh.length * 6);
+        final Int32List inks = Int32List(mesh.length * 2);
+        for (int g = 0; g < mesh.length; g++) {
+          final _GridPiece piece = mesh[g];
+          lines[g * 6] = piece.a.x;
+          lines[g * 6 + 1] = piece.a.y;
+          lines[g * 6 + 2] = piece.a.z;
+          lines[g * 6 + 3] = piece.b.x;
+          lines[g * 6 + 4] = piece.b.y;
+          lines[g * 6 + 5] = piece.b.z;
+          inks[g * 2] = meshInkArgb(shade(piece.va, piece.la), 1);
+          inks[g * 2 + 1] = meshInkArgb(shade(piece.vb, piece.lb), 1);
+        }
+        return _SheetMesh(world, colors, lines, inks, built.minV, built.maxV);
+      },
+    );
+  }
+
+  /// Rotate and project [count] triangles of [world] into [screen], six
+  /// floats each, and the depth of each one's centre into [depth], from
+  /// triangle [at] on.
+  ///
+  /// Azimuth first, then elevation — a turntable: spinning after the tilt
+  /// would turn the model about an axis that is no longer screen-vertical,
+  /// which reads as tumbling rather than rotating. Four scalars a frame
+  /// rather than a cos/sin pair per vertex.
+  void _projectTriangles(
+    Float32List world,
+    int count,
+    Float32List screen,
+    Float64List depth,
+    int at,
+    Size size,
+    double focalLength,
+  ) {
+    final double cx = cos(rotationX), sx = sin(rotationX);
+    final double cz = cos(rotationZ), sz = sin(rotationZ);
+    final double halfW = size.width / 2, halfH = size.height / 2;
+    for (int t = 0; t < count; t++) {
+      final int w = t * 9, o = (at + t) * 6;
+      double depthSum = 0;
+      for (int v = 0; v < 3; v++) {
+        final double x = world[w + v * 3];
+        final double y = world[w + v * 3 + 1];
+        final double z = world[w + v * 3 + 2];
+        final double x1 = x * cz - y * sz;
+        final double y1 = x * sz + y * cz;
+        final double y2 = y1 * cx - z * sx;
+        final double z2 = y1 * sx + z * cx;
+        final double scale = focalLength / (focalLength + y2);
+        screen[o + v * 2] = halfW + x1 * scale + _panX;
+        screen[o + v * 2 + 1] = halfH - z2 * scale + _panY;
+        depthSum += y2;
+      }
+      depth[at + t] = depthSum / 3;
+    }
+  }
+
+  /// [parts] cut where they cross one another, as [shapes] were last cut, or
+  /// cut now (see [cutAtCrossings]).
+  ///
+  /// A turn of the camera keeps the box, and its coarser surfaces are cut
+  /// once, on the first frame of the turn, and kept. A pinch changes the box
+  /// on every frame, so shapes made for one frame are gone by the next and
+  /// so would any cut be: they are drawn uncut until the hand comes off.
+  List<SurfaceTriangles> _cutsFor(
+    List<Object> shapes,
+    List<SurfaceTriangles> parts,
+  ) {
+    if (parts.length < 2) return parts;
+    final _CutsKey key = _CutsKey(shapes);
+    final List<double> box = <double>[
+      rangeX,
+      rangeY,
+      rangeZ,
+      scaleX,
+      scaleY,
+      scaleZ,
+    ];
+    if (!interacting) {
+      _stillBox = box;
+    } else if (!_cutCache.contains(key) && !listEquals(box, _stillBox)) {
+      return parts;
+    }
+    return _cutCache.resolve(key, () => cutAtCrossings(parts));
+  }
+
+  /// [count] world-space triangles of [world], coloured by [colors], put on
+  /// the screen and into [scene].
+  void _addTrianglesTo(
+    _DepthScene scene,
+    Float32List world,
+    Int32List colors,
+    int count,
+    Size size,
+    double focalLength, {
+    CrossingSides? sides,
+  }) {
+    if (count == 0) return;
+    final Float32List screen = Float32List(count * 6);
+    final Float64List depth = Float64List(count);
+    _projectTriangles(world, count, screen, depth, 0, size, focalLength);
+    if (sides != null) _orderAtCrossings(sides, depth, 0, focalLength);
+    scene.addTriangles(screen, colors, depth, count, spanning: count);
+  }
+
+  /// Order the pieces cut at crossings by which side of the other surface
+  /// faces the camera (see [CrossingSides]): a piece on the camera's side is
+  /// in front of the other surface there, one on the far side behind it.
+  ///
+  /// Each is held to the depth of the middle of its crossing, just in front
+  /// or just behind — by more than the sort's buckets are wide, or within one
+  /// the order added would decide instead. [depth] holds the surface's
+  /// triangles from [at] on.
+  void _orderAtCrossings(
+    CrossingSides sides,
+    Float64List depth,
+    int at,
+    double focalLength,
+  ) {
+    final double cx = cos(rotationX), sx = sin(rotationX);
+    final double cz = cos(rotationZ), sz = sin(rotationZ);
+    // The eye in world space: undo the turntable on (0, -f, 0).
+    final double ex = -focalLength * cx * sz;
+    final double ey = -focalLength * cx * cz;
+    final double ez = focalLength * sx;
+    final double nudge = _viewExtentXY * 2e-3;
+    final Float32List planes = sides.planes;
+    for (int e = 0; e < sides.length; e++) {
+      final int o = e * 7;
+      final double facing =
+          planes[o] * ex +
+          planes[o + 1] * ey +
+          planes[o + 2] * ez +
+          planes[o + 3];
+      if (facing == 0) continue;
+      final bool front = (facing > 0) == (sides.sides[e] > 0);
+      final double y1 = planes[o + 4] * sz + planes[o + 5] * cz;
+      final double crossing = y1 * cx - planes[o + 6] * sx;
+      final int t = at + sides.pieces[e];
+      depth[t] =
+          front
+              ? min(depth[t], crossing - nudge)
+              : max(depth[t], crossing + nudge);
+    }
+  }
+
+  /// A height surface's grid, as thin quads that go into the batch with the
+  /// cells (see [_addMeshTo], which this is for a [_SheetMesh]'s packed
+  /// lines).
+  void _addSheetLinesTo(
+    _DepthScene scene,
+    _SheetMesh sheet,
+    Size size,
+    double focalLength,
+  ) {
+    if (!showMesh || sheet.lineCount == 0) return;
+    final double bias = _viewExtentXY * Plot3DPainter._meshDepthBias;
+    final double half = Plot3DPainter._meshStrokeWidth / 2;
+    final double cx = cos(rotationX), sx = sin(rotationX);
+    final double cz = cos(rotationZ), sz = sin(rotationZ);
+    final double halfW = size.width / 2, halfH = size.height / 2;
+    final Float32List lines = sheet.lines;
+    for (int g = 0; g < sheet.lineCount; g++) {
+      double ax = 0, ay = 0, da = 0, bx = 0, by = 0, db = 0;
+      for (int end = 0; end < 2; end++) {
+        final double x = lines[g * 6 + end * 3];
+        final double y = lines[g * 6 + end * 3 + 1];
+        final double z = lines[g * 6 + end * 3 + 2];
+        final double x1 = x * cz - y * sz;
+        final double y1 = x * sz + y * cz;
+        final double y2 = y1 * cx - z * sx;
+        final double z2 = y1 * sx + z * cx;
+        final double scale = focalLength / (focalLength + y2);
+        final double px = halfW + x1 * scale + _panX;
+        final double py = halfH - z2 * scale + _panY;
+        if (end == 0) {
+          ax = px;
+          ay = py;
+          da = y2;
+        } else {
+          bx = px;
+          by = py;
+          db = y2;
+        }
+      }
+      final double dx = bx - ax, dy = by - ay;
+      final double len = sqrt(dx * dx + dy * dy);
+      if (len < 1e-6) continue;
+      // Along the segment and across it, half a stroke each.
+      final double ux = dx / len * half, uy = dy / len * half;
+      final double sx0 = ax - ux, sy0 = ay - uy;
+      final double fx = bx + ux, fy = by + uy;
+      final int ca = sheet.inks[g * 2], cb = sheet.inks[g * 2 + 1];
+      final double depth = (da + db) / 2 - bias;
+      scene.addTriangleAt(
+        sx0 - uy,
+        sy0 + ux,
+        sx0 + uy,
+        sy0 - ux,
+        fx + uy,
+        fy - ux,
+        ca,
+        ca,
+        cb,
+        depth,
+        spansFog: false,
+      );
+      scene.addTriangleAt(
+        sx0 - uy,
+        sy0 + ux,
+        fx + uy,
+        fy - ux,
+        fx - uy,
+        fy + ux,
+        ca,
+        cb,
+        cb,
+        depth,
+        spansFog: false,
+      );
+    }
+  }
+
   /// Draw every z = f(x, y) in the cell on one set of axes, and with
   /// [withLevelSurfaces] every equation too.
   ///
@@ -526,88 +835,56 @@ extension Plot3DSurfaces on Plot3DPainter {
     double? soleMax;
     final List<(int, double, double)> ranges = <(int, double, double)>[];
 
+    final List<_SheetMesh> sheets = <_SheetMesh>[];
     for (int c = 0; c < curves.length; c++) {
       if (curves[c].hidden) continue;
-      final built = _surfaceQuads(curves[c], surfaces: curves.length);
-      if (built.quads.isEmpty) continue;
-
-      // Each surface is coloured against its own range. Sharing one range
-      // across all of them would flatten a shallow surface to a single colour
-      // whenever a steeper one is on the same axes.
-      final Color Function(double) ramp = surfaceColormap(
-        c,
-        of: curves.length,
-        palette: palette,
-      );
-      final double span = built.maxV - built.minV;
-
-      // Off means one colour, not one ramp. The menu had offered this all
-      // along and the painter ignored it, so a surface was always coloured by
-      // its own height — which the shape already shows.
-      final bool solid = surfaceMode == SurfaceMode.none;
-      // The series palette, always — including for a lone surface. Falling
-      // back to the accent when there was only one meant a surface was yellow
-      // on its own and blue the moment a second was added, so adding a plot
-      // recoloured the one already there.
-      final Color plain = _theme.seriesColor(curves[c].seriesIndex);
-      final int plainArgb = plain.toARGB32();
-
-      // A corner's colour under the key light, the same light a level surface
-      // is lit by. Solid used to be shaded by how squarely each cell faced the
-      // camera, which lights whatever you look at straight on and so hides
-      // the shape exactly where you are looking at it; coloured by value it
-      // was not lit at all.
-      int shade(double v, double light) =>
-          solid
-              ? litSurfaceArgb(plainArgb, light)
-              : litSurfaceArgb(
-                ramp(((v - built.minV) / span).clamp(0.0, 1.0)).toARGB32(),
-                light,
-                strength: _valueShadeStrength,
-              );
-
+      final _SheetMesh sheet = _sheetMeshFor(curves[c], c, curves.length);
+      if (sheet.count == 0) continue;
       if (curves.length == 1) {
-        soleMin = built.minV;
-        soleMax = built.maxV;
+        soleMin = sheet.minV;
+        soleMax = sheet.maxV;
       }
       // Every surface's own span, so each ramp can be given a scale rather
       // than a swatch. A swatch says which surface a colour belongs to; it
       // does not say what the colour means, which is the whole point of
       // colouring by value.
-      ranges.add((c, built.minV, built.maxV));
-
-      for (final quad in built.quads) {
-        final o1 = quad.p1.project(focalLength, size, _panX, _panY);
-        final o2 = quad.p2.project(focalLength, size, _panX, _panY);
-        final o3 = quad.p3.project(focalLength, size, _panX, _panY);
-        final o4 = quad.p4.project(focalLength, size, _panX, _panY);
-
-        // Colour per corner, interpolated across the cell. A single colour
-        // from the cell average makes each cell a flat block, which reads as
-        // banding however fine the grid — for the light as for the value, so
-        // the light is taken at each corner too, from the slope of the
-        // sampled surface there.
-        final int c1 = shade(quad.v1, quad.l1);
-        final int c2 = shade(quad.v2, quad.l2);
-        final int c3 = shade(quad.v3, quad.l3);
-        final int c4 = shade(quad.v4, quad.l4);
-
-        // Two triangles sharing the p1-p3 diagonal, each carrying its own
-        // depth so a cell can be sorted against a grid segment passing under
-        // it — or against another surface threading between them.
-        final double d1 = (quad.p1.y + quad.p2.y + quad.p3.y) / 3;
-        final double d2 = (quad.p1.y + quad.p3.y + quad.p4.y) / 3;
-        scene.addTriangle(o1, o2, o3, c1, c2, c3, d1);
-        scene.addTriangle(o1, o3, o4, c1, c3, c4, d2);
-      }
-
-      _addMeshTo(
+      ranges.add((c, sheet.minV, sheet.maxV));
+      sheets.add(sheet);
+    }
+    // Equations join the scene too: a level surface sorted on its own and
+    // painted first was covered by every height surface, wherever the two
+    // were. And all of them are cut where they cross, so the sort can place
+    // both sides of a crossing (see [cutAtCrossings]).
+    final List<LevelMesh> levels =
+        withLevelSurfaces ? _levelMeshesOnShow() : const <LevelMesh>[];
+    final List<SurfaceTriangles> cut = _cutsFor(
+      <Object>[...sheets, ...levels],
+      <SurfaceTriangles>[
+        for (final _SheetMesh m in sheets)
+          (world: m.world, colors: m.colors, count: m.count, sides: null),
+        for (final LevelMesh m in levels)
+          (
+            world: m.world,
+            colors: m.colors,
+            count: m.triangleCount,
+            sides: null,
+          ),
+      ],
+    );
+    for (int i = 0; i < sheets.length; i++) {
+      // Each triangle carries its own depth, so a cell can be sorted against
+      // a grid segment passing under it — or against another surface
+      // threading between them.
+      _addTrianglesTo(
         scene,
-        built.mesh,
+        cut[i].world,
+        cut[i].colors,
+        cut[i].count,
         size,
         focalLength,
-        (double v, double light) => meshInkArgb(shade(v, light), 1),
+        sides: cut[i].sides,
       );
+      _addSheetLinesTo(scene, sheets[i], size, focalLength);
     }
 
     // Single-variable curves join the same list, so one passing behind a
@@ -618,10 +895,17 @@ extension Plot3DSurfaces on Plot3DPainter {
     _addComplexSurfacesTo(scene, size, focalLength);
     _addParametricSurfaceTo(scene, size, focalLength);
     _addParametricTo(scene, size, focalLength);
-    // Equations join it too: a level surface sorted on its own and painted
-    // first was covered by every height surface, wherever the two were.
     final int equations =
-        withLevelSurfaces ? _addLevelSurfacesTo(scene, size, focalLength) : 0;
+        levels.isNotEmpty &&
+                _addLevelMeshesTo(
+                  scene,
+                  size,
+                  focalLength,
+                  levels,
+                  cut.sublist(sheets.length),
+                )
+            ? levels.length
+            : 0;
 
     // Tick labels and arrowheads join the same order as the surfaces, so a
     // surface nearer the camera covers the numbers behind it. They were drawn

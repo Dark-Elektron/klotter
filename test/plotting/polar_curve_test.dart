@@ -232,7 +232,9 @@ void main() {
       // two turns of r = θ stood 28,800 triangles high — more than the
       // hyperboloid, the heaviest surface in the suite. The long gentle
       // stretches do not need the steps, and are thinned to within an eighth
-      // of a lattice cell.
+      // of a lattice cell — but no step is left longer than a cell, or where
+      // another surface crosses the wall a strip that wide sorts by a centre
+      // far from the crossing, and shows as teeth down it.
       final List<LevelTriangle> wall = marchingTetrahedra(
         lit('r=θ'),
         -7,
@@ -242,7 +244,7 @@ void main() {
         -7,
         7,
       );
-      expect(wall.length, lessThan(5000));
+      expect(wall.length, lessThan(8000));
 
       // Still on the curve: where the wall meets the floor, every corner and
       // every point between corners lies close to r = θ.
