@@ -16,14 +16,12 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'keypad/keypad.dart';
+import 'notebook/notebook.dart';
 import 'walkthrough/walkthrough_service.dart';
 import 'walkthrough/walkthrough_overlay.dart';
-import 'utils/app_state.dart';
 import 'utils/coordinate_system.dart';
-import 'math_renderer/expression_selection.dart';
 import 'math_renderer/math_editor_controller.dart';
 import 'plotting/models/plot_view_state.dart';
-import 'plotting/parsers/plot_expression.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'plotting/export/plot_exporter.dart';
@@ -153,83 +151,55 @@ class HomePageState extends State<HomePage>
     );
   }
 
-  int count = 0;
-
-  /// Every plot's expression rows, in the order they are shown.
+  /// The plots and their rows: the document this page shows (see [Notebook]).
   ///
-  /// The store. A plot used to own one editor whose lines were `NewlineNode`
-  /// sentinels; it now owns a list of rows, each with its own editor, identity
-  /// and visibility. Today every plot holds exactly one row, so behaviour is
-  /// unchanged — the shape is what has moved.
-  ///
-  /// The three maps below are derived from it, so the many places that ask a
-  /// plot for "its editor" keep working while the rows grow plural.
-  final Map<int, List<ExpressionRow>> _rows = <int, List<ExpressionRow>>{};
+  /// It used to live here as a dozen maps keyed by each plot's position, all
+  /// of which had to be renumbered in step whenever a plot came or went.
+  late final Notebook notebook = Notebook(onRowCreated: _bindRow);
 
-  /// Which row of the active plot is being typed into.
-  int activeRow = 0;
+  /// How many plots there are.
+  int get count => notebook.count;
 
-  /// The rows of [plot], or empty while one is being built.
-  List<ExpressionRow> rowsOf(int plot) =>
-      _rows[plot] ?? const <ExpressionRow>[];
+  /// Which plot is open.
+  int get activeIndex => notebook.activeIndex;
+  set activeIndex(int value) => notebook.activeIndex = value;
 
-  /// The row a plot is currently showing a caret in.
-  ///
-  /// Only the active plot has a live row cursor; every other plot answers with
-  /// its first row, which is what the callers that just want "this plot's
-  /// expression" mean.
-  ExpressionRow? activeRowOf(int plot) {
-    final List<ExpressionRow> rows = rowsOf(plot);
-    if (rows.isEmpty) return null;
-    if (plot != activeIndex) return rows.first;
-    return rows[activeRow.clamp(0, rows.length - 1)];
-  }
+  /// Which row of the open plot is being typed into.
+  int get activeRow => notebook.activeRow;
+  set activeRow(int value) => notebook.activeRow = value;
 
-  // These three are a transition scaffold, kept so the many call sites that ask
-  // a plot for "its editor" keep working while rows grow plural. Each one
-  // *builds a map* on access, so nothing on a hot path should use them — read
-  // `rowsOf` or `activeRowOf` directly instead.
-  Map<int, GlobalKey<MathEditorInlineState>> get mathEditorKeys =>
-      <int, GlobalKey<MathEditorInlineState>>{
-        for (final MapEntry<int, List<ExpressionRow>> e in _rows.entries)
-          if (activeRowOf(e.key) case final ExpressionRow r) e.key: r.editorKey,
-      };
-  Map<int, MathEditorController> get mathEditorControllers =>
-      <int, MathEditorController>{
-        for (final MapEntry<int, List<ExpressionRow>> e in _rows.entries)
-          if (activeRowOf(e.key) case final ExpressionRow r)
-            e.key: r.controller,
-      };
-  Map<int, ScrollController> get scrollControllers => <int, ScrollController>{
-    for (final MapEntry<int, List<ExpressionRow>> e in _rows.entries)
-      if (activeRowOf(e.key) case final ExpressionRow r) e.key: r.scroll,
-  };
+  /// The rows of [plot].
+  List<ExpressionRow> rowsOf(int plot) => notebook.rowsOf(plot);
 
-  /// Every row in the app, across all plots.
-  Iterable<ExpressionRow> get _allRows =>
-      _rows.values.expand((List<ExpressionRow> r) => r);
+  /// The row a plot is showing a caret in; see [Notebook.activeRowOf].
+  ExpressionRow? activeRowOf(int plot) => notebook.activeRowOf(plot);
 
   /// Every editor in the app, across all plots and rows.
-  ///
-  /// The iterate-everything cases — recompute, save, dispose — want this rather
-  /// than one controller per plot, or a row that is not currently focused would
-  /// be skipped.
-  Iterable<MathEditorController> get allControllers => _rows.values
-      .expand((List<ExpressionRow> r) => r)
-      .map((r) => r.controller);
+  Iterable<MathEditorController> get allControllers =>
+      notebook.allRows.map((ExpressionRow r) => r.controller);
 
-  Map<int, FocusNode> focusNodes = {};
-
-  int activeIndex = 0;
   final bool _plotsEnabled = true;
   bool _isUpdating = false;
   bool _isLoading = true;
 
-  /// Each cell's plot panel, so its view can be read back when saving.
-  final Map<int, GlobalKey<InlinePlotPanelState>> _plotPanelKeys = {};
+  /// Each plot's panel, by plot id, so its view can be read back when saving.
+  final Map<String, GlobalKey<InlinePlotPanelState>> _plotPanelKeys =
+      <String, GlobalKey<InlinePlotPanelState>>{};
 
-  /// Views restored from storage, held until the panel for that cell is built.
-  final Map<int, PlotViewState> _restoredViews = {};
+  /// Forget what the screen kept about plots that have gone.
+  ///
+  /// Kept by plot id, so nothing has to move when a plot is added or removed
+  /// before another; entries for a plot that no longer exists are dropped.
+  void _forgetGonePlots() {
+    final Set<String> live = <String>{
+      for (final Plot plot in notebook.plots) plot.id,
+    };
+    bool gone(String id) => !live.contains(id);
+    _plotPanelKeys.removeWhere((String id, _) => gone(id));
+    _rowErrors.removeWhere((String id, _) => gone(id));
+    _rowPanelHeight.removeWhere((String id, _) => gone(id));
+    _rowPanelKeys.removeWhere((String id, _) => gone(id));
+  }
 
   /// Drives the plot-page transition. Physics are disabled — the strip below
   /// the expression animates this instead, so paging never competes with the
@@ -413,10 +383,6 @@ class HomePageState extends State<HomePage>
   final GlobalKey _tabletExtrasBlockKey = GlobalKey();
   final GlobalKey _settingsButtonKey = GlobalKey(); // NEW
 
-  // App-level undo/redo for operations like "Clear All"
-  final List<AppState> _appUndoStack = [];
-  final List<AppState> _appRedoStack = [];
-  static const int _maxAppHistorySize = 10;
 
   // Update the _walkthroughTargets getter:
 
@@ -485,12 +451,6 @@ class HomePageState extends State<HomePage>
     WidgetsBinding.instance.addObserver(this);
     _loadCells();
 
-    if (_rows.isEmpty) {
-      _createControllers(0);
-      count = 1;
-      activeIndex = 0;
-    }
-
     // Initialize walkthrough after build is complete
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initializeWalkthrough();
@@ -508,27 +468,6 @@ class HomePageState extends State<HomePage>
     setState(() {});
   }
 
-  /// Test hooks for the row model.
-  @visibleForTesting
-  List<MathNode> plotNodesForTest(int plot) => _getPlotNodes(plot);
-
-  @visibleForTesting
-  bool removeActiveRowForTest() => _removeActiveRow();
-
-  /// How many rows a plot holds, for tests that care about the row model
-  /// surviving something — undo, restore, a page change.
-  @visibleForTesting
-  int rowCountForTest(int plot) => _rows[plot]?.length ?? 0;
-
-  @visibleForTesting
-  int get countForTest => count;
-
-  @visibleForTesting
-  int get activeIndexForTest => activeIndex;
-
-  @visibleForTesting
-  int get undoDepthForTest => _appUndoStack.length;
-
   /// Every row of a cell as plain text, for tests that describe what the user
   /// would see rather than a node tree.
   @visibleForTesting
@@ -539,67 +478,14 @@ class HomePageState extends State<HomePage>
           .join(),
   ].join('/');
 
-  @visibleForTesting
-  void addRowForTest() => _addRow();
-
-  @visibleForTesting
-  void addDisplayForTest({int? insertAt}) => _addDisplay(insertAt: insertAt);
-
-  /// Rebuild a plot's rows from what was saved.
-  ///
-  /// Anything written before rows existed has one expression and no row list,
-  /// so it is split on its newlines — the same division the plot was already
-  /// making to draw one curve per line. Each line becomes a row, which is what
-  /// gives it a swatch and a toggle.
-  void _restoreRows(int plot, CellData saved) {
-    final List<List<MathNode>> lines =
-        saved.rowsJson.isNotEmpty
-            ? <List<MathNode>>[
-              for (final String json in saved.rowsJson)
-                MathExpressionSerializer.deserializeFromJson(json),
-            ]
-            : PlotExpression.splitLines(
-              MathExpressionSerializer.deserializeFromJson(
-                saved.expressionJson,
-              ),
-            );
-    if (lines.isEmpty) return;
-
-    // The first row already exists from _createControllers; the rest are made
-    // here, so ids stay unique against anything else in this session.
-    final List<ExpressionRow> rows = _rows[plot]!;
-    while (rows.length < lines.length) {
-      final ExpressionRow row = ExpressionRow(id: ExpressionRowIds.take());
-      _bindRow(row);
-      rows.add(row);
-    }
-    for (int i = 0; i < lines.length; i++) {
-      rows[i].controller.setExpression(lines[i]);
-      rows[i].visible = i >= saved.hidden.length || !saved.hidden[i];
-    }
-  }
-
-  /// Which plot owns [row], or null once it has been removed.
-  ///
-  /// Looked up rather than captured. A row's plot index changes when a plot is
-  /// inserted or deleted before it, so a callback that closed over the index it
-  /// was created with would fire against the wrong plot from then on — the same
-  /// reason klator resolves its index at call time.
-  int? _plotOfRow(ExpressionRow row) {
-    for (final MapEntry<int, List<ExpressionRow>> e in _rows.entries) {
-      if (e.value.contains(row)) return e.key;
-    }
-    return null;
-  }
-
   /// Wire a row's editor to the app.
   void _bindRow(ExpressionRow row) {
     row.controller.onResultChanged = () {
-      final int? plot = _plotOfRow(row);
+      final int? plot = notebook.indexOfRow(row);
       if (plot != null) _onRowResultChanged(plot);
     };
     row.controller.addListener(() {
-      final int? plot = _plotOfRow(row);
+      final int? plot = notebook.indexOfRow(row);
       if (plot != null) _autoScrollToEnd(plot);
       // Undo points are taken here, where the editing actually happens.
       //
@@ -613,7 +499,7 @@ class HomePageState extends State<HomePage>
       //
       // A controller notifies for caret moves too, but the signature is built
       // from expressions alone, so those compare equal and record nothing.
-      _recordHistoryPoint();
+      notebook.recordHistoryPoint();
     });
   }
 
@@ -626,22 +512,10 @@ class HomePageState extends State<HomePage>
   ///
   /// Focus is the assignment to [activeRow] and nothing else — there is no
   /// system keyboard and no `FocusNode` in play, exactly as in klator.
-  void _addRow() {
-    final List<ExpressionRow>? rows = _rows[activeIndex];
-    if (rows == null) return;
-    // Nothing to add below an empty row. klator does the same: pressing the
-    // action key twice would otherwise leave a trail of blank rows, each
-    // taking height from the plot and offering a swatch and a toggle for a
-    // curve that does not exist.
-    final ExpressionRow? current = activeRowOf(activeIndex);
-    if (current != null && current.controller.getExpression().isEmpty) return;
-    final int at = (activeRow + 1).clamp(0, rows.length);
-    final ExpressionRow row = ExpressionRow(id: ExpressionRowIds.take());
-    _bindRow(row);
-    setState(() {
-      rows.insert(at, row);
-      activeRow = at;
-    });
+  void addRow() {
+    // Nothing is added below an empty row; see [Notebook.addRowBelowActive].
+    if (notebook.addRowBelowActive() == null) return;
+    setState(() {});
     updateMathEditor();
     _flushSave();
   }
@@ -651,52 +525,20 @@ class HomePageState extends State<HomePage>
   /// The last row of a plot is not removed: a plot with no expression has
   /// nothing to draw and nowhere to type, so the caller falls back to removing
   /// the whole plot, which is what backspace on an empty cell did before.
-  bool _removeActiveRow() {
-    final List<ExpressionRow>? rows = _rows[activeIndex];
-    if (rows == null || rows.length <= 1) return false;
-    final int at = activeRow.clamp(0, rows.length - 1);
-    final ExpressionRow row = rows[at];
-    setState(() {
-      rows.removeAt(at);
-      activeRow = (at - 1).clamp(0, rows.length - 1);
-    });
-    row.dispose();
+  bool removeActiveRow() {
+    if (!notebook.removeActiveRow()) return false;
+    setState(() {});
     updateMathEditor();
     _flushSave();
     return true;
   }
 
-  void _createControllers(int index) {
-    final ExpressionRow row = ExpressionRow(id: ExpressionRowIds.take());
-    _rows[index] = <ExpressionRow>[row];
-    _bindRow(row);
-
-    focusNodes[index] = FocusNode();
-  }
-
   String _getPlotExpression(int index) =>
       MathExpressionSerializer.serialize(_getPlotNodes(index));
 
-  /// The cell's expression as nodes. The plot compiles from these rather than
-  /// from the serialized string, so it evaluates exactly what the calculator
-  /// evaluates instead of re-parsing with a weaker grammar.
-  /// Every row of a plot, joined as the one node list the panel still expects.
-  ///
-  /// Rows are separated by the same `NewlineNode` the panel already splits on,
-  /// so the plot pipeline is unchanged by rows existing. Passing the lines
-  /// through directly is the tidier end state and is the next step; going via
-  /// the sentinel keeps this change behaviour-neutral, which is what makes it
-  /// safe to land on its own.
-  List<MathNode> _getPlotNodes(int index) {
-    final List<ExpressionRow> rows = rowsOf(index);
-    if (rows.isEmpty) return const <MathNode>[];
-    final List<MathNode> out = <MathNode>[];
-    for (final ExpressionRow row in rows) {
-      if (out.isNotEmpty) out.add(NewlineNode());
-      out.addAll(row.controller.expression);
-    }
-    return out;
-  }
+  /// Every row of a plot as the one node list its panel draws from; see
+  /// [Notebook.plotNodes].
+  List<MathNode> _getPlotNodes(int index) => notebook.plotNodes(index);
 
   /// klotter always shows the plot. A cell with no free variable is not
   /// unplottable — a constant is a horizontal line, and an empty cell is an
@@ -706,20 +548,9 @@ class HomePageState extends State<HomePage>
 
   /// The cell currently filling the page. Cells are reached by swiping the
   /// strip below the expression, not by scrolling a list.
-  int get _currentPageIndex {
-    final keys = _rows.keys.toList()..sort();
-    if (keys.isEmpty) return 0;
-    if (keys.contains(activeIndex)) return activeIndex;
-    return keys.last;
-  }
+  int get _currentPageIndex =>
+      activeIndex >= 0 && activeIndex < count ? activeIndex : count - 1;
 
-  /// The plots, in order.
-  ///
-  /// Straight off the row store. Going via `mathEditorControllers` built a
-  /// whole map — walking every plot and resolving its active row — only to read
-  /// the keys back off it, and this is called several times per frame from the
-  /// page view and the swipe strip.
-  List<int> get _pageKeys => _rows.keys.toList()..sort();
 
   /// Whether a cell has anything on it.
   ///
@@ -728,9 +559,7 @@ class HomePageState extends State<HomePage>
   /// for a blank cell — which let a flick forward keep stacking up empty
   /// plots. This is the same test backspace uses to decide a cell is empty
   /// enough to delete, so the two agree on what "empty" means.
-  bool _pageHasContent(int index) =>
-      (mathEditorControllers[index]?.getExpression().trim().isNotEmpty ??
-          false);
+  bool _pageHasContent(int index) => notebook.hasContent(index);
 
   /// Move one page left or right.
   ///
@@ -738,15 +567,14 @@ class HomePageState extends State<HomePage>
   /// page actually has something on it — the same rule the action button used
   /// to follow, so you cannot stack up empty plots by flicking.
   void _goToPage({required bool forward}) {
-    final keys = _pageKeys;
-    final current = keys.indexOf(_currentPageIndex);
-    if (current == -1) return;
+    final int current = _currentPageIndex;
+    if (current < 0) return;
 
     if (forward) {
-      if (current < keys.length - 1) {
+      if (current < count - 1) {
         _animateToPage(current + 1);
       } else if (_canAddPage) {
-        _addDisplay();
+        addPlot();
       }
       return;
     }
@@ -758,9 +586,8 @@ class HomePageState extends State<HomePage>
   /// A new page is only worth creating when the last one is actually used —
   /// otherwise flicking forward stacks up blank plots.
   bool get _canAddPage {
-    final keys = _pageKeys;
-    if (keys.isEmpty) return true;
-    return _pageHasContent(keys.last);
+    if (count == 0) return true;
+    return _pageHasContent(count - 1);
   }
 
   /// Remember where a cell's plot was before leaving it.
@@ -769,9 +596,11 @@ class HomePageState extends State<HomePage>
   /// is captured on the way out — otherwise returning to a cell showed the 2D
   /// view again however it was left.
   void _captureView(int index) {
+    if (index < 0 || index >= count) return;
+    final Plot plot = notebook.plots[index];
     final PlotViewState? live =
-        _plotPanelKeys[index]?.currentState?.currentView();
-    if (live != null) _restoredViews[index] = live;
+        _plotPanelKeys[plot.id]?.currentState?.currentView();
+    if (live != null) plot.view = live;
   }
 
   /// Move to [position], carrying the focus and the saved view with it.
@@ -779,11 +608,9 @@ class HomePageState extends State<HomePage>
   /// [jump] skips the scroll, for when a genie is covering the swap: sliding
   /// the pages as well would show the change twice.
   void _animateToPage(int position, {bool jump = false}) {
-    final keys = _pageKeys;
-    if (position < 0 || position >= keys.length) return;
+    if (position < 0 || position >= count) return;
     _captureView(_currentPageIndex);
-    setState(() => activeIndex = keys[position]);
-    focusNodes[keys[position]]?.requestFocus();
+    setState(() => activeIndex = position);
     if (!_pageViewController.hasClients) return;
     if (jump) {
       _pageViewController.jumpToPage(position);
@@ -841,7 +668,7 @@ class HomePageState extends State<HomePage>
   /// The number only. The expression was here too, but it was the serialized
   /// form rather than the typeset one, so it read as something the user had
   /// not written.
-  Widget _scrubReadout(AppColors colors, List<int> keys, int target) {
+  Widget _scrubReadout(AppColors colors, int total, int target) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
       decoration: BoxDecoration(
@@ -849,7 +676,7 @@ class HomePageState extends State<HomePage>
         borderRadius: BorderRadius.circular(10),
       ),
       child: Text(
-        '${target + 1} / ${keys.length}',
+        '${target + 1} / $total',
         style: TextStyle(
           color: colors.accent,
           fontSize: 14,
@@ -860,8 +687,7 @@ class HomePageState extends State<HomePage>
   }
 
   Widget _buildPageSwipeStrip(AppColors colors) {
-    final keys = _pageKeys;
-    final current = keys.indexOf(_currentPageIndex);
+    final int current = _currentPageIndex;
     // The dots follow the finger during a scrub even though the page does not,
     // so the strip is still the thing being operated.
     final int shown = _scrubTarget ?? current;
@@ -885,7 +711,7 @@ class HomePageState extends State<HomePage>
           onHorizontalDragStart: (details) {
             _scrubOrigin = details.localPosition.dx;
             _holdTimer?.cancel();
-            if (keys.length < 2) return;
+            if (count < 2) return;
             _holdTimer = Timer(const Duration(milliseconds: 420), () {
               if (mounted) setState(() => _scrubTarget = current);
             });
@@ -893,7 +719,7 @@ class HomePageState extends State<HomePage>
           onHorizontalDragUpdate: (details) {
             final double dx = details.localPosition.dx - _scrubOrigin;
             if (_scrubTarget != null) {
-              _scrubTo(dx, current, stripWidth, keys.length);
+              _scrubTo(dx, current, stripWidth, count);
               return;
             }
             // Moved before the hold landed, so this is a swipe after all.
@@ -937,7 +763,7 @@ class HomePageState extends State<HomePage>
                               : colors.textSecondary.withValues(alpha: 0.2),
                     ),
                     const SizedBox(width: 10),
-                    for (int i = 0; i < keys.length; i++) ...[
+                    for (int i = 0; i < count; i++) ...[
                       AnimatedContainer(
                         duration: const Duration(milliseconds: 90),
                         curve: Curves.easeOut,
@@ -960,7 +786,7 @@ class HomePageState extends State<HomePage>
                       Icons.chevron_right,
                       size: 16,
                       color:
-                          (shown < keys.length - 1 || _canAddPage)
+                          (shown < count - 1 || _canAddPage)
                               ? colors.textSecondary
                               : colors.textSecondary.withValues(alpha: 0.2),
                     ),
@@ -970,7 +796,7 @@ class HomePageState extends State<HomePage>
               if (_scrubTarget != null)
                 Positioned(
                   bottom: 34,
-                  child: _scrubReadout(colors, keys, _scrubTarget!),
+                  child: _scrubReadout(colors, count, _scrubTarget!),
                 ),
             ],
           ),
@@ -992,6 +818,7 @@ class HomePageState extends State<HomePage>
     AppColors colors, {
     bool shouldAddKeys = false,
   }) {
+    final Plot plot = notebook.plots[index];
     final plotExpression = _getPlotExpression(index);
     final canPlot = _canShowPlotButton(plotExpression);
 
@@ -1018,26 +845,28 @@ class HomePageState extends State<HomePage>
       ),
       child: InlinePlotPanel(
         key: _plotPanelKeys.putIfAbsent(
-          index,
+          plot.id,
           () => GlobalKey<InlinePlotPanelState>(),
         ),
         expression: plotExpression,
         nodes: _getPlotNodes(index),
-        bottomInset: _rowPanelHeight[index] ?? 0,
+        bottomInset: _rowPanelHeight[plot.id] ?? 0,
         hiddenRows: <bool>[
           for (final ExpressionRow r in rowsOf(index)) !r.visible,
         ],
-        initialView: _restoredViews[index] ?? PlotViewState.initial,
+        initialView: plot.view,
         coordinateSystem: _variableSystem,
-        onViewChanged: (view) => _restoredViews[index] = view,
+        // The plot itself, not its position, which another plot being added
+        // or removed before it would change under this callback.
+        onViewChanged: (view) => plot.view = view,
         onRowErrors: (Map<int, String> byRow) {
           // No entry and an empty report both mean "nothing wrong". The
           // panel reports once whenever it is built, so treating them as
           // different would rebuild the page for every plot swiped to.
-          if (mapEquals(_rowErrors[index] ?? const <int, String>{}, byRow)) {
+          if (mapEquals(_rowErrors[plot.id] ?? const <int, String>{}, byRow)) {
             return;
           }
-          setState(() => _rowErrors[index] = byRow);
+          setState(() => _rowErrors[plot.id] = byRow);
         },
       ),
     );
@@ -1131,13 +960,14 @@ class HomePageState extends State<HomePage>
   /// are not a fixed height — a fraction or an integral is several times a
   /// plain expression. So the panel is measured after it lays out and the plot
   /// is told, rather than the height being computed from a row count.
-  final Map<int, double> _rowPanelHeight = <int, double>{};
-  final Map<int, GlobalKey> _rowPanelKeys = <int, GlobalKey>{};
+  final Map<String, double> _rowPanelHeight = <String, double>{};
+  final Map<String, GlobalKey> _rowPanelKeys = <String, GlobalKey>{};
 
   /// Read the row panel's height back after layout, and rebuild if it moved.
-  final Set<int> _measurePending = <int>{};
+  final Set<String> _measurePending = <String>{};
 
-  void _measureRowPanel(int plot) {
+  void _measureRowPanel(int index) {
+    final String plot = notebook.plots[index].id;
     // One callback in flight per plot. This is called from build, so without
     // the guard every frame queued another measurement — and any frame that
     // found a different height called setState, which built again, which
@@ -1206,11 +1036,12 @@ class HomePageState extends State<HomePage>
   /// and the curve cannot disagree. Tapping it moves the caret to that row,
   /// which makes the whole left edge a way of choosing what to edit.
   /// Which rows of which plot could not be drawn, and why.
-  final Map<int, Map<int, String>> _rowErrors = <int, Map<int, String>>{};
+  final Map<String, Map<int, String>> _rowErrors =
+      <String, Map<int, String>>{};
 
   Widget _rowSwatch(int plot, ExpressionRow row, int r) {
     final Color colour = _rowTheme.seriesColor(r);
-    final String? trouble = _rowErrors[plot]?[r];
+    final String? trouble = _rowErrors[notebook.plots[plot].id]?[r];
 
     // A row that cannot be drawn says so on its own dot. The banner over the
     // plot names the first problem but not the line it belongs to, which with
@@ -1355,7 +1186,7 @@ class HomePageState extends State<HomePage>
                           // is already at its target.
                           child: KeyedSubtree(
                             key: _rowPanelKeys.putIfAbsent(
-                              index,
+                              notebook.plots[index].id,
                               () => GlobalKey(),
                             ),
                             child: _buildRowStack(index, constraints),
@@ -1385,17 +1216,8 @@ class HomePageState extends State<HomePage>
     _walkthroughService.removeListener(_onWalkthroughChanged);
     _walkthroughService.dispose();
 
-    // Every row of every plot, not one controller per plot: the derived maps
-    // answer with the focused row only, so iterating them would leak the rest.
-    for (final ExpressionRow row in _rows.values.expand(
-      (List<ExpressionRow> r) => r,
-    )) {
-      row.dispose();
-    }
-
-    for (FocusNode focusNode in focusNodes.values) {
-      focusNode.dispose();
-    }
+    // Every row of every plot.
+    notebook.dispose();
 
     super.dispose();
   }
@@ -1447,39 +1269,19 @@ class HomePageState extends State<HomePage>
     List<CellData> savedCells = await CellPersistence.loadCells();
     int savedIndex = await CellPersistence.loadActiveIndex();
 
-    if (savedCells.isEmpty) {
-      _createControllers(0);
-      count = 1;
-      activeIndex = 0;
-    } else {
-      for (int i = 0; i < savedCells.length; i++) {
-        _createControllers(i);
-        _restoreRows(i, savedCells[i]);
-
-        final Map<String, dynamic>? savedView = savedCells[i].plotView;
-        if (savedView != null) {
-          _restoredViews[i] = PlotViewState.fromJson(savedView);
-        }
-      }
-
-      count = savedCells.length;
-      activeIndex = savedIndex.clamp(0, count - 1);
-    }
+    notebook.restore(savedCells, savedIndex);
 
     // Build the controller before the PageView first appears, so it opens on
     // the restored cell rather than jumping there afterwards.
-    final int restoredPosition = _pageKeys.indexOf(activeIndex);
     _pageViewController.dispose();
-    _pageViewController = PageController(
-      initialPage: restoredPosition < 0 ? 0 : restoredPosition,
-    );
+    _pageViewController = PageController(initialPage: activeIndex);
 
     setState(() => _isLoading = false);
 
     // Baseline the undo history at the state the app opened with. Without
     // this the first edit is what establishes the baseline, so the very first
     // thing a user types has nothing to undo back to.
-    _syncHistoryMark();
+    notebook.markHistory();
   }
 
   Timer? _saveTimer;
@@ -1510,42 +1312,20 @@ class HomePageState extends State<HomePage>
   }
 
   Future<void> _saveCells() async {
-    List<int> sortedKeys = _rows.keys.toList()..sort();
-
-    final List<List<List<MathNode>>> rowsPerPlot = <List<List<MathNode>>>[];
-    final List<List<bool>> hiddenPerPlot = <List<bool>>[];
-    List<Map<String, dynamic>?> plotViews = [];
-    // Where the open plot lands in what is written, which is not its key if a
-    // plot before it is skipped.
-    int savedActive = 0;
-
-    for (int key in sortedKeys) {
-      final List<ExpressionRow> rows = rowsOf(key);
-      if (rows.isEmpty) continue;
-      if (key == activeIndex) savedActive = rowsPerPlot.length;
-      rowsPerPlot.add(<List<MathNode>>[
-        for (final ExpressionRow row in rows) row.controller.expression,
-      ]);
-      hiddenPerPlot.add(<bool>[
-        for (final ExpressionRow row in rows) !row.visible,
-      ]);
-
-      // Read the live view where the panel is on screen; fall back to what was
-      // restored for cells that have not been built this session, so paging
-      // away from a cell does not forget where it was left.
+    // The live view where a plot's panel is on screen; a plot not built this
+    // session keeps the view it was restored with, so paging away from a plot
+    // does not forget where it was left.
+    for (final Plot plot in notebook.plots) {
       final PlotViewState? live =
-          _plotPanelKeys[key]?.currentState?.currentView();
-      final PlotViewState view =
-          live ?? _restoredViews[key] ?? PlotViewState.initial;
-      _restoredViews[key] = view;
-      plotViews.add(view.isInitial ? null : view.toJson());
+          _plotPanelKeys[plot.id]?.currentState?.currentView();
+      if (live != null) plot.view = live;
     }
-
+    final saved = notebook.toSaved();
     await CellPersistence.saveRows(
-      rowsPerPlot,
-      hiddenPerPlot,
-      plotViews,
-      activeIndex: savedActive,
+      saved.rows,
+      saved.hidden,
+      saved.views,
+      activeIndex: saved.activeIndex,
     );
   }
 
@@ -1579,7 +1359,7 @@ class HomePageState extends State<HomePage>
   }
 
   void _clearAllSelectionOverlays() {
-    for (final key in _allRows.map((ExpressionRow r) => r.editorKey)) {
+    for (final key in notebook.allRows.map((ExpressionRow r) => r.editorKey)) {
       key.currentState?.clearOverlay();
     }
   }
@@ -1587,8 +1367,8 @@ class HomePageState extends State<HomePage>
   /// Auto-scroll to the end when expression fills the screen
   /// Only scrolls when cursor is at the end of the expression (not when editing in middle)
   void _autoScrollToEnd(int index) {
-    final scrollController = scrollControllers[index];
-    final mathController = mathEditorControllers[index];
+    final scrollController = activeRowOf(index)?.scroll;
+    final mathController = activeRowOf(index)?.controller;
     if (scrollController == null || !scrollController.hasClients) return;
     if (mathController == null) return;
 
@@ -1620,36 +1400,17 @@ class HomePageState extends State<HomePage>
     });
   }
 
-  void _addDisplay({int? insertAt}) {
-    // Default: insert after the active cell
-    int insertIndex = insertAt ?? (activeIndex + 1);
-
-    // Clamp to valid range
-    insertIndex = insertIndex.clamp(0, count);
-
-    if (insertIndex < count) {
-      // Need to shift existing controllers to make room
-      _shiftControllersUp(insertIndex);
-    }
-    // A new cell starts with a blank plot. Appending skips the shift, and
-    // after a clear-all the index can still hold the plot of a cell that was
-    // there before — kept on purpose, so undoing the clear brings the views
-    // back, but not something a new cell should open with.
-    _forgetPlot(insertIndex);
-
-    _createControllers(insertIndex);
-
-    setState(() {
-      count += 1;
-      activeIndex = insertIndex;
-    });
+  /// Add an empty plot, after the open one unless told where, and open it.
+  void addPlot({int? at}) {
+    notebook.insertPlot(at: at);
+    final int index = activeIndex;
+    setState(() {});
 
     // Slide to the page that was just created rather than snapping to it.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final position = _pageKeys.indexOf(insertIndex);
-      if (position != -1 && _pageViewController.hasClients) {
+      if (_pageViewController.hasClients) {
         _pageViewController.animateToPage(
-          position,
+          index,
           duration: const Duration(milliseconds: 300),
           curve: Curves.easeOutCubic,
         );
@@ -1657,78 +1418,11 @@ class HomePageState extends State<HomePage>
     });
   }
 
-  void _shiftControllersUp(int fromIndex) {
-    // Each per-cell map moves up one from [fromIndex], working down from the
-    // end so nothing is overwritten before it has moved. A cell missing from a
-    // map stays missing, rather than inheriting the entry of the one below.
-    void shift<T>(Map<int, T> map) {
-      for (int i = count - 1; i >= fromIndex; i--) {
-        final T? value = map.remove(i);
-        if (value != null) {
-          map[i + 1] = value;
-        } else {
-          map.remove(i + 1);
-        }
-      }
-    }
-
-    // The rows move as one list. The three editor maps are derived from it,
-    // and assigning into a derived map writes into the temporary it just
-    // built — legal Dart, and silently nothing at all.
-    shift(_rows);
-    shift(focusNodes);
-
-    // The plot moves with its cell. Left behind, the new cell opened with the
-    // plot of the one it pushed along — its view, its error marks and, through
-    // the panel's GlobalKey, the panel itself — and that cell got a fresh one.
-    shift(_plotPanelKeys);
-    shift(_restoredViews);
-    shift(_rowErrors);
-    shift(_rowPanelHeight);
-    shift(_rowPanelKeys);
-  }
-
-  /// Drop what the plot side remembers about the cell at [index].
-  void _forgetPlot(int index) {
-    _plotPanelKeys.remove(index);
-    _restoredViews.remove(index);
-    _rowErrors.remove(index);
-    _rowPanelHeight.remove(index);
-    _rowPanelKeys.remove(index);
-  }
-
-  void _removeDisplay(int indexToRemove) {
-    if (count <= 1) return;
-
-    // Every row of the plot, not only the one being edited. Disposing through
-    // the derived maps reached the focused row alone, and looked the scroll
-    // controller up after the row had already been removed, so it was never
-    // disposed at all.
-    for (final ExpressionRow row
-        in _rows.remove(indexToRemove) ?? const <ExpressionRow>[]) {
-      row.dispose();
-    }
-    focusNodes.remove(indexToRemove)?.dispose();
-
-    // The cell's plot goes with it: its panel key, the view it was left at,
-    // its error marks and its measured row panel.
-    _forgetPlot(indexToRemove);
-
-    int newActiveIndex;
-    if (activeIndex == indexToRemove) {
-      newActiveIndex = indexToRemove > 0 ? indexToRemove - 1 : 0;
-    } else if (activeIndex > indexToRemove) {
-      newActiveIndex = activeIndex - 1;
-    } else {
-      newActiveIndex = activeIndex;
-    }
-
-    _reindexControllers();
-
-    setState(() {
-      count -= 1;
-      activeIndex = newActiveIndex;
-    });
+  /// Remove the plot at [index]; the last one stays.
+  void removePlot(int index) {
+    if (!notebook.removePlotAt(index)) return;
+    _forgetGonePlots();
+    setState(() {});
   }
 
   /// Save the active cell's plot to a file and hand it to the share sheet.
@@ -1740,7 +1434,7 @@ class HomePageState extends State<HomePage>
   /// the one thing the format is chosen for.
   Future<void> _exportPlot() async {
     final InlinePlotPanelState? panel =
-        _plotPanelKeys[activeIndex]?.currentState;
+        _plotPanelKeys[notebook.activePlot.id]?.currentState;
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
 
     if (panel == null) {
@@ -1844,264 +1538,30 @@ class HomePageState extends State<HomePage>
   }
 
   void _clearAllDisplays() {
-    _saveAppStateForUndo();
-    _disposeAllCells(keep: 1);
-    _createControllers(0);
-
-    setState(() {
-      count = 1;
-      activeIndex = 0;
-    });
-  }
-
-  /// Dispose every cell's editors and controllers, ready for a fresh set of
-  /// [keep] cells.
-  ///
-  /// What the plot side remembers is kept for the cells that will exist again,
-  /// so a panel and the view it was left at survive an undo of a clear. Past
-  /// [keep] it is dropped: a cell made at one of those indices later would
-  /// otherwise open with error marks that belonged to another expression.
-  void _disposeAllCells({required int keep}) {
-    for (final ExpressionRow row in _allRows) {
-      row.dispose();
-    }
-    for (final FocusNode focusNode in focusNodes.values) {
-      focusNode.dispose();
-    }
-    _rows.clear();
-    focusNodes.clear();
-
-    bool gone(int index) => index >= keep;
-    _plotPanelKeys.removeWhere((int i, _) => gone(i));
-    _rowErrors.removeWhere((int i, _) => gone(i));
-    _rowPanelHeight.removeWhere((int i, _) => gone(i));
-    _rowPanelKeys.removeWhere((int i, _) => gone(i));
-  }
-
-  void _reindexControllers() {
-    List<int> oldKeys = _rows.keys.toList()..sort();
-
-    // Not every map has an entry for every cell — a plot that has not been
-    // built has no panel key, no measured height and no errors yet — so an
-    // entry is carried only where there is one. Dereferencing a missing one
-    // with `!` once threw part-way through renumbering, which aborted the
-    // removal and left the cell on screen.
-    Map<int, T> renumbered<T>(Map<int, T> from) => <int, T>{
-      for (int newIndex = 0; newIndex < oldKeys.length; newIndex++)
-        if (from[oldKeys[newIndex]] case final T value) newIndex: value,
-    };
-
-    final Map<int, List<ExpressionRow>> newRows = renumbered(_rows);
-    focusNodes = renumbered(focusNodes);
-
-    // The plot side has to move with the cell too. Left behind, a surviving
-    // cell inherits the panel, saved view and error marks of a different one
-    // — and for a GlobalKey that means two panels claiming the same key.
-    final Map<int, GlobalKey<InlinePlotPanelState>> newPlotPanelKeys =
-        renumbered(_plotPanelKeys);
-    final Map<int, PlotViewState> newRestoredViews = renumbered(_restoredViews);
-    final Map<int, Map<int, String>> newRowErrors = renumbered(_rowErrors);
-    final Map<int, double> newRowPanelHeight = renumbered(_rowPanelHeight);
-    final Map<int, GlobalKey> newRowPanelKeys = renumbered(_rowPanelKeys);
-
-    _rows
-      ..clear()
-      ..addAll(newRows);
-    _plotPanelKeys
-      ..clear()
-      ..addAll(newPlotPanelKeys);
-    _restoredViews
-      ..clear()
-      ..addAll(newRestoredViews);
-    _rowErrors
-      ..clear()
-      ..addAll(newRowErrors);
-    _rowPanelHeight
-      ..clear()
-      ..addAll(newRowPanelHeight);
-    _rowPanelKeys
-      ..clear()
-      ..addAll(newRowPanelKeys);
-  }
-
-  void _restoreAppState(AppState state) {
-    // Rebuilding the cells runs updateMathEditor at the end, which would
-    // otherwise see the restored state as a fresh edit — recording an undo
-    // step for the undo itself and wiping the redo stack it had just filled.
-    _restoringHistory = true;
-    try {
-      _applyAppState(state);
-    } finally {
-      _restoringHistory = false;
-    }
-  }
-
-  void _applyAppState(AppState state) {
-    _disposeAllCells(keep: state.cells.isEmpty ? 1 : state.cells.length);
-
-    for (int i = 0; i < state.cells.length; i++) {
-      // Makes the cell with one row; the rest are added back beside it.
-      _createControllers(i);
-
-      final List<RowState> saved = state.cells[i];
-      final List<ExpressionRow> live = _rows[i] ?? <ExpressionRow>[];
-      while (live.length < saved.length) {
-        final ExpressionRow extra = ExpressionRow(id: ExpressionRowIds.take());
-        _bindRow(extra);
-        live.add(extra);
-      }
-      _rows[i] = live;
-
-      for (int r = 0; r < saved.length; r++) {
-        live[r].controller.setExpression(
-          MathClipboard.deepCopyNodes(saved[r].nodes),
-        );
-        live[r].visible = saved[r].visible;
-      }
-    }
-
-    if (state.cells.isEmpty) {
-      _createControllers(0);
-    }
-
-    setState(() {
-      count = state.cells.isEmpty ? 1 : state.cells.length;
-      activeIndex = state.activeIndex.clamp(0, count - 1);
-      // Clamped against the cell it lands in, which may hold fewer rows than
-      // the one the caret was in when this state was recorded.
-      final int rowsHere = _rows[activeIndex]?.length ?? 1;
-      activeRow = state.activeRow.clamp(0, rowsHere - 1);
-    });
-
-    updateMathEditor();
-  }
-
-  /// The state as of the last recorded history point, and its signature.
-  ///
-  /// Undo has to restore the state *before* an edit, but the only hook every
-  /// edit passes through — [updateMathEditor] — runs after the change has
-  /// already been made. So the previous state is held here and pushed when the
-  /// next change is noticed, rather than trying to intercept every mutation
-  /// site: keypad buttons, selection wraps, paste, cell add and remove.
-  AppState? _historyMark;
-  String? _historySignature;
-
-  /// True while an undo or redo is being applied, so restoring does not record
-  /// itself as a fresh edit.
-  bool _restoringHistory = false;
-
-  /// Every row of every cell, in the shape undo remembers.
-  ///
-  /// Taken from `_rows` rather than from `mathEditorControllers`, which holds
-  /// only each cell's *active* row — capturing through it remembered one row
-  /// per cell, so undo rebuilt each cell with a single row and dropped the
-  /// others.
-  Map<int, List<RowState>> get _rowsForHistory => <int, List<RowState>>{
-    for (final MapEntry<int, List<ExpressionRow>> e in _rows.entries)
-      e.key: <RowState>[
-        for (final ExpressionRow r in e.value)
-          RowState(nodes: r.controller.expression, visible: r.visible),
-      ],
-  };
-
-  /// Note the current state as the baseline, without recording an undo step.
-  void _syncHistoryMark() {
-    _historyMark = AppState.capture(_rowsForHistory, activeIndex, activeRow);
-    _historySignature = _historyMark!.signature;
-  }
-
-  /// Record an undo point if the expressions changed since the last one.
-  ///
-  /// Called at the end of [updateMathEditor], once answers have been
-  /// recalculated, so a restored state carries its own results.
-  void _recordHistoryPoint() {
-    if (_restoringHistory) return;
-
-    final AppState current = AppState.capture(
-      _rowsForHistory,
-      activeIndex,
-      activeRow,
-    );
-    final String signature = current.signature;
-
-    if (_historyMark == null) {
-      _historyMark = current;
-      _historySignature = signature;
-      return;
-    }
-    if (signature == _historySignature) return;
-
-    _appUndoStack.add(_historyMark!);
-    if (_appUndoStack.length > _maxAppHistorySize) {
-      _appUndoStack.removeAt(0);
-    }
-    _appRedoStack.clear();
-
-    _historyMark = current;
-    _historySignature = signature;
-  }
-
-  /// Save current app state before destructive operations
-  void _saveAppStateForUndo() {
-    _appUndoStack.add(
-      AppState.capture(_rowsForHistory, activeIndex, activeRow),
-    );
-
-    // Limit stack size
-    if (_appUndoStack.length > _maxAppHistorySize) {
-      _appUndoStack.removeAt(0);
-    }
-
-    // Clear redo stack when new action is performed
-    _appRedoStack.clear();
-
-    // The step is already recorded, so drop the baseline: the next
-    // [_recordHistoryPoint] re-establishes it rather than pushing the same
-    // state a second time for one action.
-    _historyMark = null;
-    _historySignature = null;
+    notebook.saveForUndo();
+    notebook.clear();
+    _forgetGonePlots();
+    setState(() {});
   }
 
   /// Check if app-level undo is available
-  bool get canUndoAppState => _appUndoStack.isNotEmpty;
+  bool get canUndoAppState => notebook.canUndo;
 
   /// Check if app-level redo is available
-  bool get canRedoAppState => _appRedoStack.isNotEmpty;
+  bool get canRedoAppState => notebook.canRedo;
 
-  /// Undo app-level action (like Clear All)
-  void undoAppState() {
-    if (!canUndoAppState) return;
+  /// Undo the last change to the plots: an edit, a row or plot added or
+  /// removed, a clear.
+  void undoAppState() => notebook.undo(refresh: _afterHistoryApplied);
 
-    // Save current state to redo stack
-    _appRedoStack.add(
-      AppState.capture(_rowsForHistory, activeIndex, activeRow),
-    );
+  /// Redo what undo took back.
+  void redoAppState() => notebook.redo(refresh: _afterHistoryApplied);
 
-    // Get previous state
-    AppState previousState = _appUndoStack.removeLast();
-
-    // Restore the state
-    _restoreAppState(previousState);
-    // The baseline is now the state we just moved to, so the next edit records
-    // a step from here rather than from the one we undid.
-    _syncHistoryMark();
-  }
-
-  /// Redo app-level action
-  void redoAppState() {
-    if (!canRedoAppState) return;
-
-    // Save current state to undo stack
-    _appUndoStack.add(
-      AppState.capture(_rowsForHistory, activeIndex, activeRow),
-    );
-
-    // Get redo state
-    AppState redoState = _appRedoStack.removeLast();
-
-    // Restore the state
-    _restoreAppState(redoState);
-    _syncHistoryMark();
+  /// Bring the screen up to the plots an undo or redo restored.
+  void _afterHistoryApplied() {
+    _forgetGonePlots();
+    setState(() {});
+    updateMathEditor();
   }
 
   @override
@@ -2189,20 +1649,18 @@ class HomePageState extends State<HomePage>
                     child: PageView.builder(
                       controller: _pageViewController,
                       physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _pageKeys.length,
+                      itemCount: count,
                       onPageChanged: (position) {
-                        final keys = _pageKeys;
-                        if (position >= 0 && position < keys.length) {
+                        if (position >= 0 && position < count) {
                           _captureView(_currentPageIndex);
-                          setState(() => activeIndex = keys[position]);
+                          setState(() => activeIndex = position);
                         }
                       },
                       itemBuilder: (context, position) {
-                        final keys = _pageKeys;
-                        if (position >= keys.length) {
+                        if (position >= count) {
                           return const SizedBox.shrink();
                         }
-                        return _buildExpressionDisplay(keys[position], colors);
+                        return _buildExpressionDisplay(position, colors);
                       },
                     ),
                   ),
@@ -2264,12 +1722,12 @@ class HomePageState extends State<HomePage>
               onUpdateMathEditor: updateMathEditor,
               // The action key adds a row to this plot; the
               // swipe strip still adds a whole plot.
-              onAddDisplay: _addRow,
+              onAddDisplay: addRow,
               // Backspace on an empty row removes that row.
               // Only when it is the last one left does the
               // whole plot go, which is what it did before.
               onRemoveDisplay: (int plot) {
-                if (!_removeActiveRow()) _removeDisplay(plot);
+                if (!removeActiveRow()) removePlot(plot);
               },
               onExportPlot: _exportPlot,
               variableSystem: _variableSystem,
@@ -2323,8 +1781,8 @@ class HomePageState extends State<HomePage>
     _isUpdating = true;
 
     try {
-      for (final int key in _pageKeys) {
-        final MathEditorController? controller = activeRowOf(key)?.controller;
+      for (int i = 0; i < count; i++) {
+        final MathEditorController? controller = activeRowOf(i)?.controller;
         controller?.onCalculate();
       }
     } finally {
@@ -2332,7 +1790,7 @@ class HomePageState extends State<HomePage>
     }
 
     // Every edit reaches here, so this is where an undo point is taken.
-    _recordHistoryPoint();
+    notebook.recordHistoryPoint();
 
     setState(() {});
     _scheduleSave();

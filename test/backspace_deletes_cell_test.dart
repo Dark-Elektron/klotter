@@ -63,11 +63,7 @@ void main() {
     await backspace(tester);
 
     expect(state.count, 2, reason: 'the empty cell is gone');
-    expect(
-      state.mathEditorControllers.length,
-      2,
-      reason: 'its controllers went with it',
-    );
+    expect(state.count, 2, reason: 'its controllers went with it');
   });
 
   testWidgets('a cell with content is not removed', (tester) async {

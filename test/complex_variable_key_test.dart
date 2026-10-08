@@ -72,7 +72,7 @@ void main() {
 
     final state = tester.state<HomePageState>(find.byType(HomePage));
     expect(
-      state.plotNodesForTest(0).whereType<ComplexVariableNode>(),
+      state.notebook.plotNodes(0).whereType<ComplexVariableNode>(),
       isNotEmpty,
       reason: 'sliding onto z̲ and releasing inserted nothing',
     );

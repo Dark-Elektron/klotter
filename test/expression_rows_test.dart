@@ -132,7 +132,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(
-      state.plotNodesForTest(0).whereType<NewlineNode>(),
+      state.notebook.plotNodes(0).whereType<NewlineNode>(),
       hasLength(1),
       reason: 'the second row never reached the plot',
     );
@@ -145,7 +145,7 @@ void main() {
     final HomePageState state = await pump(tester);
     expect(state.rowsOf(0), hasLength(1));
     expect(
-      state.removeActiveRowForTest(),
+      state.removeActiveRow(),
       isFalse,
       reason: 'the only row of a plot was removed, leaving nothing to type in',
     );
@@ -158,7 +158,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(state.rowsOf(0), hasLength(2));
 
-    expect(state.removeActiveRowForTest(), isTrue);
+    expect(state.removeActiveRow(), isTrue);
     await tester.pump();
     expect(state.rowsOf(0), hasLength(1));
     expect(state.activeRow, 0, reason: 'the caret was left past the last row');
@@ -210,7 +210,7 @@ void main() {
     await settle(tester);
 
     expect(
-      state.plotNodesForTest(0).whereType<NewlineNode>(),
+      state.notebook.plotNodes(0).whereType<NewlineNode>(),
       hasLength(1),
       reason: 'the hidden row was dropped from the plot input',
     );
@@ -545,7 +545,7 @@ void main() {
     await settle(tester);
     expect(state.rowsOf(0), hasLength(2));
 
-    state.addDisplayForTest(insertAt: 0);
+    state.addPlot(at: 0);
     await tester.pump(const Duration(milliseconds: 400));
     await settle(tester);
 

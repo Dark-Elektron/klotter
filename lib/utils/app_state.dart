@@ -1,6 +1,7 @@
 import '../math_engine/math_expression_serializer.dart';
 import '../math_renderer/renderer.dart';
 import '../math_renderer/expression_selection.dart';
+import '../plotting/models/plot_view_state.dart';
 
 /// One row of one cell, as undo remembers it.
 class RowState {
@@ -22,10 +23,18 @@ class AppState {
   final int activeIndex;
   final int activeRow;
 
+  /// Where each cell's plot was left, aligned with [cells].
+  ///
+  /// For a plot that comes back from nothing — undoing a clear — so it opens
+  /// where it was. Not part of the [signature]: moving a view is not an edit,
+  /// and must not fill the history.
+  final List<PlotViewState?> views;
+
   AppState({
     required this.cells,
     required this.activeIndex,
     required this.activeRow,
+    this.views = const <PlotViewState?>[],
   });
 
   /// How many cells this state holds.
@@ -35,8 +44,9 @@ class AppState {
   static AppState capture(
     Map<int, List<RowState>> rowsByCell,
     int activeIndex,
-    int activeRow,
-  ) {
+    int activeRow, {
+    List<PlotViewState?> views = const <PlotViewState?>[],
+  }) {
     final List<int> sortedKeys = rowsByCell.keys.toList()..sort();
 
     final List<List<RowState>> cells = <List<RowState>>[];
@@ -58,6 +68,7 @@ class AppState {
       cells: cells,
       activeIndex: activeIndex,
       activeRow: activeRow,
+      views: views,
     );
   }
 

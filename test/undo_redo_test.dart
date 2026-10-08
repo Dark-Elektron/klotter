@@ -57,7 +57,7 @@ void main() {
 
   String expressionOf(WidgetTester tester) {
     final state = tester.state<HomePageState>(find.byType(HomePage));
-    final nodes = state.mathEditorControllers[0]!.expression;
+    final nodes = state.activeRowOf(0)!.controller.expression;
     return MathExpressionSerializer.serialize(nodes);
   }
 
@@ -246,14 +246,14 @@ void main() {
 
       final state = tester.state<HomePageState>(find.byType(HomePage));
 
-      state.addRowForTest();
+      state.addRow();
       await tester.pump(const Duration(milliseconds: 300));
       await tapKey(tester, '2');
-      state.addRowForTest();
+      state.addRow();
       await tester.pump(const Duration(milliseconds: 300));
       await tapKey(tester, '3');
       expect(
-        state.rowCountForTest(0),
+        state.rowsOf(0).length,
         3,
         reason: 'the rows were not created, so this proves nothing',
       );
@@ -265,10 +265,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(
-        state.rowCountForTest(0),
+        state.rowsOf(0).length,
         3,
         reason:
-            'undo left ${state.rowCountForTest(0)} rows of 3 — it rebuilt the '
+            'undo left ${state.rowsOf(0).length} rows of 3 — it rebuilt the '
             'cell from a state that only remembered one',
       );
     });
@@ -279,7 +279,7 @@ void main() {
       await pump(tester, settings);
 
       final state = tester.state<HomePageState>(find.byType(HomePage));
-      state.addRowForTest();
+      state.addRow();
       await tester.pump(const Duration(milliseconds: 300));
       await tapKey(tester, '2');
       await tapKey(tester, '5');
@@ -290,10 +290,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(
-        state.rowCountForTest(0),
+        state.rowsOf(0).length,
         2,
         reason:
-            'redo restored ${state.rowCountForTest(0)} rows of 2 — only the '
+            'redo restored ${state.rowsOf(0).length} rows of 2 — only the '
             'row the caret was in came back',
       );
     });
@@ -313,19 +313,19 @@ void main() {
 
       await tapKey(tester, '2');
       await tapKey(tester, '8');
-      state.addDisplayForTest();
+      state.addPlot();
       await tester.pump(const Duration(milliseconds: 300));
       await tapKey(tester, 'x');
       await tapKey(tester, 'y');
 
-      expect(state.countForTest, 2, reason: 'the second cell was not added');
+      expect(state.count, 2, reason: 'the second cell was not added');
       expect(state.textOfCellForTest(1), 'xy');
 
       state.undoAppState();
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(
-        state.countForTest,
+        state.count,
         2,
         reason: 'undo removed a cell instead of a character',
       );
@@ -352,7 +352,7 @@ void main() {
       final state = tester.state<HomePageState>(find.byType(HomePage));
 
       await tapKey(tester, '2');
-      state.addDisplayForTest();
+      state.addPlot();
       await tester.pump(const Duration(milliseconds: 300));
       await tapKey(tester, 'x');
       await tapKey(tester, 'y');
@@ -361,7 +361,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(
-        state.activeIndexForTest,
+        state.activeIndex,
         1,
         reason: 'undo moved the caret away from the cell it changed',
       );
