@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:klotter/main.dart';
+import 'package:klotter/math_renderer/math_editor_controller.dart';
 import 'package:klotter/math_renderer/cell_persistence_service.dart';
 import 'package:klotter/settings/settings_provider.dart';
 

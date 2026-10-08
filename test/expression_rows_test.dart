@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:klotter/main.dart';
+import 'package:klotter/math_renderer/math_editor_controller.dart';
 import 'package:klotter/math_renderer/math_editor_widgets.dart';
 import 'package:klotter/math_renderer/math_nodes.dart';
 import 'package:klotter/plotting/widgets/inline_plot_panel.dart';
