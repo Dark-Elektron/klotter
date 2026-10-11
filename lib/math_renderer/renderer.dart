@@ -2359,7 +2359,7 @@ class MathRenderer extends StatelessWidget {
                 'ans',
                 style: MathTextStyle.getStyle(
                   fontSize,
-                ).copyWith(color: Colors.orangeAccent),
+                ).copyWith(color: MathTextStyle.ansInk),
                 textScaler: textScaler,
               ),
               // Index

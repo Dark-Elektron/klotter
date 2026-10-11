@@ -955,6 +955,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return 'Honey Mustard';
       case ThemeType.forestMoss:
         return 'Forest Moss';
+      case ThemeType.skyBlue:
+        return 'Sky Blue';
     }
   }
 

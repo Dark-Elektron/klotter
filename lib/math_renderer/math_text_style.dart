@@ -104,6 +104,10 @@ class MathTextStyle {
   /// the same ink, and the app has one theme at a time.
   static Color ink = Colors.white;
 
+  /// The colour of the word `ans`: orange, made readable on the theme's rows.
+  /// Set from the theme with [ink].
+  static Color ansInk = Colors.orangeAccent;
+
   static TextStyle complexVariableStyle(double fontSize, Color color) =>
       getStyle(fontSize).copyWith(
         color: color,

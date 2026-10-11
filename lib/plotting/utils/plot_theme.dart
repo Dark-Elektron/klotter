@@ -300,9 +300,10 @@ class PlotThemeData {
     return PlotThemeData(
       palette: palette,
       controlActive: accent,
-      // Readable on every theme, which the app's own error red is not on the
-      // darker ones.
-      errorMark: const Color(0xFFE57373),
+      // A light red, which reads on the darker rows where the app's own error
+      // red does not, and is darkened on the light rows until it reads there.
+      // It is drawn on the rows, not on the plot.
+      errorMark: colors.onRows(const Color(0xFFE57373)),
       controlIdle: lineBase.withValues(alpha: isLight ? 0.55 : 0.60),
       controlOutline: lineBase.withValues(alpha: isLight ? 0.28 : 0.24),
       // Faint: the border and the icon carry the state, and a heavy fill
@@ -412,6 +413,25 @@ class PlotThemeData {
     Color(0xFFFF8E7E),
   ];
 
+  // Blue ground: lead with red and green, which a blue surface does not
+  // swallow, and keep blue for last.
+  static const List<Color> _blueLight = <Color>[
+    Color(0xFFB3322C),
+    Color(0xFF3F6B22),
+    Color(0xFF8A5A00),
+    Color(0xFF9C2D63),
+    Color(0xFF5B4BB5),
+    Color(0xFF00786E),
+  ];
+  static const List<Color> _blueDark = <Color>[
+    Color(0xFFFF8A73),
+    Color(0xFFA9DD7E),
+    Color(0xFFFFC978),
+    Color(0xFFFF8FC4),
+    Color(0xFFA6A0FF),
+    Color(0xFF54D6C4),
+  ];
+
   static List<Color> _seriesFor(ThemeType theme, bool isLight) {
     switch (theme) {
       case ThemeType.sunsetEmber:
@@ -425,6 +445,8 @@ class PlotThemeData {
         return isLight ? _pinkLight : _pinkDark;
       case ThemeType.forestMoss:
         return isLight ? _greenLight : _greenDark;
+      case ThemeType.skyBlue:
+        return isLight ? _blueLight : _blueDark;
       case ThemeType.light:
       case ThemeType.classic:
       case ThemeType.dark:

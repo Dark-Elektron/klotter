@@ -1359,7 +1359,9 @@ class HomePageState extends State<HomePage>
             decoration: BoxDecoration(
               // Enough to read an expression against a busy plot, little
               // enough to see the curves through it.
-              color: colors.containerBackground.withValues(alpha: 0.82),
+              color: colors.containerBackground.withValues(
+                alpha: AppColors.rowOpacity,
+              ),
               border: Border(
                 top: BorderSide(color: colors.divider.withValues(alpha: 0.6)),
               ),

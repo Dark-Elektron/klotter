@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import '../math_renderer/math_text_style.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -55,10 +57,10 @@ class AppColors {
 
   static const classic = AppColors(
     displayBackground: Colors.white38,
-    containerBackground: Colors.blueGrey,
+    containerBackground: Color(0xFF546E7A), // Blue grey 600
     textPrimary: Colors.white,
-    textSecondary: Colors.grey,
-    textTertiary: Colors.orangeAccent,
+    textSecondary: Color(0xFFECEFF1), // Blue grey 50
+    textTertiary: Color(0xFFFFE8C8), // Pale apricot
     divider: Colors.grey,
     accent: Colors.yellow,
     keypadBackground: Color(0xFFE0E0E0),
@@ -73,7 +75,7 @@ class AppColors {
     displayBackground: Colors.black,
     containerBackground: Color.fromARGB(255, 57, 57, 57),
     textPrimary: Colors.white,
-    textSecondary: Color(0xFF9E9E9E),
+    textSecondary: Color(0xFFA2A2A2),
     textTertiary: Colors.orangeAccent,
     divider: Color(0xFF616161),
     accent: Colors.yellowAccent,
@@ -105,8 +107,8 @@ class AppColors {
       0xFFE29B9B,
     ), // Warm Dusty Rose (Matched to image)
     textPrimary: Color(0xFF5E2A2A), // Deep warm rose
-    textSecondary: Color(0xFF8E5C5C), // Muted warm rose
-    textTertiary: Color(0xFFFF7096), // Vibrant Pink (kept for contrast)
+    textSecondary: Color(0xFF583939), // Muted warm rose
+    textTertiary: Color(0xFF870024), // Vibrant Pink (kept for contrast)
     divider: Color(0xFFF2C4C4), // Warm light border
     accent: Color(0xFFD87070), // Warm coral-red accent
     keypadBackground: Color(0xFFFCF0F0), // Softest warm pink
@@ -135,9 +137,9 @@ class AppColors {
   static const desertSand = AppColors(
     displayBackground: Color(0xFFF4EBD2), // Soft Beige
     containerBackground: Color(0xFFC18A63), // Clay
-    textPrimary: Color(0xFF4A3F36), // Deep Coffee
-    textSecondary: Color(0xFF7E9C76),
-    textTertiary: Color(0xFFA35418), // Burnt Sienna
+    textPrimary: Color(0xFF352D27), // Deep Coffee
+    textSecondary: Color(0xFF273224),
+    textTertiary: Color(0xFF4A260B), // Burnt Sienna
     divider: Color(0xFFD9C9A2),
     accent: Color(0xFFE86F1B), // Orange Citrus
     keypadBackground: Color(0xFFFDF5E6),
@@ -162,60 +164,164 @@ class AppColors {
     keyboardSecondary: Color(0xFF232323),
   );
 
+  // Salmon (#F8B69E): a light theme with dark text, one of
+  // four pastels picked together (salmon, yellow, sage, sky blue).
   static const roseChic = AppColors(
-    displayBackground: Color(0xFF2C2C2C),
-    containerBackground: Color(0xFF3D3D3D),
-    textPrimary: Color(0xFFF7E5E1), // Soft Rose White
-    textSecondary: Color(0xFFB2545B),
-    textTertiary: Color(0xFFEAA292), // Peach Blossom
-    divider: Color(0xFF60202A),
-    accent: Color(0xFF8F2F42), // Rosewood
-    keypadBackground: Color(0xFF1A1A1A),
-    keypadButton: Color(0xFF4A3F3F),
-    keypadButtonText: Color(0xFFF9C6B0),
-    keyboardPrimary: Color(0xFF1A1A1A),
-    keyboardSecondary: Color(0xFF4A3F3F),
+    displayBackground: Color(0xFFFDE8E0), // behind the cells
+    containerBackground: Color(0xFFF8B69E), // the cells
+    textPrimary: Color(0xFF322420),
+    textSecondary: Color(0xFF684C42),
+    textTertiary: Color(0xFF8C3515), // cell index and angle unit
+    divider: Color(0xFFD59D88),
+    accent: Color(0xFFD15E34), // switches, sliders, help icons
+    keypadBackground: Color(0xFFFDEFEA),
+    keypadButton: Color(0xFFFBD5C7),
+    keypadButtonText: Color(0xFF322420),
+    keyboardPrimary: Color(0xFFFDEFEA),
+    keyboardSecondary: Color(0xFFFBD5C7),
   );
 
+  // Pale yellow (#FFF3AB): a light theme with dark text, one of
+  // four pastels picked together (salmon, yellow, sage, sky blue).
   static const honeyMustard = AppColors(
-    displayBackground: Color(0xFFFFF5C5),
-    containerBackground: Color(0xFFFFCF36), // Mustard
-    textPrimary: Color(0xFF1E615A), // Dark Teal Contrast
-    textSecondary: Color(0xFF8A694D),
-    textTertiary: Color(0xFF138A7D),
-    divider: Color(0xFFC5A57E),
-    accent: Color(0xFFEB5B00), // Bright Orange
-    keypadBackground: Color(0xFFF5E8D8),
-    keypadButton: Color(0xFFD69A3C),
-    keypadButtonText: Colors.white,
-    keyboardPrimary: Color(0xFFF5E8D8),
-    keyboardSecondary: Color(0xFFD69A3C),
+    displayBackground: Color(0xFFFFFBE4), // behind the cells
+    containerBackground: Color(0xFFFFF3AB), // the cells
+    textPrimary: Color(0xFF333122),
+    textSecondary: Color(0xFF736D4D),
+    textTertiary: Color(0xFF7D6E13), // cell index and angle unit
+    divider: Color(0xFFDBD193),
+    accent: Color(0xFFA39229), // switches, sliders, help icons
+    keypadBackground: Color(0xFFFFFCED),
+    keypadButton: Color(0xFFFFF8CE),
+    keypadButtonText: Color(0xFF333122),
+    keyboardPrimary: Color(0xFFFFFCED),
+    keyboardSecondary: Color(0xFFFFF8CE),
   );
 
+  // Sage green (#CBDCB0): a light theme with dark text, one of
+  // four pastels picked together (salmon, yellow, sage, sky blue).
   static const forestMoss = AppColors(
-    displayBackground: Color(0xFFE8F0E5), // Pale sage/mist
-    containerBackground: Color(
-      0xFF4A6741,
-    ), // Deep Forest Green (Main display area)
-    textPrimary: Color(0xFF1B2E1D), // Deep Evergreen
-    textSecondary: Color(0xFF6B8E23), // Olive Drab
-    textTertiary: Color(0xFFD4A373), // Raw Sienna (Woody accent)
-    divider: Color(0xFFBDC7BC), // Muted leaf grey
-    accent: Color(0xFF2D5A27), // Strong Jungle Green
-    keypadBackground: Color(0xFFF1F4F0), // Soft off-white green
-    keypadButton: Color(0xFFBDCBB7), // Muted eucalyptus
-    keypadButtonText: Color(0xFF2A3B24), // Dark moss text
-    keyboardPrimary: Color(0xFFF1F4F0),
-    keyboardSecondary: Color(0xFFBDCBB7),
+    displayBackground: Color(0xFFEEF4E6), // behind the cells
+    containerBackground: Color(0xFFCBDCB0), // the cells
+    textPrimary: Color(0xFF292C23),
+    textSecondary: Color(0xFF58604D),
+    textTertiary: Color(0xFF45660F), // cell index and angle unit
+    divider: Color(0xFFAFBD97),
+    accent: Color(0xFF6D9926), // switches, sliders, help icons
+    keypadBackground: Color(0xFFF4F7EE),
+    keypadButton: Color(0xFFE1EBD1),
+    keypadButtonText: Color(0xFF292C23),
+    keyboardPrimary: Color(0xFFF4F7EE),
+    keyboardSecondary: Color(0xFFE1EBD1),
   );
+
+  // Sky blue (#97CDE7): a light theme with dark text, one of
+  // four pastels picked together (salmon, yellow, sage, sky blue).
+  static const skyBlue = AppColors(
+    displayBackground: Color(0xFFDEEFF7), // behind the cells
+    containerBackground: Color(0xFF97CDE7), // the cells
+    textPrimary: Color(0xFF1E292E),
+    textSecondary: Color(0xFF3F5560),
+    textTertiary: Color(0xFF125778), // cell index and angle unit
+    divider: Color(0xFF82B0C7),
+    accent: Color(0xFF3091BF), // switches, sliders, help icons
+    keypadBackground: Color(0xFFE8F4FA),
+    keypadButton: Color(0xFFC3E2F1),
+    keypadButtonText: Color(0xFF1E292E),
+    keyboardPrimary: Color(0xFFE8F4FA),
+    keyboardSecondary: Color(0xFFC3E2F1),
+  );
+
+  /// How opaque the rows panel is over the plot: enough to read an
+  /// expression against a busy plot, little enough to see the curves
+  /// through it.
+  static const double rowOpacity = 0.82;
+
+  /// What the expression rows are drawn on, at its lightest and darkest.
+  ///
+  /// The panel is translucent, and what shows through it is the plot rather
+  /// than the page: the plot shades its ground darker toward the rim, where
+  /// the rows sit, and Settings can put a dark plot under any theme. Measured
+  /// under the rows, a pastel theme's ground came out 15% darker than the
+  /// panel over its page, and over a dark plot close to the panel over black.
+  /// Text on the rows is held to read on both.
+  ({Color lightest, Color darkest}) get rowBackdrops {
+    final Color panel = containerBackground.withValues(alpha: rowOpacity);
+    return (
+      // A phone shows black behind a translucent page (classic's).
+      lightest: Color.alphaBlend(
+        panel,
+        Color.alphaBlend(displayBackground, Colors.black),
+      ),
+      darkest: Color.alphaBlend(panel, Colors.black),
+    );
+  }
+
+  /// The WCAG contrast ratio of two colours, from 1 to 21.
+  static double contrastRatio(Color a, Color b) {
+    final double la = a.computeLuminance(), lb = b.computeLuminance();
+    return (math.max(la, lb) + 0.05) / (math.min(la, lb) + 0.05);
+  }
+
+  /// The lower of [colour]'s contrasts on the two [rowBackdrops].
+  double _worstOnRows(Color colour) {
+    final ({Color lightest, Color darkest}) rows = rowBackdrops;
+    return math.min(
+      contrastRatio(colour, rows.lightest),
+      contrastRatio(colour, rows.darkest),
+    );
+  }
+
+  /// Whether the rows are written in white rather than the palette's own
+  /// text colour: whichever reads better on the [rowBackdrops].
+  bool get _whiteRows =>
+      _worstOnRows(Colors.white) >= _worstOnRows(textPrimary);
+
+  /// [colour], made to read at [minContrast] on the expression rows: kept
+  /// where it already does on both [rowBackdrops], and otherwise moved, its
+  /// hue kept, the way the ink lies (lighter on rows written in white,
+  /// darker on the rest) until it does.
+  Color onRows(Color colour, {double minContrast = 3}) {
+    if (_worstOnRows(colour) >= minContrast) return colour;
+    final bool lighter = _whiteRows;
+    final HSLColor hsl = HSLColor.fromColor(colour);
+    double lightness = hsl.lightness;
+    while (lightness > 0 && lightness < 1) {
+      lightness = (lightness + (lighter ? 0.01 : -0.01)).clamp(0.0, 1.0);
+      final Color c = hsl.withLightness(lightness).toColor();
+      if (_worstOnRows(c) >= minContrast) return c;
+    }
+    return lighter ? Colors.white : Colors.black;
+  }
 
   // Helper to get colors based on context
-  /// The colour an expression is written in under [type].
+  /// The colours an expression is written in on [palette]'s rows: the ink,
+  /// and the orange of `ans`.
   ///
-  /// Read from the palette itself rather than listed separately, so a new
-  /// theme cannot forget it.
-  static Color _inkFor(ThemeType type) =>
-      type == ThemeType.light ? light.textPrimary : Colors.white;
+  /// The ink is the palette's own text colour or white, whichever reads
+  /// better on the [rowBackdrops], deepened where it must be to read at
+  /// 4.5:1 on both. Read from the palette itself rather than listed
+  /// separately, so a new theme cannot forget it. Every dark palette keeps
+  /// the white it was always written in. The light ones (light, the four
+  /// pastels, soft pink and desert sand) get their dark text: white on a
+  /// pastel row read at 1.4:1, and only light had been given its own ink
+  /// before.
+  ///
+  /// `ans` keeps its orange where that reads at 3:1 (it is large text), and
+  /// is otherwise moved toward the ink's side until it does. On the pastel
+  /// rows the plain orange read at 1.1:1.
+  static ({Color ink, Color ans}) _rowInks(AppColors palette) => (
+    ink: palette.onRows(
+      palette._whiteRows ? Colors.white : palette.textPrimary,
+      minContrast: 4.5,
+    ),
+    ans: palette.onRows(Colors.orangeAccent),
+  );
+
+  /// [_rowInks] for each theme, worked out once: every read of a palette
+  /// sets them.
+  static final Map<ThemeType, ({Color ink, Color ans})> _rowInkCache =
+      <ThemeType, ({Color ink, Color ans})>{};
 
   static AppColors of(BuildContext context, {bool listen = true}) {
     final settings = Provider.of<SettingsProvider>(context, listen: listen);
@@ -223,34 +329,28 @@ class AppColors {
   }
 
   static AppColors fromType(ThemeType type) {
+    final AppColors palette = switch (type) {
+      ThemeType.light => light,
+      ThemeType.classic => classic,
+      ThemeType.dark => dark,
+      ThemeType.softPink => softPink,
+      ThemeType.pink => pink,
+      ThemeType.sunsetEmber => sunsetEmber,
+      ThemeType.desertSand => desertSand,
+      ThemeType.digitalAmber => digitalAmber,
+      ThemeType.roseChic => roseChic,
+      ThemeType.honeyMustard => honeyMustard,
+      ThemeType.forestMoss => forestMoss,
+      ThemeType.skyBlue => skyBlue,
+    };
     // Every read of the palette passes through here, so this is where the
     // expression ink is kept in step with the theme. The renderer cannot ask
-    // for it — its glyph colour used to be the constant `Colors.white` in
+    // for it: its glyph colour used to be the constant `Colors.white` in
     // thirty-nine places, which is why a light theme was impossible before.
-    MathTextStyle.ink = _inkFor(type);
-    switch (type) {
-      case ThemeType.light:
-        return light;
-      case ThemeType.classic:
-        return classic;
-      case ThemeType.dark:
-        return dark;
-      case ThemeType.softPink:
-        return softPink;
-      case ThemeType.pink:
-        return pink;
-      case ThemeType.sunsetEmber:
-        return sunsetEmber;
-      case ThemeType.desertSand:
-        return desertSand;
-      case ThemeType.digitalAmber:
-        return digitalAmber;
-      case ThemeType.roseChic:
-        return roseChic;
-      case ThemeType.honeyMustard:
-        return honeyMustard;
-      case ThemeType.forestMoss:
-        return forestMoss;
-    }
+    final ({Color ink, Color ans}) inks =
+        _rowInkCache[type] ??= _rowInks(palette);
+    MathTextStyle.ink = inks.ink;
+    MathTextStyle.ansInk = inks.ans;
+    return palette;
   }
 }

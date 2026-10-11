@@ -18,6 +18,7 @@ enum ThemeType {
   roseChic,
   honeyMustard,
   forestMoss,
+  skyBlue,
 }
 
 /// How the plot surface is coloured.
@@ -94,12 +95,20 @@ class SettingsProvider extends ChangeNotifier {
 
   // Getters
   ThemeType get themeType => _themeType;
-  bool get isDarkTheme =>
-      _themeType != ThemeType.light &&
-      _themeType != ThemeType.classic &&
-      _themeType != ThemeType.softPink &&
-      _themeType != ThemeType.desertSand &&
-      _themeType != ThemeType.honeyMustard;
+
+  /// The themes drawn light (Material's light theme, dark text).
+  static const Set<ThemeType> lightThemes = {
+    ThemeType.light,
+    ThemeType.classic,
+    ThemeType.softPink,
+    ThemeType.desertSand,
+    ThemeType.roseChic,
+    ThemeType.honeyMustard,
+    ThemeType.forestMoss,
+    ThemeType.skyBlue,
+  };
+
+  bool get isDarkTheme => !lightThemes.contains(_themeType);
   bool get hapticFeedback => _hapticFeedback;
 
   /// Whether ⌧ asks before wiping every cell.
